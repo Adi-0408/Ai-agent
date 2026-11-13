@@ -325,6 +325,39 @@ export async function transcribeAudioWithGroqWhisper(audioBlob, customApiKey = '
 }
 
 /**
+ * Cleans and sanitizes raw model output into natural, spoken text.
+ * Strips raw JSON objects, schema configs, markdown asterisks, or stray formatting.
+ */
+export function sanitizeSpokenResponse(rawText) {
+  if (!rawText) return "Hello! How can I assist you today?";
+  let text = String(rawText).trim();
+
+  // If response accidentally begins with or contains JSON format like {"agent_config": ...}
+  if (text.startsWith('{') || text.startsWith('[') || text.includes('"agent_config"') || text.includes('"personality"')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.message) return sanitizeSpokenResponse(parsed.message);
+      if (parsed.response) return sanitizeSpokenResponse(parsed.response);
+      if (parsed.description) return sanitizeSpokenResponse(parsed.description);
+      if (parsed.agent_config?.description) return sanitizeSpokenResponse(parsed.agent_config.description);
+      if (parsed.personality?.summary) return sanitizeSpokenResponse(parsed.personality.summary);
+    } catch (_) {
+      // Partial / truncated JSON extraction
+      const descMatch = text.match(/"description"\s*:\s*"([^"]+)"/i);
+      if (descMatch) return sanitizeSpokenResponse(descMatch[1]);
+      const nameMatch = text.match(/"agent_name"\s*:\s*"([^"]+)"/i);
+      if (nameMatch) return `I am ${nameMatch[1]}, ready to assist you. How can I help you today?`;
+      const msgMatch = text.match(/"message"\s*:\s*"([^"]+)"/i);
+      if (msgMatch) return sanitizeSpokenResponse(msgMatch[1]);
+    }
+    return "I am configured and ready to assist you. How can I help you today?";
+  }
+
+  // Remove markdown asterisks, bolding, hashes, and code blocks
+  return text.replace(/[*#_`]/g, '').replace(/```[\s\S]*?```/g, '').trim();
+}
+
+/**
  * Generate intelligent conversational response using user-provided API key
  * Falls back to 100% offline rule-based knowledge engine when no key is set.
  * Supports either positional parameters or an options object.
@@ -352,6 +385,15 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   const effectiveGroqKey = (apiKey && apiKey.startsWith('gsk_')) ? apiKey : userKeys.groqKey;
   const effectiveGeminiKey = (apiKey && (apiKey.startsWith('AIza') || !apiKey.startsWith('gsk_'))) ? apiKey : userKeys.geminiKey;
 
+  const systemInstructions = `${promptContext}${kbContext}
+
+CRITICAL RULES:
+1. Spoken Conversational Tone: Respond directly in 1 to 2 clear, natural, spoken sentences suitable for voice playback. Never use markdown asterisks (*), hashtags, bullet points, or raw JSON.
+2. Everyday & Normal Questions: Warmly and helpfully answer normal everyday questions, greetings, small talk, and common conversational queries. Never refuse ordinary conversation.
+3. Business & Knowledge Inquiries: For questions regarding specific company policies, pricing, services, or products, reference the Verified Knowledge Base Facts above.
+4. Output Format: ALWAYS output pure spoken speech text directly. NEVER output JSON, code blocks, or agent configuration objects.
+5. Multilingual Requirement: You are fully fluent in English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the user asks in Hindi, answer in polite, natural Hindi. If the user asks in Marathi, answer in polite, natural Marathi. If the user asks in English, answer in English.`;
+
   // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
     try {
@@ -366,7 +408,7 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
           messages: [
             {
               role: 'system',
-              content: `${promptContext}${kbContext}\nInstructions: Answer in 1 to 2 clear, spoken, conversational sentences. Stick strictly to facts in the Knowledge Base if applicable. Never use markdown formatting, asterisks, or bullet points.\n\nMultilingual Requirement: You are fully fluent in English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the user asks in Hindi, answer in polite, natural Hindi. If the user asks in Marathi, answer in polite, natural Marathi. If the user asks in English, answer in English.`
+              content: systemInstructions
             },
             {
               role: 'user',
@@ -381,7 +423,7 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
       if (groqRes.ok) {
         const data = await groqRes.json();
         if (data.choices && data.choices[0] && data.choices[0].message) {
-          return data.choices[0].message.content.trim();
+          return sanitizeSpokenResponse(data.choices[0].message.content);
         }
       }
     } catch (err) {
@@ -399,7 +441,7 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `${promptContext}${kbContext}\nUser Question: ${cleanMessage}\nInstructions: Respond directly in 1-2 concise, spoken sentences without markdown asterisks. Multilingual Requirement: You are fluent in English, Hindi (हिंदी), and Marathi (मराठी). You MUST detect whether the user asked in English, Hindi, or Marathi and reply in the EXACT SAME language.`
+              text: `${systemInstructions}\n\nUser Question: ${cleanMessage}`
             }]
           }]
         })
@@ -408,7 +450,7 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0]) {
-          return data.candidates[0].content.parts[0].text.trim();
+          return sanitizeSpokenResponse(data.candidates[0].content.parts[0].text);
         }
       }
     } catch (err) {
@@ -419,6 +461,26 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   // 3. Fallback to Local Knowledge Base Matching (100% Keyless Offline Rule-Based Engine)
   const lower = cleanMessage.toLowerCase();
   const words = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 1);
+
+  // English conversational queries & greetings
+  if (/^(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening))\b/i.test(lower)) {
+    return "Hello! I am your AI assistant. How can I help you today?";
+  }
+  if (/\b(how are you|how is it going|how are you doing)\b/i.test(lower)) {
+    return "I'm doing great, thank you for asking! How can I assist you today?";
+  }
+  if (/\b(who are you|what is your name|introduce yourself)\b/i.test(lower)) {
+    return "I am your AI voice assistant, here to answer your questions and guide you. What would you like to know?";
+  }
+  if (/\b(what can you do|how can you help|help me)\b/i.test(lower)) {
+    return "I can answer questions about our services, products, and policies, as well as have general everyday conversations. What's on your mind?";
+  }
+  if (/\b(thank you|thanks|appreciate it)\b/i.test(lower)) {
+    return "You're very welcome! Let me know if there's anything else I can help with.";
+  }
+  if (/\b(bye|goodbye|see you|have a nice day)\b/i.test(lower)) {
+    return "Goodbye! Have a wonderful day ahead!";
+  }
 
   // Marathi conversational queries
   if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)\b/i.test(cleanMessage) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {

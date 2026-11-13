@@ -300,7 +300,8 @@ ${combinedKb.slice(0, 20).map(k => `- Q: ${k.q} -> A: ${k.a}`).join('\n')}
 
 ## Voice Pacing & Conversational Constraints:
 - Keep spoken answers to 1-2 clear, helpful sentences.
-- Be warm, accurate, and prompt. If unsure, politely guide the user or trigger the support tool.`,
+- Be warm, accurate, and prompt. If unsure, politely guide the user or trigger the support tool.
+- Normal & General Questions: In addition to business FAQs and website facts, warmly and helpfully address normal everyday questions, greetings, small talk, and general inquiries in 1-2 spoken sentences. Never refuse casual conversation or state you lack data for ordinary questions.`,
       tools: fallbackTools,
       knowledgeBase: combinedKb,
       explanation: `Synthesized your full-stack files into ${defaultName}. Analyzed ${frontend.length} frontend views, indexed ${discoveredProducts.length} flagship products, and verified ${combinedKb.length} grounded knowledge entries.`

@@ -1158,16 +1158,45 @@ export default function App() {
 
     // Direct Assistant Editing via Composer (When user asks to change/update the targeted assistant)
     if (currentAssistant && attachedSnapshot.length === 0) {
-      const lowerText = text.toLowerCase();
-      const isEditIntent =
-        /\b(change|update|set|switch|rename|modify|make|add faq|add question|add q&a)\b/i.test(lowerText) &&
-        /\b(voice|greeting|message|prompt|model|name|faq|question|answer|persona|tone|policy|pricing)\b/i.test(lowerText);
+      const lowerText = text.toLowerCase().trim();
+
+      // Check for normal / general / everyday questions intent
+      const isNormalQuestionsIntent =
+        (/\b(normal|general|casual|everyday|common|basic|small\s*talk|chit\s*chat)\b/i.test(lowerText) &&
+         /\b(question|questions|querie|queries|inquir|answer|address|handle|respond|allow|support|cover|talk|chat)\b/i.test(lowerText)) ||
+        /\b(?:address|answer|handle|respond to)\s+(?:also\s+)?(?:normal|general|casual|everyday|common)\b/i.test(lowerText);
+
+      // Check for explicit behavioral guidelines ("should", "must", "always", "never", "make it")
+      const isAgentGuidelineIntent =
+        /\b(?:this agent|the agent|this assistant|the assistant|voice agent|it)\s+(?:should|must|needs to|ought to|has to|can also|will|shall)\b/i.test(lowerText) ||
+        /\b(?:always|never)\s+(?:mention|ask|say|offer|provide|check|recommend|refuse)\b/i.test(lowerText) ||
+        /\b(?:make it|configure it to|train it to|teach it to)\b/i.test(lowerText);
+
+      const isStandardEditIntent =
+        /\b(?:rename\s+to|call\s+it)\b/i.test(lowerText) ||
+        (/\b(change|update|set|switch|rename|modify|make|add faq|add question|add q&a|insert faq)\b/i.test(lowerText) &&
+         /\b(voice|greeting|message|prompt|model|name|faq|question|answer|persona|tone|policy|pricing|rule|instruction|guideline)\b/i.test(lowerText));
+
+      const isEditIntent = isNormalQuestionsIntent || isAgentGuidelineIntent || isStandardEditIntent;
 
       if (isEditIntent) {
         let updated = { ...currentAssistant };
         const highlights = [];
 
-        // 1. Voice change
+        // 1. Normal & General Questions Support
+        if (isNormalQuestionsIntent) {
+          const normalGuideline = `\n- General & Everyday Questions: Warmly and helpfully answer normal everyday questions, greetings, small talk, and common conversational queries in 1 to 2 polite spoken sentences. While strictly adhering to Verified Knowledge Base Facts for business-specific inquiries, never decline or refuse ordinary conversational or common questions.`;
+          const currentPrompt = updated.prompt || updated.systemPrompt || '';
+          if (!currentPrompt.includes('General & Everyday Questions')) {
+            const expanded = `${currentPrompt}${normalGuideline}`;
+            updated.prompt = expanded;
+            updated.systemPrompt = expanded;
+            setSystemPromptText(expanded);
+          }
+          highlights.push(`Configured agent to answer normal everyday questions, greetings, and small talk naturally alongside business knowledge.`);
+        }
+
+        // 2. Voice change
         const voiceMatch = text.match(/\b(?:change|set|switch|update|use)\s+(?:the\s+)?voice\s+(?:to\s+)?(adam|rachel|clara|elliot|layla|sid|naina|liam|daniel|corinne|orson|freya|aria)\b/i);
         if (voiceMatch) {
           const rawVoice = voiceMatch[1].toLowerCase();
@@ -1177,8 +1206,8 @@ export default function App() {
           highlights.push(`Voice switched to "${targetVoice}"`);
         }
 
-        // 2. Greeting / First message change
-        const greetingMatch = text.match(/\b(?:change|set|update)\s+(?:the\s+)?(?:greeting|welcome message|first message)\s+(?:to\s+)?[:"']?([^"'\n]+)[:"']?/i);
+        // 3. Greeting / First message change
+        const greetingMatch = text.match(/\b(?:change|set|update|make)\s+(?:the\s+)?(?:greeting|welcome message|first message)\s+(?:to\s+)?[:"']?([^"'\n]+)[:"']?/i);
         if (greetingMatch && greetingMatch[1].trim().length > 3) {
           const newGreeting = greetingMatch[1].trim();
           updated.firstMessage = newGreeting;
@@ -1187,8 +1216,9 @@ export default function App() {
           highlights.push(`Voice greeting updated: "${newGreeting}"`);
         }
 
-        // 3. Name change
-        const nameMatch = text.match(/\b(?:change|set|rename|update)\s+(?:the\s+)?(?:name|assistant name)\s+(?:to\s+)?[:"']?([^"'\n]+)[:"']?/i);
+        // 4. Name change
+        const nameMatch = text.match(/\b(?:change|set|rename|update)\s+(?:the\s+)?(?:name|assistant name)\s+(?:to\s+)?[:"']?([^"'\n]+)[:"']?/i) ||
+                         text.match(/\b(?:rename\s+to|call\s+it)\s+[:"']?([^"'\n]+)[:"']?/i);
         if (nameMatch && nameMatch[1].trim().length > 2 && !nameMatch[1].toLowerCase().includes('voice')) {
           const newName = nameMatch[1].trim().replace(/\//g, '-');
           const prevId = updated.id;
@@ -1216,7 +1246,7 @@ export default function App() {
           highlights.push(`Assistant renamed to "${newName}" and persona synchronized`);
         }
 
-        // 4. Model change
+        // 5. Model change
         const modelMatch = text.match(/\b(?:change|set|switch|update)\s+(?:the\s+)?model\s+(?:to\s+)?(groq|gemini|qwen|llama|gpt-oss)\b/i);
         if (modelMatch) {
           const mKey = modelMatch[1].toLowerCase();
@@ -1229,7 +1259,7 @@ export default function App() {
           highlights.push(`Model updated to "${newModel}"`);
         }
 
-        // 5. Add FAQ
+        // 6. Add FAQ
         const faqMatch = text.match(/\b(?:add|insert)\s+(?:a\s+)?(?:faq|question|q&a)\s*[:\-]?\s*([^?]+)\?\s*(?:->|answer:?|ans:?|:)\s*(.+)/i) ||
                          text.match(/\b(?:add|insert)\s+faq\s*[:\-]?\s*([^?]+)\?\s*(.+)/i);
         if (faqMatch) {
@@ -1241,7 +1271,7 @@ export default function App() {
           highlights.push(`Added new Q&A: "${newQ}"`);
         }
 
-        // 6. System Prompt update / expansion
+        // 7. System Prompt explicit update / expansion
         if (/\b(update|change|rewrite|modify|edit|expand)\s+(the\s+)?(system\s+)?(prompt|personality|guidelines|instructions)\b/i.test(text)) {
           const promptExtract = text.match(/(?:prompt|personality|guidelines|instructions)\s*(?:to|as)?\s*[:"']([^"']+)[:"']?/i);
           if (promptExtract && promptExtract[1].trim().length > 10) {
@@ -1259,15 +1289,29 @@ export default function App() {
           }
         }
 
+        // 8. General Behavioral Instruction Fallback (e.g. "this agent should always offer free shipping")
+        if (highlights.length === 0 && isAgentGuidelineIntent) {
+          const cleanGuideline = text.trim();
+          const expanded = `${updated.prompt || updated.systemPrompt || ''}\n- Instruction: ${cleanGuideline}`;
+          updated.prompt = expanded;
+          updated.systemPrompt = expanded;
+          setSystemPromptText(expanded);
+          highlights.push(`Added instruction: "${cleanGuideline}"`);
+        }
+
         if (highlights.length > 0) {
           updated.updatedAt = new Date().toISOString();
           setAssistantsList(prev => prev.map(a => a.id === updated.id ? updated : a));
           saveAgent(updated).catch(console.error);
 
+          const confirmText = isNormalQuestionsIntent
+            ? `I have updated "${updated.name}". Your assistant will now warmly and helpfully answer normal everyday questions, greetings, small talk, and common queries in addition to your verified knowledge base facts.`
+            : `I have updated "${updated.name}" according to your request. All changes are saved and automatically active in your live agent and embed code.`;
+
           const assistantMessage = {
             id: 'msg-' + (Date.now() + 1),
             sender: 'assistant',
-            text: `I have updated "${updated.name}" according to your request. All changes are saved and automatically active in your live agent and embed code.`,
+            text: confirmText,
             updatedAgent: updated,
             updateHighlights: highlights,
             timestamp: 'Just now'

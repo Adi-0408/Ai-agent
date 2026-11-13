@@ -1003,12 +1003,31 @@
                      window.AI_AGENT_API_KEY ||
                      '';
 
+      function sanitizeSpokenWidgetText(raw) {
+        if (!raw) return '';
+        let str = String(raw).trim();
+        if (str.startsWith('{') || str.startsWith('[') || str.includes('"agent_config"') || str.includes('"personality"')) {
+          try {
+            const parsed = JSON.parse(str);
+            if (parsed.message) return sanitizeSpokenWidgetText(parsed.message);
+            if (parsed.response) return sanitizeSpokenWidgetText(parsed.response);
+            if (parsed.description) return sanitizeSpokenWidgetText(parsed.description);
+            if (parsed.agent_config?.description) return sanitizeSpokenWidgetText(parsed.agent_config.description);
+          } catch (_) {
+            const descMatch = str.match(/"description"\s*:\s*"([^"]+)"/i);
+            if (descMatch) return descMatch[1];
+          }
+          return "Hello! How can I assist you today?";
+        }
+        return str.replace(/[*#_`]/g, '').trim();
+      }
+
       // 1. Live AI Inference using User-Provided API Key
       if (apiKey && apiKey.startsWith('gsk_')) {
         try {
           const kbFacts = (agentConfig.knowledgeBase || []).slice(0, 25);
           const kbText = kbFacts.length > 0 ? `\nVerified Website Knowledge Base Facts:\n${JSON.stringify(kbFacts)}` : '';
-          const systemContext = `Your name is "${agentConfig.name}". You are "${agentConfig.name}", the official AI voice guide for this website. Never introduce yourself as "app Concierge", "Site Sentinel", "Help Desk AI", or any other name. Always identify yourself as "${agentConfig.name}".\n\n${agentConfig.prompt || agentConfig.systemPrompt || `You are ${agentConfig.name}, the official AI voice guide for this website.`}${kbText}\n\nInstructions: Respond in 1 to 2 clear, spoken, conversational sentences directly answering the user. If the user asks about products, services, or the website, use the verified facts above. Never output markdown asterisks or bullet points as this will be read aloud.\n\nMultilingual Rules: You support English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the user asks in Hindi, reply in natural, polite Hindi. If the user asks in Marathi, reply in natural, polite Marathi. If the user asks in English, reply in natural English.`;
+          const systemContext = `Your name is "${agentConfig.name}". You are "${agentConfig.name}", the official AI voice guide for this website. Never introduce yourself as "app Concierge", "Site Sentinel", "Help Desk AI", or any other name. Always identify yourself as "${agentConfig.name}".\n\n${agentConfig.prompt || agentConfig.systemPrompt || `You are ${agentConfig.name}, the official AI voice guide for this website.`}${kbText}\n\nCRITICAL INSTRUCTIONS:\n1. Conversational Voice Output: Respond in 1 to 2 clear, natural, spoken sentences directly answering the visitor. Never output markdown asterisks, hashtags, or bullet points as this will be read aloud by browser voice synthesis.\n2. Normal Everyday Inquiries: Warmly and helpfully answer normal everyday questions, greetings, small talk, and common conversational queries. Never decline ordinary conversation or state you lack data for everyday pleasantries.\n3. Website & Product Inquiries: For questions regarding products, services, policies, or specifications, accurately reference the verified facts above.\n4. Output Format: ALWAYS output pure spoken speech text directly. NEVER output JSON, code blocks, or configuration objects.\n5. Multilingual Rules: You support English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the user asks in Hindi, reply in natural, polite Hindi. If the user asks in Marathi, reply in natural, polite Marathi. If the user asks in English, reply in natural English.`;
 
           const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -1031,7 +1050,7 @@
           if (groqRes.ok) {
             const data = await groqRes.json();
             if (data.choices && data.choices[0] && data.choices[0].message) {
-              reply = data.choices[0].message.content.trim();
+              reply = sanitizeSpokenWidgetText(data.choices[0].message.content);
             }
           }
         } catch (apiErr) {
