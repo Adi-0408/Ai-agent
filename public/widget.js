@@ -32,7 +32,9 @@
 
   const FIREBASE_PROJECT_ID = 'ai-agent-11df2';
   const CACHE_KEY = `vhd_agent_${cleanInitialName.toLowerCase().replace(/\s+/g, '_')}`;
+  const DELETED_KEY = `vhd_deleted_${cleanInitialName.toLowerCase().replace(/\s+/g, '_')}`;
   const CACHE_TTL_MS = 15 * 1000; // 15 second cache so edits reflect quickly
+  let isAgentActive = false;
 
   // Default configuration initialized with the EXACT agent name
   let agentConfig = {
@@ -51,18 +53,36 @@
     ]
   };
 
-  // Fetch Agent Config from Firestore REST API (with multi-strategy lookup)
+  // Fetch Agent Config from Firestore REST API (with strict deletion check & verification)
   async function fetchAgentConfig() {
     try {
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (Date.now() - parsed.timestamp < CACHE_TTL_MS && parsed.data) {
-            agentConfig = { ...agentConfig, ...parsed.data };
+      // 0. Check deletion tombstone collection in Firestore
+      try {
+        const tombstoneRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/deleted_agents/${encodeURIComponent(cleanInitialName)}`);
+        if (tombstoneRes.ok) {
+          console.warn(`[Voice Help Desk] Agent "${cleanInitialName}" has been deleted. Voice widget is disabled.`);
+          try {
+            localStorage.removeItem(CACHE_KEY);
+            localStorage.setItem(DELETED_KEY, 'true');
+          } catch (e) {}
+          const existingHost = document.getElementById('voice-helpdesk-root');
+          if (existingHost) existingHost.remove();
+          return false;
+        }
+        if (agentId !== cleanInitialName) {
+          const tombstoneRes2 = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/deleted_agents/${encodeURIComponent(agentId)}`);
+          if (tombstoneRes2.ok) {
+            console.warn(`[Voice Help Desk] Agent "${agentId}" has been deleted. Voice widget is disabled.`);
+            try {
+              localStorage.removeItem(CACHE_KEY);
+              localStorage.setItem(DELETED_KEY, 'true');
+            } catch (e) {}
+            const existingHost = document.getElementById('voice-helpdesk-root');
+            if (existingHost) existingHost.remove();
+            return false;
           }
-        } catch (e) {}
-      }
+        }
+      } catch (tombErr) {}
 
       // 1. Try exact agentId
       let res = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents/${encodeURIComponent(agentId)}`);
@@ -73,7 +93,7 @@
         if (retryRes.ok) res = retryRes;
       }
 
-      // 3. Multi-strategy search across agents collection
+      // 3. Multi-strategy search across agents collection for exact matches
       if (!res.ok) {
         try {
           const listRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents`);
@@ -81,11 +101,12 @@
             const listJson = await listRes.json();
             const docs = listJson.documents || [];
             const targetLower = cleanInitialName.toLowerCase();
+            const targetIdLower = agentId.toLowerCase();
             const match = docs.find(d => {
               const dName = (d.fields?.name?.stringValue || '').toLowerCase().trim();
               const dId = (d.fields?.id?.stringValue || '').toLowerCase().trim();
               const docName = (d.name || '').toLowerCase();
-              return dName === targetLower || dId === targetLower || docName.endsWith('/' + encodeURIComponent(cleanInitialName).toLowerCase()) || dName.includes(targetLower) || targetLower.includes(dName);
+              return dName === targetLower || dId === targetLower || dId === targetIdLower || docName.endsWith('/' + encodeURIComponent(cleanInitialName).toLowerCase()) || docName.endsWith('/' + encodeURIComponent(agentId).toLowerCase());
             });
             if (match) {
               res = { ok: true, json: async () => match };
@@ -94,63 +115,114 @@
         } catch (searchErr) {}
       }
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json && json.fields) {
-          const fields = json.fields;
-          const parsedData = {};
-          if (fields.name) parsedData.name = fields.name.stringValue;
-          if (fields.greeting) parsedData.greeting = fields.greeting.stringValue;
-          if (fields.themeColor) parsedData.themeColor = fields.themeColor.stringValue;
-          if (fields.accentColor) parsedData.accentColor = fields.accentColor.stringValue;
-          if (fields.position) parsedData.position = fields.position.stringValue;
-          if (fields.prompt) parsedData.prompt = fields.prompt.stringValue;
-          if (fields.voice) parsedData.voice = fields.voice.stringValue;
-          if (fields.role) parsedData.role = fields.role.stringValue;
-          if (fields.model) parsedData.model = fields.model.stringValue;
-          if (fields.apiKey) parsedData.apiKey = fields.apiKey.stringValue;
-
-          if (fields.knowledgeBase && fields.knowledgeBase.arrayValue && fields.knowledgeBase.arrayValue.values) {
-            parsedData.knowledgeBase = fields.knowledgeBase.arrayValue.values.map(v => {
-              if (v.mapValue && v.mapValue.fields) {
-                return {
-                  q: v.mapValue.fields.q?.stringValue || '',
-                  a: v.mapValue.fields.a?.stringValue || ''
-                };
-              }
-              return null;
-            }).filter(Boolean);
-          }
-
-          // Enforce agent name consistency: replace any residual persona names
-          const finalAgentName = parsedData.name || cleanInitialName;
-          parsedData.name = finalAgentName;
-          if (parsedData.greeting) {
-            parsedData.greeting = parsedData.greeting.replace(/I am (app Concierge|Site Sentinel|Help Desk AI|[A-Za-z0-9_\s]+?)(?=[.,!])/i, `I am ${finalAgentName}`);
-          }
-          if (parsedData.prompt) {
-            parsedData.prompt = parsedData.prompt.replace(/You are (app Concierge|Site Sentinel|Help Desk AI|[A-Za-z0-9_\s]+?)(?=[,.\n])/i, `You are ${finalAgentName}`);
-          }
-
-          if (initialExplicitVoice) {
-            parsedData.voice = initialExplicitVoice;
-          }
-
-          agentConfig = { ...agentConfig, ...parsedData };
-          localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsedData, timestamp: Date.now() }));
-
-          if (agentConfig.voice) {
-            resolveAndLockVoice(agentConfig.voice, true);
-          }
-        }
+      // If agent was not found in Firestore (e.g. 404), it does NOT exist or has been deleted
+      if (!res || !res.ok) {
+        console.warn(`[Voice Help Desk] Agent "${cleanInitialName}" (ID: ${agentId}) does not exist in the database or has been deleted. Voice widget is disabled.`);
+        try {
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.setItem(DELETED_KEY, 'true');
+        } catch (e) {}
+        const existingHost = document.getElementById('voice-helpdesk-root');
+        if (existingHost) existingHost.remove();
+        return false;
       }
+
+      const json = await res.json();
+      if (!json || !json.fields) {
+        try {
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.setItem(DELETED_KEY, 'true');
+        } catch (e) {}
+        const existingHost = document.getElementById('voice-helpdesk-root');
+        if (existingHost) existingHost.remove();
+        return false;
+      }
+
+      const fields = json.fields;
+      // If agent document is marked as deleted or inactive
+      if (fields.isDeleted?.booleanValue === true || fields.status?.stringValue === 'deleted' || fields.status?.stringValue === 'inactive') {
+        console.warn(`[Voice Help Desk] Agent "${cleanInitialName}" is marked as deleted. Voice widget is disabled.`);
+        try {
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.setItem(DELETED_KEY, 'true');
+        } catch (e) {}
+        const existingHost = document.getElementById('voice-helpdesk-root');
+        if (existingHost) existingHost.remove();
+        return false;
+      }
+
+      const parsedData = {};
+      if (fields.name) parsedData.name = fields.name.stringValue;
+      if (fields.greeting) parsedData.greeting = fields.greeting.stringValue;
+      if (fields.themeColor) parsedData.themeColor = fields.themeColor.stringValue;
+      if (fields.accentColor) parsedData.accentColor = fields.accentColor.stringValue;
+      if (fields.position) parsedData.position = fields.position.stringValue;
+      if (fields.prompt) parsedData.prompt = fields.prompt.stringValue;
+      if (fields.voice) parsedData.voice = fields.voice.stringValue;
+      if (fields.role) parsedData.role = fields.role.stringValue;
+      if (fields.model) parsedData.model = fields.model.stringValue;
+      if (fields.apiKey) parsedData.apiKey = fields.apiKey.stringValue;
+
+      if (fields.knowledgeBase && fields.knowledgeBase.arrayValue && fields.knowledgeBase.arrayValue.values) {
+        parsedData.knowledgeBase = fields.knowledgeBase.arrayValue.values.map(v => {
+          if (v.mapValue && v.mapValue.fields) {
+            return {
+              q: v.mapValue.fields.q?.stringValue || '',
+              a: v.mapValue.fields.a?.stringValue || ''
+            };
+          }
+          return null;
+        }).filter(Boolean);
+      }
+
+      // Enforce agent name consistency: replace any residual persona names
+      const finalAgentName = parsedData.name || cleanInitialName;
+      parsedData.name = finalAgentName;
+      if (parsedData.greeting) {
+        parsedData.greeting = parsedData.greeting.replace(/I am (app Concierge|Site Sentinel|Help Desk AI|[A-Za-z0-9_\s]+?)(?=[.,!])/i, `I am ${finalAgentName}`);
+      }
+      if (parsedData.prompt) {
+        parsedData.prompt = parsedData.prompt.replace(/You are (app Concierge|Site Sentinel|Help Desk AI|[A-Za-z0-9_\s]+?)(?=[,.\n])/i, `You are ${finalAgentName}`);
+      }
+
+      if (initialExplicitVoice) {
+        parsedData.voice = initialExplicitVoice;
+      }
+
+      agentConfig = { ...agentConfig, ...parsedData };
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ data: parsedData, timestamp: Date.now() }));
+        localStorage.removeItem(DELETED_KEY);
+      } catch (e) {}
+
+      if (agentConfig.voice) {
+        resolveAndLockVoice(agentConfig.voice, true);
+      }
+
+      return true;
     } catch (err) {
-      console.warn('[Voice Help Desk] Could not fetch remote config, using defaults:', err);
+      console.warn('[Voice Help Desk] Could not verify remote agent config:', err);
+      const isDeletedFlag = localStorage.getItem(DELETED_KEY) === 'true';
+      if (isDeletedFlag) return false;
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Date.now() - parsed.timestamp < CACHE_TTL_MS && parsed.data) {
+            agentConfig = { ...agentConfig, ...parsed.data };
+            return true;
+          }
+        } catch (e) {}
+      }
+      return false;
     }
   }
 
   // Inject Shadow DOM Widget
   function initWidget() {
+    if (!isAgentActive) return;
+    if (document.getElementById('voice-helpdesk-root')) return;
+
     const hostEl = document.createElement('div');
     hostEl.id = 'voice-helpdesk-root';
     document.body.appendChild(hostEl);
@@ -694,6 +766,14 @@
 
     // Voice Orb Click (Supports Instant Barge-in)
     orb.addEventListener('click', async () => {
+      // Re-verify if agent has been deleted before opening mic
+      const stillActive = await fetchAgentConfig();
+      if (!stillActive) {
+        const existing = document.getElementById('voice-helpdesk-root');
+        if (existing) existing.remove();
+        return;
+      }
+
       if (!recognition) {
         alert('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
         return;
@@ -775,13 +855,515 @@
       body.scrollTop = body.scrollHeight;
     }
 
+    // --- REAL-TIME LIVE WEBSITE DATABASE & INVENTORY BRIDGE ---
+    function isCustomerSafeFaq(question, answer) {
+      if (!question || !answer) return false;
+      const qStr = String(question).trim();
+      const aStr = String(answer).trim();
+      if (qStr.length < 3 || aStr.length < 2) return false;
+
+      const qLower = qStr.toLowerCase();
+      const aLower = aStr.toLowerCase();
+
+      const invalidQ = [
+        /\bwhat tables are in the database\b/i,
+        /\bdatabase records for\b/i,
+        /\bdatabase context from\b/i,
+        /\binformation from\b/i,
+        /\bwhat is the minstockalert\b/i,
+        /\bwhat is minstockalert\b/i,
+        /\bwhat is create table\b/i,
+        /\bwhat is foreign key\b/i,
+        /\bwhat is primary key\b/i,
+        /\bwhat is varchar\b/i,
+        /\bwhat is schema\b/i
+      ];
+      if (invalidQ.some(pat => pat.test(qLower))) return false;
+
+      const codePatterns = [
+        /\b(number|string|boolean|any|void)\s*;\s*(\/\/.*)?$/i,
+        /\b(interface|type|class|enum)\s+[A-Z0-9_]+\s*\{/i,
+        /^(?:const|let|var)\s+[a-z0-9_]+\s*=/i,
+        /\bcreate\s+table\b/i,
+        /\binsert\s+into\b/i,
+        /\bvarchar\s*\(\d+\)/i,
+        /\{[\s\S]*\}\s*;?$/,
+        /^\s*(\/\/|\/\*|\*)/,
+        /\b(import|export)\s+.*\s+from\s+['"]/i,
+        /\[Binary File:/i
+      ];
+      if (codePatterns.some(pat => pat.test(aStr))) return false;
+      if (codePatterns.some(pat => pat.test(qStr))) return false;
+
+      if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:)/i.test(aLower)) {
+        return false;
+      }
+      if (/^database includes table/i.test(aLower)) return false;
+
+      return true;
+    }
+
+    function isDynamicDataQuery(text) {
+      const lower = String(text || '').toLowerCase();
+      if (/\b(stock|available|availability|in stock|out of stock|quantity|units?|count|inventory|price|cost|how much|rate|order status|track order|delivery status)\b/i.test(lower) ||
+          /(साठा|स्टॉक|उपलब्ध|शिल्लक|किंमत|भाव|ऑर्डर|दर)/i.test(text)) {
+        return true;
+      }
+      if (typeof window !== 'undefined' && window.EchoAIData) {
+        const inv = window.EchoAIData.liveInventory || window.EchoAIData.inventory || window.EchoAIData.products;
+        if (inv) {
+          const keys = Array.isArray(inv) ? inv.map(i => i.name || i.product || i.title) : Object.keys(inv);
+          for (const k of keys) {
+            if (k && lower.includes(String(k).toLowerCase())) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function extractTargetItem(text, history = []) {
+      let cleaned = String(text || '').trim()
+        .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|is there|do you have|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+        .replace(/[?!.,;]/g, '')
+        .trim();
+      cleaned = cleaned.replace(/\s+/g, ' ');
+
+      // If user said e.g. "just give me current stock number", resolve item from previous user messages
+      if (cleaned.length < 3 && Array.isArray(history) && history.length > 0) {
+        for (let i = history.length - 1; i >= 0; i--) {
+          const prevMsg = history[i];
+          const prevRole = prevMsg?.role;
+          const prevText = prevMsg?.content || prevMsg?.text || '';
+          if (prevRole === 'user' && prevText && prevText !== text) {
+            const prevClean = prevText
+              .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|is there|do you have|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+              .replace(/[?!.,;]/g, '')
+              .trim();
+            if (prevClean.length >= 3) {
+              return prevClean.replace(/\s+/g, ' ');
+            }
+          }
+        }
+
+        // Fallback to any previous turn if no user message yielded an item
+        for (let i = history.length - 1; i >= 0; i--) {
+          const prevText = history[i]?.content || history[i]?.text || '';
+          if (prevText && prevText !== text) {
+            const prevClean = prevText
+              .replace(/\b(we have|strips of|in stock at|available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|is there|do you have|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+              .replace(/[?!.,;]/g, '')
+              .trim();
+            if (prevClean.length >= 3) {
+              return prevClean.replace(/\s+/g, ' ');
+            }
+          }
+        }
+      }
+
+      return cleaned;
+    }
+
+    function matchInInventory(inventorySource, rawTarget) {
+      if (!inventorySource) return null;
+      const target = String(rawTarget || '').toLowerCase().trim();
+      if (!target) return null;
+
+      const targetTokens = target.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+
+      // If array of items
+      if (Array.isArray(inventorySource)) {
+        for (const item of inventorySource) {
+          const name = (item.name || item.product || item.title || '').toLowerCase();
+          if (name && (name.includes(target) || target.includes(name))) {
+            return item;
+          }
+        }
+        let best = null;
+        let maxOverlap = 0;
+        for (const item of inventorySource) {
+          const name = (item.name || item.product || item.title || '').toLowerCase();
+          let overlap = 0;
+          for (const tok of targetTokens) {
+            if (name.includes(tok)) overlap++;
+          }
+          if (overlap > maxOverlap && overlap >= Math.min(1, targetTokens.length)) {
+            maxOverlap = overlap;
+            best = item;
+          }
+        }
+        if (best) return best;
+      }
+
+      // If object map
+      if (typeof inventorySource === 'object') {
+        for (const [key, val] of Object.entries(inventorySource)) {
+          const keyLower = key.toLowerCase();
+          if (keyLower.includes(target) || target.includes(keyLower)) {
+            return typeof val === 'object' ? { name: key, ...val } : { name: key, stock: val };
+          }
+        }
+        let best = null;
+        let maxOverlap = 0;
+        for (const [key, val] of Object.entries(inventorySource)) {
+          const keyLower = key.toLowerCase();
+          let overlap = 0;
+          for (const tok of targetTokens) {
+            if (keyLower.includes(tok)) overlap++;
+          }
+          if (overlap > maxOverlap && overlap >= Math.min(1, targetTokens.length)) {
+            maxOverlap = overlap;
+            best = typeof val === 'object' ? { name: key, ...val } : { name: key, stock: val };
+          }
+        }
+        if (best) return best;
+      }
+
+      return null;
+    }
+
+    function formatRealtimeStockResponse(itemData, queryLang) {
+      const name = itemData.name || itemData.product || itemData.title || 'The requested item';
+      const stock = itemData.stock !== undefined ? itemData.stock : (itemData.quantity !== undefined ? itemData.quantity : null);
+      const price = itemData.price ? (typeof itemData.price === 'number' ? `₹${itemData.price}` : itemData.price) : '';
+      const unit = itemData.unit || 'units';
+      const rx = itemData.rx || itemData.prescriptionRequired;
+
+      if (queryLang === 'mr-IN') {
+        if (stock !== null && stock > 0) {
+          return `${name} सध्या उपलब्ध आहे. शिल्लक साठा (Stock): ${stock} ${unit}${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
+        } else if (stock === 0) {
+          return `क्षमस्व, ${name} चा साठा सध्या संपला आहे. नवीन स्टॉक लवकरच उपलब्ध होईल!`;
+        }
+      }
+
+      if (queryLang === 'hi-IN') {
+        if (stock !== null && stock > 0) {
+          return `${name} वर्तमान में उपलब्ध है। स्टॉक (Stock): ${stock} ${unit}${price ? ` (कीमत: ${price})` : ''} उपलब्ध है।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
+        } else if (stock === 0) {
+          return `क्षमा करें, ${name} अभी आउट ऑफ स्टॉक है। जल्द ही नया स्टॉक उपलब्ध होगा!`;
+        }
+      }
+
+      // English default
+      if (stock !== null && stock > 0) {
+        return `${name} is currently in stock! We have ${stock} ${unit} available${price ? ` at ${price} each` : ''}.${rx ? ' Please note a valid doctor prescription is required.' : ''}`;
+      } else if (stock === 0) {
+        return `I'm sorry, ${name} is currently out of stock. We can notify you once new inventory arrives!`;
+      }
+
+      if (itemData.message) return itemData.message;
+      return `${name} is available in our store.${price ? ` Price: ${price}.` : ''}`;
+    }
+
+    // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
+    async function resolveDatabaseBridge(query, agentConfig) {
+      // Step A — Dynamic Intent Classification:
+      // Check if customer query asks for dynamic data (stock, price, availability, orders, etc.)
+      if (!isDynamicDataQuery(query)) {
+        return { status: 'NOT_DYNAMIC_QUERY', item: null, data: null };
+      }
+
+      const targetItem = extractTargetItem(query, conversationHistory);
+
+      // Step B — Stage 1: Check Host Page State (window.EchoAIData):
+      if (typeof window !== 'undefined' && window.EchoAIData) {
+        // If queryDatabase function is provided
+        if (typeof window.EchoAIData.queryDatabase === 'function') {
+          try {
+            const hostResult = await window.EchoAIData.queryDatabase(query);
+            if (hostResult) {
+              return {
+                status: 'FOUND_IN_HOST_STATE',
+                item: targetItem,
+                data: hostResult
+              };
+            }
+          } catch (err) {
+            console.warn('[Echo AI Live Bridge] window.EchoAIData.queryDatabase error:', err);
+          }
+        }
+
+        // Fuzzy-search inventory, liveInventory, or products
+        const hostInventory = window.EchoAIData.inventory || window.EchoAIData.liveInventory || window.EchoAIData.products;
+        if (hostInventory) {
+          const match = matchInInventory(hostInventory, targetItem || query);
+          if (match) {
+            return {
+              status: 'FOUND_IN_HOST_STATE',
+              item: targetItem,
+              data: match
+            };
+          }
+        }
+      }
+
+      // Check window.echoLiveInventory fallback
+      if (typeof window !== 'undefined' && window.echoLiveInventory) {
+        const match = matchInInventory(window.echoLiveInventory, targetItem || query);
+        if (match) {
+          return {
+            status: 'FOUND_IN_HOST_STATE',
+            item: targetItem,
+            data: match
+          };
+        }
+      }
+
+      // Step C — Stage 2: Check Live API (data-api-endpoint / Custom Tools)
+      const apiEndpoint = (currentScript && currentScript.getAttribute('data-api-endpoint')) ||
+                          agentConfig.apiEndpoint ||
+                          (agentConfig.tools && agentConfig.tools.find(t => t.endpoint && !t.endpoint.includes('example.com'))?.endpoint) ||
+                          '';
+
+      if (apiEndpoint && !apiEndpoint.includes('example.com')) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
+          const url = apiEndpoint.includes('?')
+            ? `${apiEndpoint}&q=${encodeURIComponent(query)}`
+            : `${apiEndpoint}?q=${encodeURIComponent(query)}`;
+
+          const apiRes = await fetch(url, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            signal: controller.signal
+          }).catch(async () => {
+            return await fetch(apiEndpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query, item: targetItem, action: 'check_stock', timestamp: Date.now() }),
+              signal: controller.signal
+            });
+          });
+
+          clearTimeout(timeoutId);
+
+          if (apiRes && apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (apiData) {
+              return {
+                status: 'FOUND_IN_LIVE_API',
+                item: targetItem,
+                data: apiData
+              };
+            }
+          }
+        } catch (apiErr) {
+          console.warn('[Echo AI Live Bridge] Live API endpoint timeout/error:', apiErr);
+        }
+      }
+
+      // If the API is not configured, times out, or returns 4xx/5xx:
+      return {
+        status: 'API_NOT_CONFIGURED_OR_OFFLINE',
+        item: targetItem,
+        data: null
+      };
+    }
+
+    // --- STRICT LIVE CUSTOMER SUPPORT SYSTEM PROMPT BUILDER ---
+    function buildCustomerSystemPrompt(agentConfig, bridgeResult, queryLang = 'en-US') {
+      const businessName = agentConfig.businessName || agentConfig.companyName || agentConfig.name || 'our store';
+      const rawKb = agentConfig.knowledgeBase || [];
+      const cleanFaqs = rawKb.filter(item => isCustomerSafeFaq(item.q, item.a)).slice(0, 25);
+      const cleanFaqBlock = cleanFaqs.length > 0
+        ? cleanFaqs.map(k => `Q: ${k.q}\nA: ${k.a}`).join('\n\n')
+        : 'General customer support assistance.';
+
+      let bridgeBlock = '';
+      if (bridgeResult && bridgeResult.status === 'FOUND_IN_HOST_STATE') {
+        bridgeBlock = `STATUS: FOUND_IN_HOST_STATE\nDATA: ${JSON.stringify(bridgeResult.data)}`;
+      } else if (bridgeResult && bridgeResult.status === 'FOUND_IN_LIVE_API') {
+        bridgeBlock = `STATUS: FOUND_IN_LIVE_API\nDATA: ${JSON.stringify(bridgeResult.data)}`;
+      } else if (bridgeResult && bridgeResult.status === 'API_NOT_CONFIGURED_OR_OFFLINE') {
+        bridgeBlock = `STATUS: NOT_CONFIGURED_OR_OFFLINE\nTARGET_ITEM: "${bridgeResult.item || 'The requested item'}"`;
+      } else {
+        bridgeBlock = `STATUS: NO_DYNAMIC_DATA_REQUESTED`;
+      }
+
+      let langDirective = 'Speak in clear, natural English.';
+      if (queryLang === 'mr-IN') {
+        langDirective = 'Reply strictly in natural, polite Marathi (मराठी).';
+      } else if (queryLang === 'hi-IN') {
+        langDirective = 'Reply strictly in natural, polite Hindi (हिंदी).';
+      }
+
+      return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website. You are speaking directly to a customer browsing the website.
+CRITICAL RULES:
+- NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
+- Answer strictly using the injected [LIVE_BRIDGE_DATA] and [CLEAN_CUSTOMER_FAQ_KB] provided below.
+- If [LIVE_BRIDGE_DATA] contains exact stock, price, order status, or availability (e.g., '42 strips available at ₹185.50'), state the exact numbers naturally and concisely in 1-2 spoken-friendly sentences.
+- If [LIVE_BRIDGE_DATA] returns NOT_CONFIGURED_OR_OFFLINE, DO NOT make up prices or stock numbers, and DO NOT mention APIs or technical errors. Reply naturally: '${bridgeResult?.item || 'The requested item'} is in our catalog. To check live real-time stock, please verify with our counter/support team.'
+- Keep responses plain-text, conversational, and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
+- LANGUAGE: ${langDirective}
+
+[LIVE_BRIDGE_DATA]
+${bridgeBlock}
+
+[CLEAN_CUSTOMER_FAQ_KB]
+${cleanFaqBlock}`;
+    }
+
+    // --- UNIFIED BYOK LLM FETCHER (Groq, Gemini, OpenAI) ---
+    async function callLLMWithBYOK(userMessage, systemPrompt, conversationHistory, apiKey, model = '') {
+      if (!apiKey) return null;
+
+      const cleanUser = String(userMessage || '').trim();
+      const trimmedKey = String(apiKey).trim();
+
+      function sanitizeSpokenOutput(text) {
+        if (!text) return '';
+        let cleaned = String(text)
+          .replace(/```[\s\S]*?```/g, '')
+          .replace(/[*#_`]/g, '')
+          .replace(/^[-*•]\s+/gm, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        // Enforce under 35 words so Web Speech API TTS reads smoothly
+        const words = cleaned.split(' ');
+        if (words.length > 35) {
+          cleaned = words.slice(0, 35).join(' ') + '.';
+        }
+        return cleaned;
+      }
+
+      try {
+        // 1. Groq Provider (gsk_...)
+        if (trimmedKey.startsWith('gsk_')) {
+          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${trimmedKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: model || 'llama-3.3-70b-versatile',
+              messages: [
+                { role: 'system', content: systemPrompt },
+                ...conversationHistory.slice(-6).map(m => ({
+                  role: (m.role === 'assistant' || m.role === 'agent') ? 'assistant' : 'user',
+                  content: m.content || m.text || ''
+                })),
+                { role: 'user', content: cleanUser }
+              ],
+              temperature: 0.3,
+              max_tokens: 150
+            }),
+            signal: AbortSignal.timeout(5000)
+          });
+
+          if (groqRes.ok) {
+            const data = await groqRes.json();
+            const content = data.choices?.[0]?.message?.content;
+            if (content) return sanitizeSpokenOutput(content);
+          }
+        }
+
+        // 2. Google Gemini Provider (AIza...)
+        // Valid system_instruction schema preventing HTTP 400 errors
+        if (trimmedKey.startsWith('AIza')) {
+          const geminiModel = (model && model.includes('gemini')) ? model : 'gemini-2.5-flash';
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${trimmedKey}`;
+
+          const contents = [
+            ...conversationHistory.slice(-4).map(m => ({
+              role: (m.role === 'assistant' || m.role === 'agent') ? 'model' : 'user',
+              parts: [{ text: m.content || m.text || '' }]
+            })),
+            {
+              role: 'user',
+              parts: [{ text: cleanUser }]
+            }
+          ];
+
+          const geminiRes = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: {
+                parts: [{ text: systemPrompt }]
+              },
+              contents,
+              generationConfig: {
+                temperature: 0.3,
+                maxOutputTokens: 150
+              }
+            }),
+            signal: AbortSignal.timeout(6000)
+          });
+
+          if (geminiRes.ok) {
+            const data = await geminiRes.json();
+            const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (candidateText) return sanitizeSpokenOutput(candidateText);
+          } else {
+            console.warn('[Echo AI BYOK] Gemini API error status:', geminiRes.status);
+          }
+        }
+
+        // 3. OpenAI / Compatible Provider (sk-...)
+        if (trimmedKey.startsWith('sk-')) {
+          const openAiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${trimmedKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: model || 'gpt-4o-mini',
+              messages: [
+                { role: 'system', content: systemPrompt },
+                ...conversationHistory.slice(-6).map(m => ({
+                  role: (m.role === 'assistant' || m.role === 'agent') ? 'assistant' : 'user',
+                  content: m.content || m.text || ''
+                })),
+                { role: 'user', content: cleanUser }
+              ],
+              temperature: 0.3,
+              max_tokens: 150
+            }),
+            signal: AbortSignal.timeout(5000)
+          });
+
+          if (openAiRes.ok) {
+            const data = await openAiRes.json();
+            const content = data.choices?.[0]?.message?.content;
+            if (content) return sanitizeSpokenOutput(content);
+          }
+        }
+      } catch (err) {
+        console.warn('[Echo AI BYOK] Error calling LLM provider:', err);
+      }
+
+      return null;
+    }
+
     // Autonomous Zero-API-Key Local Reasoning Engine
-    function inferLocalAgentResponse(userText) {
+    async function inferLocalAgentResponse(userText, bridgeResult = null) {
       const text = userText.trim();
       const lower = text.toLowerCase();
       const cleanWords = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
       const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'your', 'about', 'can', 'you']);
       const meaningfulWords = cleanWords.filter(w => !stopWords.has(w));
+      const queryLang = detectTextLanguage(text);
+
+      // Check Real-Time Live Website Database / Inventory first for stock & pricing questions
+      const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig);
+      if (bridge && (bridge.status === 'FOUND_IN_HOST_STATE' || bridge.status === 'FOUND_IN_LIVE_API')) {
+        return formatRealtimeStockResponse(bridge.data, queryLang);
+      }
+
+      if (bridge && bridge.status === 'API_NOT_CONFIGURED_OR_OFFLINE') {
+        const item = bridge.item || 'The requested item';
+        if (queryLang === 'mr-IN') {
+          return `${item} आमच्या कॅटलॉगमध्ये उपलब्ध आहे. सध्याचा अचूक रिअल-टाइम साठा (Stock) तपासण्यासाठी कृपया आमच्या काउंटरशी संपर्क साधा.`;
+        }
+        if (queryLang === 'hi-IN') {
+          return `${item} हमारे कैटलॉग में उपलब्ध है। वर्तमान लाइव स्टॉक (Stock) की पुष्टि के लिए कृपया हमारे काउंटर से संपर्क करें।`;
+        }
+        return `${item} is in our catalog. To check live real-time stock, please verify with our counter/support team.`;
+      }
 
       // Marathi Conversational Queries
       if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)/i.test(text) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {
@@ -852,6 +1434,11 @@
         return "Goodbye! Have a great day, and feel free to reach out anytime.";
       }
 
+      // 4.1 Technical/Developer Query Protection (Customer Assistant Boundary)
+      if (/\b(?:(?:how\s+(?:do\s+i|can\s+i|to)\s+)?(?:get|find|obtain|create|generate|acquire|setup|add|enter|use)\s+.*(?:api\s*key|groq\s*key|gemini\s*key|google\s*key|key)|(?:where|how)\s+(?:do\s+i|can\s+i|to)\s+(?:get|find|obtain|create)\s+.*key|(?:groq|gemini|google)\s+(?:api\s*)?key|api\s*key\s*(?:of|for|from)\s*(?:google|groq|gemini)|key\s+(?:of|for|from)\s*(?:the\s*)?(?:google|groq|gemini)|embed|integrate|script tag|widget\.js)\b/i.test(lower)) {
+        return `I am ${agentConfig.name}, your live customer support assistant. How can I assist you with our catalog, services, or placing an order today?`;
+      }
+
       // 5. Backend Action Tool Intent Matching
       const tools = agentConfig.tools || [];
       for (const tool of tools) {
@@ -862,8 +1449,8 @@
         }
       }
 
-      // 6. Semantic Knowledge Base Matching
-      const kb = agentConfig.knowledgeBase || [];
+      // 6. Semantic Knowledge Base Matching (Customer-Safe Only)
+      const kb = (agentConfig.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a));
       let bestItem = null;
       let highestScore = 0;
 
@@ -881,18 +1468,17 @@
           if (aLower.includes(word)) score += 5;
         }
 
-        if (score > highestScore) {
+        if (score > highestScore && isCustomerSafeFaq(item.q, item.a)) {
           highestScore = score;
           bestItem = item;
         }
       }
 
-      if (bestItem && highestScore >= 15) {
+      if (bestItem && highestScore >= 25 && isCustomerSafeFaq(bestItem.q, bestItem.a)) {
         return bestItem.a;
       }
 
       // 7. Contextual Fallback in Exact Language
-      const queryLang = detectTextLanguage(text);
       if (queryLang === 'mr-IN') {
         return `मी समजतो की आपण "${text}" बद्दल विचारत आहात. मी आपल्या सेवा आणि प्रश्नांची उत्तरे देण्यासाठी उपलब्ध आहे. कृपया मला आणखी सांगा!`;
       }
@@ -1015,8 +1601,16 @@
       }, 400);
     }
 
-    // Process Message with User-Provided API Key (Groq LPU <200ms with Local Semantic Fallback)
+    // Process Message with User-Provided API Key (Groq / Gemini / OpenAI with Local Semantic Fallback)
     async function handleUserMessage(userText) {
+      // Re-verify if agent has been deleted before responding
+      const stillActive = await fetchAgentConfig();
+      if (!stillActive) {
+        const existing = document.getElementById('voice-helpdesk-root');
+        if (existing) existing.remove();
+        return;
+      }
+
       appendMsg(userText, 'user');
       conversationHistory.push({ role: 'user', content: userText });
       sessionLogMessages.push({ role: 'user', text: userText, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
@@ -1034,64 +1628,18 @@
                      window.AI_AGENT_API_KEY ||
                      '';
 
-      function sanitizeSpokenWidgetText(raw) {
-        if (!raw) return '';
-        let str = String(raw).trim();
-        if (str.startsWith('{') || str.startsWith('[') || str.includes('"agent_config"') || str.includes('"personality"')) {
-          try {
-            const parsed = JSON.parse(str);
-            if (parsed.message) return sanitizeSpokenWidgetText(parsed.message);
-            if (parsed.response) return sanitizeSpokenWidgetText(parsed.response);
-            if (parsed.description) return sanitizeSpokenWidgetText(parsed.description);
-            if (parsed.agent_config?.description) return sanitizeSpokenWidgetText(parsed.agent_config.description);
-          } catch (_) {
-            const descMatch = str.match(/"description"\s*:\s*"([^"]+)"/i);
-            if (descMatch) return descMatch[1];
-          }
-          return "Hello! How can I assist you today?";
-        }
-        return str.replace(/[*#_`]/g, '').trim();
+      // 1. Deterministically resolve Live Real-Time Website Database Bridge first
+      const bridgeResult = await resolveDatabaseBridge(userText, agentConfig);
+
+      // 2. Call BYOK LLM if API Key is configured
+      if (apiKey) {
+        const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang);
+        reply = await callLLMWithBYOK(userText, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
       }
 
-      // 1. Live AI Inference using User-Provided API Key
-      if (apiKey && apiKey.startsWith('gsk_')) {
-        try {
-          const kbFacts = (agentConfig.knowledgeBase || []).slice(0, 25);
-          const kbText = kbFacts.length > 0 ? `\nVerified Website Knowledge Base Facts:\n${JSON.stringify(kbFacts)}` : '';
-          const systemContext = `Your name is "${agentConfig.name}". You are "${agentConfig.name}", the official omni-channel AI Customer Support & Help Desk Agent for this website. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, and speed across BOTH voice conversations and interactive chat. Never introduce yourself as "app Concierge", "Site Sentinel", "Help Desk AI", or any other name. Always identify yourself as "${agentConfig.name}".\n\n${agentConfig.prompt || agentConfig.systemPrompt || `You are ${agentConfig.name}, the dedicated AI Customer Support Agent for this website.`}${kbText}\n\nPOLITE MANNERS & ETIQUETTE:\nBe exceptionally polite, respectful, warm, and well-mannered at all times. Use courteous phrasing (e.g. "Namaskar", "Hello, I would be delighted to assist", "Certainly"). Treat every visitor with patience and kindness.\n\nEVERYDAY KNOWLEDGE & GENERAL INTELLIGENCE:\nYou possess broad everyday common knowledge, general facts, time/date awareness, and conversational intelligence. When customers engage in small talk, greetings, general inquiries, or everyday conversation, answer them warmly, intelligently, and politely. Never refuse casual conversation.\n\nMANDATORY TURN-LEVEL CODE-SWITCHING RULE (CRITICAL):\nYou MUST independently evaluate the language of the LATEST user message on EVERY turn, regardless of what language was used in previous conversation history turns.\n- Mid-Conversation Language Switching: If the customer starts a conversation in English and switches to Marathi mid-conversation (in Devanagari script or Romanized/Marathish like 'kasa ahes', 'mala sanga', 'ahe', 'kay ahe', 'kuthe ahe'), you MUST IMMEDIATELY switch your response to polite, natural Marathi (मराठी).\n- If the customer switches to Hindi (Devanagari or Hinglish like 'kaise ho', 'kya hai', 'bataiye'), you MUST reply in polite, natural Hindi (हिंदी).\n- If the customer switches back to English, reply in natural English.\n- NEVER remain stuck in the previous turn's language when the customer has switched languages!\n\nCRITICAL OPERATIONAL RULES:\n1. Conversational Voice & Chat Output: Respond in 1 to 2 clear, spoken, natural sentences directly answering the customer. Never output markdown asterisks (*), hashtags (#), bullet points, or raw JSON, as this will be read aloud by browser voice synthesis.\n2. Customer Advocate & Problem Solver: Greet visitors warmly, address customer concerns with patience, and help them find solutions. For business, pricing, or product inquiries, accurately reference the Verified Knowledge Base Facts above.\n3. Output Format: ALWAYS output pure spoken/chat conversational text directly. NEVER output JSON, code blocks, or configuration objects.`;
-
-          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: agentConfig.model || 'llama-3.3-70b-versatile',
-              messages: [
-                { role: 'system', content: systemContext },
-                ...conversationHistory.slice(-6)
-              ],
-              temperature: 0.5,
-              max_tokens: 160
-            }),
-            signal: AbortSignal.timeout(6000)
-          });
-
-          if (groqRes.ok) {
-            const data = await groqRes.json();
-            if (data.choices && data.choices[0] && data.choices[0].message) {
-              reply = sanitizeSpokenWidgetText(data.choices[0].message.content);
-            }
-          }
-        } catch (apiErr) {
-          console.warn('[Voice Help Desk] Live AI inference error, using local fallback:', apiErr);
-        }
-      }
-
-      // 2. Fallback to Local Semantic Knowledge Reasoner if API failed or offline
+      // 3. Fallback to Local Semantic Knowledge Reasoner if API key is not present or BYOK failed
       if (!reply) {
-        reply = inferLocalAgentResponse(userText);
+        reply = await inferLocalAgentResponse(userText, bridgeResult);
       }
 
       conversationHistory.push({ role: 'assistant', content: reply });
@@ -1528,13 +2076,21 @@
     }
   }
 
-  // Start initialization
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', async () => {
-      await fetchAgentConfig();
+  // Start initialization with strict deletion check
+  async function startWidget() {
+    isAgentActive = await fetchAgentConfig();
+    if (isAgentActive) {
       initWidget();
-    });
+    } else {
+      console.warn(`[Voice Help Desk] Agent "${cleanInitialName}" (ID: ${agentId}) does not exist in the database or has been deleted. Voice widget is disabled.`);
+      const existing = document.getElementById('voice-helpdesk-root');
+      if (existing) existing.remove();
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startWidget);
   } else {
-    fetchAgentConfig().then(() => initWidget());
+    startWidget();
   }
 })();

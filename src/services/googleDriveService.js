@@ -77,6 +77,8 @@ export function getTierFolderLabel(tier) {
   return 'Database';
 }
 
+export const DEFAULT_DRIVE_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbzCAFbPqLmLwATKB1xtF0vc_XWxpsKiyHowBuqpFKSFvy6NbBYWwQq0le_V2c7l38o7Og/exec';
+
 export function getDriveWebhookUrl() {
   if (centralDriveConfig?.webhookUrl) {
     return centralDriveConfig.webhookUrl.trim();
@@ -86,9 +88,9 @@ export function getDriveWebhookUrl() {
       ? (import.meta.env.VITE_GOOGLE_DRIVE_WEBHOOK_URL || '')
       : '';
     const stored = localStorage.getItem(STORAGE_KEYS.WEBHOOK_URL) || '';
-    return (stored || envUrl || '').trim();
+    return (stored || envUrl || DEFAULT_DRIVE_WEBHOOK_URL).trim();
   } catch (e) {
-    return '';
+    return DEFAULT_DRIVE_WEBHOOK_URL;
   }
 }
 
