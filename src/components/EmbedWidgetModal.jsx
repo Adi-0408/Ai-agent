@@ -59,6 +59,7 @@ export default function EmbedWidgetModal({ isOpen, onClose, agent }) {
 
   const platforms = [
     { id: 'html', label: 'HTML / Vanilla JS' },
+    { id: 'realtime', label: '⚡ Realtime Live Data & Stock' },
     { id: 'react', label: 'React / Next.js' },
     { id: 'curl', label: 'cURL / REST API' },
     { id: 'wordpress', label: 'WordPress' },
@@ -70,6 +71,40 @@ export default function EmbedWidgetModal({ isOpen, onClose, agent }) {
     const keyInline = deploymentMode === 'live-byok' && currentApiKey ? ` data-api-key="${currentApiKey}"` : '';
 
     switch (activePlatform) {
+      case 'realtime':
+        return `<!-- REAL-TIME LIVE DATABASE & STOCK INTEGRATION -->
+<!-- Option 1: In-Page JavaScript Bridge (Zero-Backend, Instant Setup) -->
+<script>
+  window.EchoAIData = {
+    // 1. Live Inventory Map: Updated in real-time by your store / warehouse
+    liveInventory: {
+      "augmentin 625 duo tablet": {
+        name: "Augmentin 625 Duo Tablet",
+        stock: 42,
+        unit: "strips",
+        price: "₹185.50",
+        available: true,
+        rx: true
+      },
+      "azithromycin 500mg": { stock: 18, price: "₹120.00", available: true },
+      "paracetamol 650mg": { stock: 150, price: "₹32.00", available: true }
+    },
+
+    // 2. OR Dynamic Query Hook: Automatically queries your backend on each visitor question
+    queryDatabase: async (productQuery, action) => {
+      // E.g. query your real-time database or inventory API:
+      const res = await fetch('/api/inventory/search?q=' + encodeURIComponent(productQuery));
+      return await res.json(); // returns { name: "...", stock: 42, price: "₹185.50" }
+    }
+  };
+</script>
+
+<!-- The Voice Assistant Script (Reads live database state automatically!) -->
+<script src="${widgetUrl}" data-agent-id="${agentId}"${keyInline} defer></script>
+
+<!-- Option 2: Live Backend REST Webhook Endpoint (Node.js / Python / PHP) -->
+<!-- Pass data-api-endpoint on the script tag to delegate live stock lookups: -->
+<!-- <script src="${widgetUrl}" data-agent-id="${agentId}" data-api-endpoint="/api/echo-live-stock" defer></script> -->`;
       case 'react':
         return `// Next.js (App Router or Pages Router)
 import Script from 'next/script';

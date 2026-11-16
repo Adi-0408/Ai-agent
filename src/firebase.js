@@ -296,24 +296,84 @@ export async function saveAgent(agent) {
       localStorage.removeItem(`agent_cache_${agent.id}`);
       deleteDoc(doc(db, AGENTS_COLLECTION, agent.id)).catch(() => {});
     }
+    // Remove tombstone if it was previously marked deleted
+    deleteDoc(doc(db, 'deleted_agents', titleId)).catch(() => {});
+    if (agent.id && agent.id !== titleId) {
+      deleteDoc(doc(db, 'deleted_agents', agent.id)).catch(() => {});
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(`vhd_deleted_${titleId.toLowerCase().replace(/\s+/g, '_')}`);
+      if (agent.id) {
+        localStorage.removeItem(`vhd_deleted_${String(agent.id).toLowerCase().replace(/\s+/g, '_')}`);
+      }
+    }
   } catch (e) {}
 
   return { id: titleId, ...payload };
 }
 
 /**
- * Delete an agent and its corresponding conversation
+ * Delete an agent and its corresponding conversation.
+ * Writes a tombstone record to deleted_agents so live embed widgets immediately deactivate.
  */
-export async function deleteAgent(agentId) {
-  const titleId = getCleanTitleId(agentId);
+export async function deleteAgent(nameOrId) {
+  const agentObj = typeof nameOrId === 'object' && nameOrId !== null ? nameOrId : {};
+  const rawId = typeof nameOrId === 'string' ? nameOrId : (agentObj.id || agentObj.name || '');
+  const titleId = getCleanTitleId(rawId);
+  const nameId = agentObj.name ? getCleanTitleId(agentObj.name) : '';
+
+  // 1. Delete from agents collection
   await deleteDoc(doc(db, AGENTS_COLLECTION, titleId)).catch(() => {});
-  if (agentId !== titleId) {
-    await deleteDoc(doc(db, AGENTS_COLLECTION, agentId)).catch(() => {});
+  if (rawId && rawId !== titleId) {
+    await deleteDoc(doc(db, AGENTS_COLLECTION, rawId)).catch(() => {});
   }
-  await deleteDoc(doc(db, CONVERSATIONS_COLLECTION, titleId)).catch(() => {});
+  if (nameId && nameId !== titleId && nameId !== rawId) {
+    await deleteDoc(doc(db, AGENTS_COLLECTION, nameId)).catch(() => {});
+  }
+
+  // 2. Mark in deleted_agents tombstone collection so any embedded widgets immediately deactivate
   try {
-    localStorage.removeItem(`agent_cache_${titleId}`);
-    localStorage.removeItem(`echo_logs_${titleId}`);
+    await setDoc(doc(db, 'deleted_agents', titleId), {
+      id: titleId,
+      name: agentObj.name || titleId,
+      isDeleted: true,
+      deletedAt: serverTimestamp()
+    });
+    if (rawId && rawId !== titleId) {
+      await setDoc(doc(db, 'deleted_agents', rawId), {
+        id: rawId,
+        isDeleted: true,
+        deletedAt: serverTimestamp()
+      }).catch(() => {});
+    }
+    if (nameId && nameId !== titleId && nameId !== rawId) {
+      await setDoc(doc(db, 'deleted_agents', nameId), {
+        id: nameId,
+        isDeleted: true,
+        deletedAt: serverTimestamp()
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn("Could not write deleted_agents tombstone:", e);
+  }
+
+  // 3. Delete corresponding conversation
+  await deleteDoc(doc(db, CONVERSATIONS_COLLECTION, titleId)).catch(() => {});
+  if (rawId && rawId !== titleId) {
+    await deleteDoc(doc(db, CONVERSATIONS_COLLECTION, rawId)).catch(() => {});
+  }
+
+  // 4. Purge local caches and store deletion marker
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(`agent_cache_${titleId}`);
+      localStorage.removeItem(`agent_cache_${rawId}`);
+      localStorage.removeItem(`echo_logs_${titleId}`);
+      localStorage.removeItem(`vhd_agent_${titleId.toLowerCase().replace(/\s+/g, '_')}`);
+      localStorage.removeItem(`vhd_agent_${rawId.toLowerCase().replace(/\s+/g, '_')}`);
+      localStorage.setItem(`vhd_deleted_${titleId.toLowerCase().replace(/\s+/g, '_')}`, 'true');
+      localStorage.setItem(`vhd_deleted_${rawId.toLowerCase().replace(/\s+/g, '_')}`, 'true');
+    }
   } catch (e) {}
 }
 
@@ -322,9 +382,14 @@ export async function deleteAgent(agentId) {
  */
 export async function deleteAllAgentsAndData() {
   try {
-    // 1. Delete all agents from Firestore
+    // 1. Mark in deleted_agents tombstone, then delete from Firestore
     const agentsSnapshot = await getDocs(collection(db, AGENTS_COLLECTION));
     for (const d of agentsSnapshot.docs) {
+      await setDoc(doc(db, 'deleted_agents', d.id), {
+        id: d.id,
+        isDeleted: true,
+        deletedAt: serverTimestamp()
+      }).catch(() => {});
       await deleteDoc(d.ref).catch(() => {});
     }
 

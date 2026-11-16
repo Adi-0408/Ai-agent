@@ -111,6 +111,7 @@ import {
 import { detectFileType, analyzeFullStackFiles } from './utils/codebaseAnalyzer';
 import { synthesizeAgentFromFilesAndPrompt } from './services/agentSynthesizer';
 import { resolveLockedVoice, speakTextWithWatchdog, stopCurrentSpeech } from './utils/voiceConsistency';
+import { isZipFile, expandFileList } from './utils/zipHandler';
 import {
   SAMPLE_FRONTEND_FILE,
   SAMPLE_BACKEND_FILE,
@@ -816,13 +817,22 @@ export default function App() {
     }
   };
 
-  const handleDeleteAssistant = async (idToDelete) => {
+  const handleDeleteAssistant = async (target) => {
+    if (!target) return;
+    const targetObj = typeof target === 'object' ? target : (assistantsList.find(a => a.id === target || a.name === target) || { id: target, name: target });
+    const idToDelete = targetObj.id || targetObj.name;
+    const nameToDelete = targetObj.name || targetObj.id;
+
+    if (!window.confirm(`⚠️ Are you sure you want to delete "${nameToDelete}"? Once deleted, this assistant will immediately stop working and will no longer appear on any website where it was embedded.`)) {
+      return;
+    }
+
     try {
-      await deleteAgent(idToDelete);
+      await deleteAgent(targetObj);
     } catch (err) {
       console.error("Failed to delete assistant from Firestore:", err);
     }
-    const remaining = assistantsList.filter(a => a.id !== idToDelete);
+    const remaining = assistantsList.filter(a => a.id !== idToDelete && a.name !== nameToDelete);
     setAssistantsList(remaining);
     setSelectedAssistantId(remaining.length > 0 ? remaining[0].id : null);
   };
@@ -951,14 +961,45 @@ export default function App() {
 
   const activeThread = threads.find((t) => t.id === activeThreadId) || null;
 
-  // Handle uploading files into Composer (Supports all file formats)
-  const handleAttachComposerFiles = (e) => {
-    const fileList = Array.from(e.target.files || []);
-    if (!fileList.length) return;
+  // Handle uploading files into Composer (Supports all file formats & .zip archives)
+  const handleAttachComposerFiles = async (e) => {
+    const rawFileList = Array.from(e.target.files || []);
+    if (!rawFileList.length) return;
+    e.target.value = '';
+
+    let fileList = rawFileList;
+    try {
+      fileList = await expandFileList(rawFileList);
+    } catch (err) {
+      console.warn("Could not unpack archive for composer:", err);
+    }
 
     fileList.forEach((file) => {
-      const isText = /\.(html?|css|scss|jsx?|tsx?|vue|svelte|json|sql|csv|tsv|txt|md|xml|ya?ml|py|go|java|php|rb|prisma|env)$/i.test(file.name) ||
-        (file.type && (file.type.startsWith('text/') || file.type === 'application/json' || file.type === 'application/javascript'));
+      let content = file.textContent;
+      const isText = content !== undefined
+        ? !content.startsWith('[Binary File:')
+        : (/\.(html?|css|scss|jsx?|tsx?|vue|svelte|json|sql|csv|tsv|txt|md|xml|ya?ml|py|go|java|php|rb|prisma|env)$/i.test(file.name) ||
+           (file.type && (file.type.startsWith('text/') || file.type === 'application/json' || file.type === 'application/javascript')));
+
+      if (content !== undefined) {
+        const detectedTier = detectFileType(file.name, isText ? content : '');
+        setComposerAttachedFiles((prev) => [
+          ...prev,
+          {
+            id: `comp_f_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            name: file.name,
+            relativePath: file.relativePath || file.name,
+            mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
+            size: `${(file.size / 1024).toFixed(1)} KB`,
+            sizeBytes: file.size,
+            type: detectedTier,
+            isBinary: !isText,
+            rawFile: file,
+            content
+          }
+        ]);
+        return;
+      }
 
       if (!isText) {
         const detectedTier = detectFileType(file.name, '');
@@ -967,6 +1008,7 @@ export default function App() {
           {
             id: `comp_f_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
             name: file.name,
+            relativePath: file.relativePath || file.name,
             mimeType: file.type || 'application/octet-stream',
             size: `${(file.size / 1024).toFixed(1)} KB`,
             sizeBytes: file.size,
@@ -981,23 +1023,24 @@ export default function App() {
 
       const reader = new FileReader();
       reader.onload = (event) => {
-        let content = event.target.result;
-        if (typeof content === 'string') {
-          content = content.replace(/\0/g, ' ');
+        let textContent = event.target.result;
+        if (typeof textContent === 'string') {
+          textContent = textContent.replace(/\0/g, ' ');
         }
-        const detectedTier = detectFileType(file.name, content);
+        const detectedTier = detectFileType(file.name, textContent);
         setComposerAttachedFiles((prev) => [
           ...prev,
           {
             id: `comp_f_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
             name: file.name,
+            relativePath: file.relativePath || file.name,
             mimeType: file.type || 'text/plain',
             size: `${(file.size / 1024).toFixed(1)} KB`,
             sizeBytes: file.size,
             type: detectedTier,
             isBinary: false,
             rawFile: file,
-            content: content
+            content: textContent
           }
         ]);
       };
@@ -1006,7 +1049,6 @@ export default function App() {
       };
       reader.readAsText(file);
     });
-    e.target.value = '';
   };
 
   const handleRemoveComposerFile = (fileId) => {
@@ -1332,11 +1374,13 @@ export default function App() {
     try {
       const defaultSupportPrompt = "You are a friendly, helpful AI voice assistant for customer support. Answer visitor questions politely and concisely in 1-2 spoken sentences.";
       const activeKey = currentAssistant?.apiKey || getUserApiKeys().activeKey || '';
+      const currentAgentName = currentAssistant?.name || 'Krushna AI Voice Agent';
       const aiReply = await generateAIResponse(
         text.trim(),
         currentAssistant?.prompt || defaultSupportPrompt,
         currentAssistant?.knowledgeBase || [],
-        activeKey
+        activeKey,
+        { agentName: currentAgentName }
       );
 
       const assistantMessage = {
@@ -2154,7 +2198,7 @@ export default function App() {
                       {/* Delete Assistant Button */}
                       <button
                         type="button"
-                        onClick={() => currentAssistant && handleDeleteAssistant(currentAssistant.id)}
+                        onClick={() => currentAssistant && handleDeleteAssistant(currentAssistant)}
                         className="w-8 h-8 rounded-lg bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 hover:border-rose-200 flex items-center justify-center shrink-0 transition-colors cursor-pointer shadow-2xs"
                         title="Delete Assistant"
                       >
@@ -3257,7 +3301,7 @@ export default function App() {
                             </div>
                           )}
 
-                          <div>{msg.text}</div>
+                          <div className="whitespace-pre-wrap break-words leading-relaxed">{msg.text}</div>
 
                           {/* Synthesized Agent Blueprint Card */}
                           {msg.synthesizedAgent && (
@@ -3606,7 +3650,7 @@ export default function App() {
                     type="button"
                     onClick={() => composerFileInputRef.current?.click()}
                     className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-500 hover:text-indigo-600 transition-colors cursor-pointer shrink-0"
-                    title="Attach any file (Documents, PDFs, Text, Code, Database, etc.)"
+                    title="Attach files or .zip project archives (Documents, PDFs, Text, Code, Database, etc.)"
                   >
                     <Paperclip size={16} />
                   </button>

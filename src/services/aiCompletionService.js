@@ -683,6 +683,22 @@ Your floating voice assistant widget will appear immediately on your site, with 
     }
   }
 
+  // Check live database records first if provided
+  const dbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
+  if (Array.isArray(dbRecords) && dbRecords.length > 0) {
+    if (/\b(what products|list products|what do you sell|all products|available products|show products|what models|what cars|what services|offerings|catalog|all meds|list of all meds|list all meds|medicines)\b/i.test(lower)) {
+      const summary = dbRecords.slice(0, 6).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
+      return `Our live database includes: ${summary}. You can ask me for real-time stock or details on any item!`;
+    }
+    const matchedRecord = dbRecords.find(r => {
+      const rName = (r.name || '').toLowerCase();
+      return rName && (lower.includes(rName) || rName.includes(lower));
+    });
+    if (matchedRecord) {
+      return `${matchedRecord.name} is in our database${matchedRecord.price ? ` at ${matchedRecord.price}` : ''}.${matchedRecord.stock !== null && matchedRecord.stock !== undefined ? ` Current stock: ${matchedRecord.stock} ${matchedRecord.unit || 'units'}.` : ''}`;
+    }
+  }
+
   // Check products / offerings
   if (/\b(what products|list products|what do you sell|all products|available products|show products|what models|what cars|what services|offerings|catalog)\b/i.test(lower)) {
     const productEntry = kbList.find(k => /\b(what products|models do you offer|catalog|services do you offer)\b/i.test(k.q));

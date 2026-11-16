@@ -349,12 +349,116 @@ function pathToToolName(method, path) {
 }
 
 /**
+ * Validate that an FAQ entry is strictly customer-facing and clean.
+ * Rejects technical database schemas, developer notes, TypeScript types, and code snippets.
+ */
+export function isCustomerSafeFaq(question, answer) {
+  if (!question || !answer) return false;
+  const qStr = String(question).trim();
+  const aStr = String(answer).trim();
+
+  if (qStr.length < 3 || aStr.length < 2) return false;
+
+  const qLower = qStr.toLowerCase();
+  const aLower = aStr.toLowerCase();
+
+  // 1. Technical database questions that customers will never ask
+  const invalidQuestionPatterns = [
+    /\bwhat tables are in the database\b/i,
+    /\bdatabase records for\b/i,
+    /\bdatabase context from\b/i,
+    /\binformation from\b/i,
+    /\bwhat is the minstockalert\b/i,
+    /\bwhat is minstockalert\b/i,
+    /\bwhat is create table\b/i,
+    /\bwhat is foreign key\b/i,
+    /\bwhat is primary key\b/i,
+    /\bwhat is varchar\b/i,
+    /\bwhat is api endpoint\b/i,
+    /\bwhat is router\b/i,
+    /\bwhat is controller\b/i,
+    /\bwhat is schema\b/i,
+    /\bwhat is batchstockcount\b/i,
+    /\bwhat is supplierinvoiceid\b/i,
+    /\bwhat is purchaseprice\b/i
+  ];
+  if (invalidQuestionPatterns.some(pat => pat.test(qLower))) return false;
+
+  // 2. Reject questions or answers containing programming code, types, SQL statements
+  // e.g. minStockAlert: number; // e.g. 15
+  // or CREATE TABLE, INSERT INTO, VARCHAR, function(), const x =
+  const codePatterns = [
+    /\b(number|string|boolean|any|void)\s*;\s*(\/\/.*)?$/i, // TypeScript/JS type: number; // e.g. 15
+    /\b(interface|type|class|enum)\s+[A-Z0-9_]+\s*\{/i,    // interface Foo {
+    /^(?:const|let|var)\s+[a-z0-9_]+\s*=/i,                // const x =
+    /\bcreate\s+table\b/i,                                  // CREATE TABLE
+    /\binsert\s+into\b/i,                                  // INSERT INTO
+    /\bprimary\s+key\b/i,                                  // PRIMARY KEY
+    /\bforeign\s+key\b/i,                                  // FOREIGN KEY
+    /\bvarchar\s*\(\d+\)/i,                                // VARCHAR(255)
+    /\{[\s\S]*\}\s*;?$/,                                   // Raw JSON/object dump
+    /^\s*(\/\/|\/\*|\*)/,                                  // Code comments
+    /\b(import|export)\s+.*\s+from\s+['"]/i,               // import ... from '...'
+    /\bdef\s+[a-z0-9_]+\s*\(/i,                            // def my_func(
+    /\bpublic\s+(static\s+)?(void|int|string)\b/i,         // public void
+    /\[Binary File:/i,                                     // [Binary File:
+    /\bnull\s*;|\bundefined\s*;/i
+  ];
+
+  if (codePatterns.some(pat => pat.test(aStr))) return false;
+  if (codePatterns.some(pat => pat.test(qStr))) return false;
+
+  // 3. Reject developer task notes and sprint plans that sound like developer backlog
+  // e.g. "- Record supplier invoices from pharmaceutical distributors. - Automatically increments batch stock counts..."
+  if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|refactor)/i.test(aLower)) {
+    return false;
+  }
+
+  // 4. Reject meaningless generic dumps
+  if (/^database includes table/i.test(aLower)) return false;
+
+  return true;
+}
+
+/**
  * Parse and extract structured knowledge facts from Database files (JSON, SQL, CSV)
  */
 export function analyzeDatabaseFile(fileName, content) {
   const knowledgeBase = [];
+  const databaseRecords = [];
   let recordsCount = 0;
   let schema = [];
+
+  function addDatabaseRecord(rec) {
+    if (!rec) return;
+    const name = String(rec.name || rec.product || rec.title || rec.item || '').trim();
+    if (!name || name.length < 2 || name.length > 80) return;
+    if (/^(what is|tell me|how to|can you|why|who|test|sample|untitled|sr\.?no|action)$/i.test(name)) return;
+    if (name.includes('?') || name.includes('{') || name.includes('CREATE TABLE')) return;
+
+    const price = rec.price !== undefined ? (typeof rec.price === 'number' ? `₹${rec.price}` : String(rec.price).trim()) : '';
+    const stock = rec.stock !== undefined ? Number(rec.stock) : (rec.quantity !== undefined ? Number(rec.quantity) : (rec.qty !== undefined ? Number(rec.qty) : null));
+    const unit = String(rec.unit || rec.packaging || 'units').trim();
+    const category = String(rec.category || rec.department || rec.type || '').trim();
+    const dosage = String(rec.dosage || rec.composition || rec.salt || '').trim();
+    const desc = String(rec.description || rec.desc || rec.details || '').trim();
+    const rx = Boolean(rec.rx || rec.prescriptionRequired);
+
+    const existing = databaseRecords.find(r => r.name.toLowerCase() === name.toLowerCase());
+    if (!existing) {
+      databaseRecords.push({
+        id: rec.id || `rec_${databaseRecords.length + 1}`,
+        name,
+        price,
+        stock: isNaN(stock) ? null : stock,
+        unit,
+        category,
+        dosage,
+        description: desc,
+        rx
+      });
+    }
+  }
 
   // Case 1: JSON
   if (fileName.toLowerCase().endsWith('.json') || content.trim().startsWith('{') || content.trim().startsWith('[')) {
@@ -362,16 +466,17 @@ export function analyzeDatabaseFile(fileName, content) {
       const data = JSON.parse(content);
       if (Array.isArray(data)) {
         recordsCount = data.length;
-        data.slice(0, 30).forEach((item) => {
+        data.forEach(item => {
           if (typeof item === 'object' && item !== null) {
+            addDatabaseRecord(item);
             const q = item.question || item.q || item.title || item.name || item.topic;
             const a = item.answer || item.a || item.description || item.content || item.price || item.details;
-            if (q && a) {
+            if (q && a && isCustomerSafeFaq(String(q), typeof a === 'object' ? JSON.stringify(a) : String(a))) {
               knowledgeBase.push({
                 q: String(q).trim(),
                 a: typeof a === 'object' ? JSON.stringify(a) : String(a).trim()
               });
-            } else if (item.name) {
+            } else if (item.name && isCustomerSafeFaq(`What is ${item.name}?`, JSON.stringify(item))) {
               const details = Object.entries(item).map(([k, v]) => `${k}: ${v}`).join(', ');
               knowledgeBase.push({
                 q: `What are the details of ${item.name}?`,
@@ -382,51 +487,86 @@ export function analyzeDatabaseFile(fileName, content) {
         });
       } else if (typeof data === 'object' && data !== null) {
         schema = Object.keys(data);
+        const inv = data.liveInventory || data.inventory || data.products || data.items || data.catalog || data.records;
+        if (inv) {
+          if (Array.isArray(inv)) {
+            inv.forEach(addDatabaseRecord);
+          } else if (typeof inv === 'object') {
+            for (const [key, val] of Object.entries(inv)) {
+              if (val && typeof val === 'object') {
+                addDatabaseRecord({ name: val.name || key, ...val });
+              } else if (val !== undefined) {
+                addDatabaseRecord({ name: key, stock: val });
+              }
+            }
+          }
+        }
+
         Object.entries(data).slice(0, 20).forEach(([k, v]) => {
           if (Array.isArray(v)) {
             recordsCount += v.length;
             v.slice(0, 10).forEach(sub => {
+              if (typeof sub === 'object' && sub !== null) {
+                addDatabaseRecord(sub);
+              }
               const q = sub.question || sub.q || sub.name || sub.title;
               const a = sub.answer || sub.a || sub.content || sub.description;
-              if (q && a) {
+              if (q && a && isCustomerSafeFaq(String(q), String(a))) {
                 knowledgeBase.push({ q: String(q).trim(), a: String(a).trim() });
               }
             });
-          } else if (typeof v === 'string') {
+          } else if (typeof v === 'string' && isCustomerSafeFaq(k.replace(/_/g, ' '), v)) {
             knowledgeBase.push({ q: k.replace(/_/g, ' '), a: v });
           }
         });
       }
     } catch (e) {
-      // Fallback text chunking
-      knowledgeBase.push({
-        q: `Database Context from ${fileName}`,
-        a: content.substring(0, 800)
-      });
+      // Safe skip on unparseable JSON
     }
   }
 
-  // Case 2: SQL file
+  // Case 2: SQL file - Parse real customer-facing catalog/medicine/product rows from INSERT INTO
   else if (fileName.toLowerCase().endsWith('.sql') || content.toLowerCase().includes('create table') || content.toLowerCase().includes('insert into')) {
     const tableMatches = content.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"']?[a-zA-Z0-9_]+[`"']?)/gi);
     for (const match of tableMatches) {
       const table = match[1].replace(/[`"']/g, '');
       schema.push(table);
-      knowledgeBase.push({
-        q: `What tables are in the database?`,
-        a: `Database includes table ${table}.`
-      });
     }
 
-    const insertMatches = content.matchAll(/INSERT\s+INTO\s+([`"']?[a-zA-Z0-9_]+[`"']?)\s*(?:\([^)]+\))?\s*VALUES\s*([^;]+);/gi);
+    const insertMatches = content.matchAll(/INSERT\s+INTO\s+([`"']?[a-zA-Z0-9_]+[`"']?)\s*(?:\(([^)]+)\))?\s*VALUES\s*([^;]+);/gi);
     for (const match of insertMatches) {
       recordsCount++;
-      const table = match[1].replace(/[`"']/g, '');
-      if (knowledgeBase.length < 25) {
-        knowledgeBase.push({
-          q: `Database records for ${table}`,
-          a: match[2].trim().substring(0, 250)
-        });
+      const table = match[1].replace(/[`"']/g, '').toLowerCase();
+      const rawValues = match[3] || '';
+
+      const isProductTable = /product|medicine|drug|item|catalog|service|inventory/i.test(table);
+      if (isProductTable) {
+        const tupleMatches = rawValues.matchAll(/\(([^)]+)\)/g);
+        for (const tuple of tupleMatches) {
+          const rawFields = tuple[1].split(',').map(f => f.trim().replace(/^['"]|['"]$/g, ''));
+          const nameField = rawFields.find(f => f.length > 3 && isNaN(f) && !/^\d{4}-\d{2}-\d{2}/.test(f));
+          const numFields = rawFields.filter(f => !isNaN(f) && Number(f) > 0);
+          const descField = rawFields.find(f => f !== nameField && f.length > 10 && isNaN(f));
+
+          if (nameField) {
+            addDatabaseRecord({
+              name: nameField,
+              price: numFields.length > 0 ? `₹${numFields[0]}` : '',
+              stock: numFields.length > 1 ? Number(numFields[1]) : 100,
+              description: descField || ''
+            });
+
+            if (knowledgeBase.length < 35) {
+              let details = `${nameField}.`;
+              if (descField) details += ` ${descField}.`;
+              if (numFields.length > 0) details += ` Price/Details: ₹${numFields[0]}.`;
+              const q = `What is ${nameField}?`;
+              if (isCustomerSafeFaq(q, details)) {
+                knowledgeBase.push({ q, a: details });
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -435,16 +575,40 @@ export function analyzeDatabaseFile(fileName, content) {
   else if (fileName.toLowerCase().endsWith('.csv') || content.includes(',')) {
     const lines = content.split('\n').filter(l => l.trim().length > 0);
     if (lines.length > 1) {
-      const headers = lines[0].split(',').map(h => h.trim().replace(/['"]/g, ''));
+      const headers = lines[0].split(',').map(h => h.trim().replace(/['"]/g, '').toLowerCase());
       schema = headers;
       recordsCount = lines.length - 1;
-      lines.slice(1, 20).forEach(line => {
+
+      const nameIdx = headers.findIndex(h => /name|title|product|medicine|item/i.test(h));
+      const priceIdx = headers.findIndex(h => /price|cost|rate|fee|mrp/i.test(h));
+      const stockIdx = headers.findIndex(h => /stock|qty|quantity|count/i.test(h));
+      const catIdx = headers.findIndex(h => /category|type|dept|department/i.test(h));
+      const unitIdx = headers.findIndex(h => /unit|packaging/i.test(h));
+
+      lines.slice(1).forEach(line => {
         const cols = line.split(',').map(c => c.trim().replace(/['"]/g, ''));
         if (cols.length >= 2) {
-          knowledgeBase.push({
-            q: `${headers[0]}: ${cols[0]}`,
-            a: headers.slice(1).map((h, i) => `${h}: ${cols[i + 1] || 'N/A'}`).join(', ')
-          });
+          const itemTitle = nameIdx !== -1 ? cols[nameIdx] : cols[0];
+          const itemPrice = priceIdx !== -1 ? cols[priceIdx] : '';
+          const itemStock = stockIdx !== -1 ? parseInt(cols[stockIdx], 10) : null;
+          const itemCat = catIdx !== -1 ? cols[catIdx] : '';
+          const itemUnit = unitIdx !== -1 ? cols[unitIdx] : 'units';
+
+          if (itemTitle && itemTitle.length > 2) {
+            addDatabaseRecord({
+              name: itemTitle,
+              price: itemPrice ? (/[₹$€£]/.test(itemPrice) ? itemPrice : `₹${itemPrice}`) : '',
+              stock: isNaN(itemStock) ? null : itemStock,
+              category: itemCat,
+              unit: itemUnit
+            });
+          }
+
+          const q = `What is ${itemTitle}?`;
+          const a = headers.map((h, i) => `${h}: ${cols[i] || 'N/A'}`).join(', ');
+          if (isCustomerSafeFaq(q, a) && knowledgeBase.length < 35) {
+            knowledgeBase.push({ q, a });
+          }
         }
       });
     }
@@ -466,6 +630,7 @@ export function analyzeDatabaseFile(fileName, content) {
             if (typeof val === 'object' && val !== null) {
               recordsCount++;
               const title = val.title || val.name || val.heading || key;
+              addDatabaseRecord({ name: title, ...val });
               const category = val.category ? `Category: ${val.category}. ` : '';
               const desc = val.description || val.desc || val.summary || '';
               const specs = Array.isArray(val.materials || val.specs || val.features)
@@ -556,12 +721,13 @@ export function analyzeDatabaseFile(fileName, content) {
         const itemTitle = (bulletMatch[1] || bulletMatch[2] || '').trim();
         const itemDesc = (bulletMatch[3] || '').trim();
         if (itemTitle.length > 2 && itemDesc.length > 8 && itemTitle.length < 60) {
-          recordsCount++;
-          discoveredItems.push(itemTitle);
-          knowledgeBase.push({
-            q: `What is ${itemTitle}?`,
-            a: `${itemTitle}: ${itemDesc}`
-          });
+          const q = `What is ${itemTitle}?`;
+          const a = `${itemTitle}: ${itemDesc}`;
+          if (isCustomerSafeFaq(q, a)) {
+            recordsCount++;
+            discoveredItems.push(itemTitle);
+            knowledgeBase.push({ q, a });
+          }
         }
       }
     }
@@ -572,11 +738,10 @@ export function analyzeDatabaseFile(fileName, content) {
       if (kvMatch) {
         const key = kvMatch[1].trim();
         const val = kvMatch[2].trim();
-        if (val.length > 3 && !line.startsWith('http') && key.toLowerCase() !== 'q' && key.toLowerCase() !== 'a') {
-          knowledgeBase.push({
-            q: `What is the ${key.toLowerCase()}?`,
-            a: `${key}: ${val}`
-          });
+        const q = `What is the ${key.toLowerCase()}?`;
+        const a = `${key}: ${val}`;
+        if (val.length > 3 && !line.startsWith('http') && isCustomerSafeFaq(q, a)) {
+          knowledgeBase.push({ q, a });
         }
       }
     }
@@ -601,7 +766,7 @@ export function analyzeDatabaseFile(fileName, content) {
 
     // 6. Synthesize Overview & Subject from Document Intro
     const introParagraph = rawLines.slice(0, 6).join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    if (introParagraph.length > 30) {
+    if (introParagraph.length > 30 && !introParagraph.includes('{') && !introParagraph.includes('CREATE TABLE')) {
       const cleanSummary = introParagraph.substring(0, 350);
       knowledgeBase.unshift({
         q: "What is this website about?",
@@ -614,26 +779,30 @@ export function analyzeDatabaseFile(fileName, content) {
     }
   }
 
-  if (knowledgeBase.length === 0) {
-    const cleanExcerpt = (content || '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 600);
-    knowledgeBase.push({
-      q: `Information from ${fileName}`,
-      a: cleanExcerpt || `Knowledge extracted from ${fileName}`
+  // Filter out any technical or developer code items
+  const sanitizedKnowledgeBase = knowledgeBase.filter(item => isCustomerSafeFaq(item.q, item.a));
+
+  if (sanitizedKnowledgeBase.length === 0) {
+    const cleanName = fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+    sanitizedKnowledgeBase.push({
+      q: "What services and assistance do you provide?",
+      a: "We provide comprehensive customer guidance, product assistance, and support. Please feel free to ask about our offerings or services!"
     });
-    knowledgeBase.push({
+    sanitizedKnowledgeBase.push({
       q: "What is this website about?",
-      a: `Information extracted from ${fileName}: ${cleanExcerpt.substring(0, 200)}`
+      a: `Official support and customer guide for ${cleanName}.`
     });
   }
 
-  const summary = `Knowledge Document (${fileName}): Analyzed and indexed ${knowledgeBase.length} verified facts across products, specs, and operations.`;
+  const summary = `Knowledge Document (${fileName}): Analyzed and indexed ${sanitizedKnowledgeBase.length} customer-facing facts and ${databaseRecords.length} structured database records.`;
 
   return {
     type: 'database',
     fileName,
-    recordsCount: recordsCount || knowledgeBase.length,
+    recordsCount: recordsCount || sanitizedKnowledgeBase.length,
     schema,
-    knowledgeBase,
+    knowledgeBase: sanitizedKnowledgeBase,
+    databaseRecords,
     summary,
     rawExcerpt: content.substring(0, 1500)
   };
@@ -651,6 +820,7 @@ export function analyzeFullStackFiles(fileList = []) {
     database: [],
     tools: [],
     combinedKnowledge: [],
+    databaseRecords: [],
     summary: ''
   };
 
@@ -682,8 +852,23 @@ export function analyzeFullStackFiles(fileList = []) {
       if (analysis.knowledgeBase && analysis.knowledgeBase.length > 0) {
         result.combinedKnowledge.push(...analysis.knowledgeBase);
       }
+      if (analysis.databaseRecords && Array.isArray(analysis.databaseRecords)) {
+        result.databaseRecords.push(...analysis.databaseRecords);
+      }
     }
   }
+
+  // Deduplicate database records by name
+  const seenRecordNames = new Set();
+  result.databaseRecords = result.databaseRecords.filter(rec => {
+    const norm = (rec.name || '').toLowerCase().trim();
+    if (!norm || seenRecordNames.has(norm)) return false;
+    seenRecordNames.add(norm);
+    return true;
+  });
+
+  // Strictly filter combinedKnowledge for customer safety
+  result.combinedKnowledge = result.combinedKnowledge.filter(item => isCustomerSafeFaq(item.q, item.a));
 
   // Deduplicate combinedKnowledge by question
   const seenQ = new Set();
@@ -700,8 +885,9 @@ export function analyzeFullStackFiles(fileList = []) {
   const dbCount = result.database.length;
   const totalTools = result.tools.length;
   const totalKb = result.combinedKnowledge.length;
+  const totalDbRecords = result.databaseRecords.length;
 
-  result.summary = `Analyzed ${fileList.length} files (${feCount} Frontend, ${beCount} Backend, ${dbCount} Database). Discovered ${totalTools} backend API tools and extracted ${totalKb} verified knowledge points across products, services, and specifications.`;
+  result.summary = `Analyzed ${fileList.length} files (${feCount} Frontend, ${beCount} Backend, ${dbCount} Database). Indexed ${totalDbRecords} live database records, discovered ${totalTools} backend API tools, and extracted ${totalKb} verified knowledge points across products, services, and specifications.`;
 
   return result;
 }

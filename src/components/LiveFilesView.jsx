@@ -24,7 +24,8 @@ import {
 } from 'lucide-react';
 import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExtractor';
 import { SAMPLE_DATABASE_FILE } from '../utils/sampleFullStackData';
-import { detectFileType } from '../utils/codebaseAnalyzer';
+import { detectFileType, analyzeDatabaseFile } from '../utils/codebaseAnalyzer';
+import { isZipFile, expandFileList } from '../utils/zipHandler';
 import {
   saveFileToLocalStore,
   getFileFromLocalStore,
@@ -149,8 +150,8 @@ export default function LiveFilesView({
 
   // Upload files specifically targeting an assistant
   const handleFileUploadForAssistant = async (e, targetAssistant) => {
-    const fileList = Array.from(e.target.files || []);
-    if (!fileList.length) return;
+    const rawFileList = Array.from(e.target.files || []);
+    if (!rawFileList.length) return;
 
     setIsUploading(true);
     const driveReady = isDriveConnected();
@@ -160,18 +161,34 @@ export default function LiveFilesView({
     const newRecords = [];
     const newExtractedKb = [];
 
+    const hasZip = rawFileList.some(isZipFile);
+    if (hasZip) {
+      showNotice('info', 'Unpacking .zip archive and extracting database & project files...');
+    }
+
+    let fileList = rawFileList;
+    try {
+      fileList = await expandFileList(rawFileList);
+    } catch (zipErr) {
+      console.warn('Failed to expand archive:', zipErr);
+      showNotice('error', 'Failed to unpack .zip archive: ' + zipErr.message);
+    }
+
     for (const file of fileList) {
       try {
-        const isText = isTextFile(file);
-        let content = '';
+        const isText = file.textContent !== undefined
+          ? !file.textContent.startsWith('[Binary File:')
+          : isTextFile(file);
 
-        if (isText) {
+        let content = file.textContent !== undefined ? file.textContent : '';
+
+        if (content === '' && isText) {
           try {
             content = await readFileAsTextSafe(file);
           } catch (err) {
             content = `[Text read failed: ${err.message}]`;
           }
-        } else {
+        } else if (!isText && !content) {
           content = `[Binary file: ${file.name}, type: ${file.type || 'unknown'}, size: ${(file.size / 1024).toFixed(1)} KB]`;
         }
 
@@ -181,6 +198,7 @@ export default function LiveFilesView({
         await saveFileToLocalStore({
           id: fileId,
           name: file.name,
+          relativePath: file.relativePath || file.name,
           mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
           type: tier,
           content,
@@ -220,11 +238,18 @@ export default function LiveFilesView({
               newExtractedKb.push(...extracted.knowledgeBase);
             }
           }
+        } else if (tier === 'database' && isText) {
+          const dbAnalysis = analyzeDatabaseFile(file.name, content);
+          itemsCount = dbAnalysis?.knowledgeBase?.length || 0;
+          if (dbAnalysis?.knowledgeBase && dbAnalysis.knowledgeBase.length > 0) {
+            newExtractedKb.push(...dbAnalysis.knowledgeBase);
+          }
         }
 
         newRecords.push({
           id: fileId,
           name: file.name,
+          relativePath: file.relativePath || file.name,
           size: `${(file.size / 1024).toFixed(1)} KB`,
           sizeBytes: file.size,
           mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
@@ -239,6 +264,10 @@ export default function LiveFilesView({
       } catch (err) {
         console.error('Error processing file upload:', file.name, err);
       }
+    }
+
+    if (hasZip) {
+      showNotice('success', `Unpacked & indexed ${newRecords.length} files from archive into Knowledge Base!`);
     }
 
     const updatedFileList = [...newRecords, ...currentFiles];
@@ -556,7 +585,7 @@ export default function LiveFilesView({
                     : 'No files match your search filter'}
                 </h4>
                 <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 leading-relaxed">
-                  Upload the website database JSON, frontend HTML/JSX pages, or backend API routes used to create and ground <strong>"{astName}"</strong>.
+                  Upload database exports (.json, .sql, .csv), full-stack .zip project archives, frontend HTML/JSX pages, or backend API routes used to create and ground <strong>"{astName}"</strong>.
                 </p>
               </div>
 

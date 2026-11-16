@@ -312,6 +312,7 @@ ${combinedKb.slice(0, 20).map(k => `- Q: ${k.q} -> A: ${k.a}`).join('\n')}
   const cleanId = (parsedAgent.name || 'AI Assistant').trim().replace(/\//g, '-');
   parsedAgent.id = cleanId;
   parsedAgent.apiKey = effectiveGroqKey || effectiveGeminiKey || '';
+  parsedAgent.databaseRecords = Array.isArray(analysisResult?.databaseRecords) ? analysisResult.databaseRecords : [];
 
   return parsedAgent;
 }

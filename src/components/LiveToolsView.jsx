@@ -55,9 +55,21 @@ export default function LiveToolsView({
     setActiveTestTool(tool);
     setTestResult('Running simulation...');
     setTimeout(() => {
-      if (tool.name.includes('order')) {
+      const lower = tool.name.toLowerCase();
+      if (lower.includes('stock') || lower.includes('inventory')) {
+        setTestResult(JSON.stringify({
+          status: "success",
+          product: "Augmentin 625 Duo Tablet",
+          inStock: true,
+          currentStock: 42,
+          unit: "strips",
+          price: "₹185.50",
+          rxRequired: true,
+          liveStoreLocation: "Apollo & Wellness Pharmacy (Shelf B-12)"
+        }, null, 2));
+      } else if (lower.includes('order')) {
         setTestResult(JSON.stringify({ status: "success", orderId: "ORD-9921", deliveryStatus: "Out for delivery", estDelivery: "Today by 5:00 PM" }, null, 2));
-      } else if (tool.name.includes('ticket')) {
+      } else if (lower.includes('ticket')) {
         setTestResult(JSON.stringify({ status: "success", ticketId: "TCK-88124", assignedTo: "Tier-2 Human Escalation Queue" }, null, 2));
       } else {
         setTestResult(JSON.stringify({ status: "success", executed: tool.name, clientActionDispatched: true, timestamp: new Date().toISOString() }, null, 2));
@@ -105,13 +117,35 @@ export default function LiveToolsView({
             </select>
           )}
         </div>
-        <button
-          onClick={() => setIsCreateOpen(true)}
-          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm shadow-indigo-500/20 active:scale-95 transition-all cursor-pointer"
-        >
-          <Plus size={14} />
-          <span>Create Tool</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const stockTool = {
+                id: `tool_${Date.now()}`,
+                name: 'checkLiveStock',
+                type: 'API Request Tool',
+                description: 'Queries the live website database to fetch real-time available stock count, price, and prescription requirements for medicines/products.',
+                endpoint: '/api/inventory/stock',
+                method: 'POST',
+                runs: 0
+              };
+              setTools(prev => [stockTool, ...(prev || [])]);
+            }}
+            className="px-3 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+            title="Add pre-configured real-time stock lookup tool"
+          >
+            <Server size={13} className="text-sky-600" />
+            <span>+ Live Stock Tool</span>
+          </button>
+          <button
+            onClick={() => setIsCreateOpen(true)}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm shadow-indigo-500/20 active:scale-95 transition-all cursor-pointer"
+          >
+            <Plus size={14} />
+            <span>Create Tool</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter Bar */}

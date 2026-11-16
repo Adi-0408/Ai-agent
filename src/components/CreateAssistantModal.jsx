@@ -15,7 +15,8 @@ import {
   KeyRound,
   Eye,
   EyeOff,
-  ExternalLink
+  ExternalLink,
+  Archive
 } from 'lucide-react';
 import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExtractor';
 import { detectFileType, analyzeFullStackFiles } from '../utils/codebaseAnalyzer';
@@ -23,6 +24,7 @@ import { saveAgent } from '../firebase';
 import { saveFileToLocalStore } from '../utils/localFileStore';
 import { isDriveConnected, uploadFileToDrive } from '../services/googleDriveService';
 import { getUserApiKeys, validateUserApiKey, saveUserApiKeys } from '../services/aiCompletionService';
+import { isZipFile, expandFileList } from '../utils/zipHandler';
 
 export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreated }) {
   const initialUserKeys = getUserApiKeys();
@@ -45,6 +47,8 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
   const [extractedData, setExtractedData] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isUnpacking, setIsUnpacking] = useState(false);
+  const [unpackProgress, setUnpackProgress] = useState('');
 
   // Sample JSON for instant testing
   const sampleJson = [
@@ -67,31 +71,54 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
   ];
 
   const handleFileUpload = async (e) => {
-    const fileList = Array.from(e.target.files || []);
-    if (!fileList.length) return;
+    const rawFileList = Array.from(e.target.files || []);
+    if (!rawFileList.length) return;
 
-    setUploadedFileName(fileList.map(f => f.name).join(', '));
     setErrorMsg('');
+    const hasZip = rawFileList.some(isZipFile);
+    if (hasZip) {
+      setIsUnpacking(true);
+      setUnpackProgress('Unpacking archive & extracting database/code files...');
+    }
 
     try {
+      const fileList = await expandFileList(rawFileList, (curr, total, name) => {
+        setUnpackProgress(`Unpacking ${curr}/${total}: ${name}`);
+      });
+
+      const zipNames = rawFileList.filter(isZipFile).map(f => f.name);
+      if (zipNames.length > 0) {
+        setUploadedFileName(`${zipNames.join(', ')} (${fileList.length} files unpacked)`);
+      } else {
+        setUploadedFileName(fileList.map(f => f.name).join(', '));
+      }
+
       const processedFiles = [];
       for (const file of fileList) {
-        const isText = /\.(html?|css|scss|jsx?|tsx?|vue|svelte|json|sql|csv|tsv|txt|md|xml|ya?ml|py|go|java|php|rb|prisma|env)$/i.test(file.name) ||
-          (file.type && (file.type.startsWith('text/') || file.type === 'application/json' || file.type === 'application/javascript'));
+        let content = file.textContent;
+        const isText = content !== undefined
+          ? !content.startsWith('[Binary File:')
+          : (/\.(html?|css|scss|jsx?|tsx?|vue|svelte|json|sql|csv|tsv|txt|md|xml|ya?ml|py|go|java|php|rb|prisma|env)$/i.test(file.name) ||
+             (file.type && (file.type.startsWith('text/') || file.type === 'application/json' || file.type === 'application/javascript')));
 
-        let content = `[Binary File: ${file.name}]`;
-        if (isText) {
-          content = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (ev) => resolve(typeof ev.target.result === 'string' ? ev.target.result.replace(/\0/g, ' ') : '');
-            reader.onerror = () => reject(new Error('Failed to read ' + file.name));
-            reader.readAsText(file);
-          });
+        if (content === undefined) {
+          if (isText) {
+            content = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = (ev) => resolve(typeof ev.target.result === 'string' ? ev.target.result.replace(/\0/g, ' ') : '');
+              reader.onerror = () => reject(new Error('Failed to read ' + file.name));
+              reader.readAsText(file);
+            });
+          } else {
+            content = `[Binary File: ${file.name}]`;
+          }
         }
+
         const tier = detectFileType(file.name, isText ? content : '');
         processedFiles.push({
           id: `f_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           name: file.name,
+          relativePath: file.relativePath || file.name,
           mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
           size: `${(file.size / 1024).toFixed(1)} KB`,
           sizeBytes: file.size,
@@ -122,6 +149,7 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
 
       setExtractedData({
         knowledgeBase: kbList,
+        databaseRecords: fullStack.databaseRecords || [],
         systemPrompt: `# ${astName} - ${firstFile.type === 'backend' ? 'API Action Assistant' : 'Website & Product Advisor'}
 
 ## Identity & Purpose
@@ -137,7 +165,11 @@ ${fullStack.summary}
         itemsExtracted: kbList.length
       });
     } catch (err) {
+      console.error('File reading error:', err);
       setErrorMsg('Failed to read the uploaded file(s). Please try again.');
+    } finally {
+      setIsUnpacking(false);
+      setUnpackProgress('');
     }
   };
 
@@ -225,6 +257,7 @@ ${fullStack.summary}
         storedUploadedFiles.push({
           id: f.id,
           name: f.name,
+          relativePath: f.relativePath || f.name,
           mimeType: f.mimeType || 'text/plain',
           size: f.size || '1 KB',
           sizeBytes: f.sizeBytes || 1024,
@@ -250,6 +283,7 @@ ${fullStack.summary}
         position: 'bottom-right',
         apiKey: isKeylessMode ? '' : customApiKey.trim(),
         knowledgeBase: Array.isArray(extractedData?.knowledgeBase) ? extractedData.knowledgeBase : [],
+        databaseRecords: Array.isArray(extractedData?.databaseRecords) ? extractedData.databaseRecords : [],
         tools: Array.isArray(extractedData?.tools) ? extractedData.tools : [],
         uploadedFiles: storedUploadedFiles,
         sourceFile: uploadedFileName || null,
@@ -528,12 +562,18 @@ ${fullStack.summary}
             {jsonInputMode === 'upload' ? (
               <label className="border-2 border-dashed border-slate-300 hover:border-indigo-400 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer bg-slate-50/50 hover:bg-indigo-50/20 transition-all">
                 <Upload size={28} className="text-indigo-600 mb-2" />
-                <span className="text-xs font-semibold text-slate-900">
-                  {uploadedFileName ? `Loaded: ${uploadedFileName}` : 'Choose or drop Full-Stack files here (Frontend, Backend & Database)'}
+                <span className="text-xs font-semibold text-slate-900 text-center">
+                  {uploadedFileName ? `Loaded: ${uploadedFileName}` : 'Choose or drop Project .zip or Full-Stack files (Frontend, Backend & Database)'}
                 </span>
-                <span className="text-[11px] text-slate-500 mt-1">
-                  Accepts multiple files of all types (.html, .jsx, .js, .py, .json, .sql, .csv, .pdf, etc.)
+                <span className="text-[11px] text-slate-500 mt-1 text-center">
+                  Accepts .zip archives (auto-extracted), database exports (.json, .sql, .csv), and code files
                 </span>
+                {isUnpacking && (
+                  <div className="flex items-center gap-2 mt-2 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold animate-pulse">
+                    <Sparkles size={14} className="animate-spin text-indigo-600" />
+                    <span>{unpackProgress || 'Unpacking zip archive & indexing codebase...'}</span>
+                  </div>
+                )}
                 <input
                   type="file"
                   multiple

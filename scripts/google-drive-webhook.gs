@@ -35,6 +35,13 @@ var ROOT_FOLDER_NAME = 'Echo_AI_Agent_Files';
  */
 function doGet(e) {
   try {
+    var params = (e && e.parameter) || {};
+    var action = params.action || 'ping';
+
+    if (action === 'get_catalog' || action === 'query' || action === 'list') {
+      return handleDatabaseQuery(params);
+    }
+
     var folders = DriveApp.getFoldersByName(ROOT_FOLDER_NAME);
     var rootFolderExists = folders.hasNext();
     
@@ -91,6 +98,11 @@ function doPost(e) {
         message: 'Google Drive Webhook is connected and ready.',
         rootFolder: ROOT_FOLDER_NAME
       });
+    }
+
+    // ── ACTION: Query Database / Get Catalog ──
+    if (action === 'get_catalog' || action === 'query' || action === 'list') {
+      return handleDatabaseQuery(payload);
     }
 
     // ── ACTION: Upload File ──
@@ -201,4 +213,116 @@ function resolveMimeType(fileName, explicitMime) {
 function respondJson(data) {
   return ContentService.createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Reads database files in Google Drive folder and returns structured records
+ */
+function handleDatabaseQuery(params) {
+  try {
+    var assistantName = sanitizeName(params.assistantName || '');
+    var query = (params.q || params.query || '').toString().toLowerCase().trim();
+    var records = [];
+
+    var rootFolders = DriveApp.getFoldersByName(ROOT_FOLDER_NAME);
+    if (!rootFolders.hasNext()) {
+      return respondJson({ status: 'success', success: true, records: [], count: 0, message: 'No root folder found.' });
+    }
+    var rootFolder = rootFolders.next();
+
+    var targetFolders = [];
+    if (assistantName) {
+      var agentFolders = rootFolder.getFoldersByName(assistantName);
+      if (agentFolders.hasNext()) {
+        var agentFolder = agentFolders.next();
+        var dbFolders = agentFolder.getFoldersByName('Database');
+        if (dbFolders.hasNext()) targetFolders.push(dbFolders.next());
+      }
+    }
+
+    if (targetFolders.length === 0) {
+      // Search all Database subfolders
+      var allAgentFolders = rootFolder.getFolders();
+      while (allAgentFolders.hasNext()) {
+        var aFolder = allAgentFolders.next();
+        var dbF = aFolder.getFoldersByName('Database');
+        while (dbF.hasNext()) targetFolders.push(dbF.next());
+      }
+    }
+
+    for (var fIdx = 0; fIdx < targetFolders.length; fIdx++) {
+      var folder = targetFolders[fIdx];
+      var files = folder.getFiles();
+      while (files.hasNext()) {
+        var file = files.next();
+        var fName = file.getName().toLowerCase();
+        if (fName.endsWith('.json')) {
+          try {
+            var content = file.getBlob().getDataAsString();
+            var parsed = JSON.parse(content);
+            var items = Array.isArray(parsed) ? parsed : (parsed.liveInventory || parsed.inventory || parsed.products || parsed.items || []);
+            if (Array.isArray(items)) {
+              for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                if (it && typeof it === 'object') {
+                  var itName = it.name || it.product || it.title || '';
+                  if (itName && (!query || itName.toLowerCase().indexOf(query) !== -1 || (it.category && it.category.toLowerCase().indexOf(query) !== -1))) {
+                    records.push(it);
+                  }
+                }
+              }
+            } else if (typeof items === 'object') {
+              for (var k in items) {
+                var val = items[k];
+                if (val && typeof val === 'object') {
+                  var itName = val.name || k;
+                  if (!query || itName.toLowerCase().indexOf(query) !== -1) {
+                    records.push({ name: itName, ...val });
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        } else if (fName.endsWith('.csv')) {
+          try {
+            var csvStr = file.getBlob().getDataAsString();
+            var lines = csvStr.split('\n');
+            if (lines.length > 1) {
+              var headers = lines[0].split(',').map(function(h) { return h.trim().toLowerCase(); });
+              var nameIdx = headers.indexOf('name') !== -1 ? headers.indexOf('name') : 0;
+              var priceIdx = headers.indexOf('price');
+              var stockIdx = headers.indexOf('stock');
+              for (var l = 1; l < lines.length; l++) {
+                var row = lines[l].split(',').map(function(c) { return c.trim(); });
+                if (row.length > 1 && row[nameIdx]) {
+                  var rName = row[nameIdx];
+                  if (!query || rName.toLowerCase().indexOf(query) !== -1) {
+                    records.push({
+                      name: rName,
+                      price: priceIdx !== -1 ? row[priceIdx] : '',
+                      stock: stockIdx !== -1 ? parseInt(row[stockIdx], 10) : null
+                    });
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    return respondJson({
+      status: 'success',
+      success: true,
+      records: records,
+      count: records.length,
+      query: query
+    });
+  } catch (err) {
+    return respondJson({
+      status: 'error',
+      success: false,
+      message: err.toString()
+    });
+  }
 }

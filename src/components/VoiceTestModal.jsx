@@ -394,7 +394,8 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         cleanText,
         assistant?.systemPrompt || `You are ${assistantName}, a helpful AI voice assistant. Respond in 1-2 clear, conversational spoken sentences.`,
         assistant?.knowledgeBase || [],
-        activeKey
+        activeKey,
+        { agentName: assistantName }
       );
 
       const replyText = reply || `I heard: "${cleanText}". How else can I help?`;

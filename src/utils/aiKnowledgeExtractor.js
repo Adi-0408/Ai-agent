@@ -4,6 +4,8 @@
  * and generates an optimal System Prompt and structured Knowledge Base.
  */
 
+import { isCustomerSafeFaq } from './codebaseAnalyzer.js';
+
 export function parseJsonFile(fileContent) {
   try {
     let parsed = typeof fileContent === 'string' ? JSON.parse(fileContent) : fileContent;
@@ -27,16 +29,17 @@ export function extractKnowledgeFromJson(jsonData, assistantName = 'Assistant', 
   // Case 1: Array of FAQ items ({ question, answer } or { q, a } or { title, content })
   if (Array.isArray(jsonData)) {
     totalItemsCount = jsonData.length;
-    jsonData.forEach((item, idx) => {
+    jsonData.forEach((item) => {
       if (typeof item === 'object' && item !== null) {
         const question = item.question || item.q || item.query || item.title || item.topic || item.name;
         const answer = item.answer || item.a || item.response || item.content || item.description || item.details;
 
         if (question && answer) {
-          knowledgeBase.push({
-            q: String(question).trim(),
-            a: typeof answer === 'object' ? JSON.stringify(answer) : String(answer).trim()
-          });
+          const q = String(question).trim();
+          const a = typeof answer === 'object' ? JSON.stringify(answer) : String(answer).trim();
+          if (isCustomerSafeFaq(q, a)) {
+            knowledgeBase.push({ q, a });
+          }
         } else if (item.name || item.title) {
           // E.g. Product or Database Row
           detectedType = 'products';
@@ -44,17 +47,17 @@ export function extractKnowledgeFromJson(jsonData, assistantName = 'Assistant', 
           const price = item.price ? `Price: ${item.price}. ` : '';
           const category = item.category ? `Category: ${item.category}. ` : '';
           const desc = item.description || item.desc || item.details || '';
-          knowledgeBase.push({
-            q: `What is ${title}?`,
-            a: `${title}. ${category}${price}${desc}`.trim()
-          });
+          const q = `What is ${title}?`;
+          const a = `${title}. ${category}${price}${desc}`.trim();
+          if (isCustomerSafeFaq(q, a)) {
+            knowledgeBase.push({ q, a });
+          }
         }
       }
     });
   } 
   // Case 2: Object with categories or tables (e.g. { faqs: [...], products: [...], pages: [...] })
   else if (typeof jsonData === 'object' && jsonData !== null) {
-    // Check known keys
     const keys = Object.keys(jsonData);
     for (const key of keys) {
       const val = jsonData[key];
@@ -64,28 +67,33 @@ export function extractKnowledgeFromJson(jsonData, assistantName = 'Assistant', 
             const q = subItem.q || subItem.question || subItem.name || subItem.title;
             const a = subItem.a || subItem.answer || subItem.content || subItem.description || subItem.text;
             if (q && a) {
-              knowledgeBase.push({
-                q: String(q).trim(),
-                a: String(a).trim()
-              });
+              const qStr = String(q).trim();
+              const aStr = String(a).trim();
+              if (isCustomerSafeFaq(qStr, aStr)) {
+                knowledgeBase.push({ q: qStr, a: aStr });
+              }
             }
           }
         });
       } else if (typeof val === 'string' && val.length > 5) {
-        knowledgeBase.push({
-          q: key.replace(/_/g, ' '),
-          a: val.trim()
-        });
+        const qStr = key.replace(/_/g, ' ');
+        const aStr = val.trim();
+        if (isCustomerSafeFaq(qStr, aStr)) {
+          knowledgeBase.push({ q: qStr, a: aStr });
+        }
       }
     }
   }
 
-  // Fallback if knowledge items couldn't be cleanly mapped: chunk the JSON into facts
-  if (knowledgeBase.length === 0 && jsonData) {
-    const stringified = JSON.stringify(jsonData, null, 2);
+  // Safe Customer Fallback if no entries mapped
+  if (knowledgeBase.length === 0) {
     knowledgeBase.push({
-      q: 'Website Overview & Database Context',
-      a: stringified.substring(0, 800)
+      q: "What products and services do you offer?",
+      a: `Welcome to ${websiteName}! We provide comprehensive solutions and customer assistance. Ask our assistant for details on our products and services.`
+    });
+    knowledgeBase.push({
+      q: "What is this website about?",
+      a: `Official online customer service portal for ${websiteName}.`
     });
   }
 
