@@ -941,15 +941,19 @@
 
     function isCatalogListQuery(text) {
       const lower = String(text || '').toLowerCase().trim();
-      return /\b(list of all|list all|give list|give me list|show list|all meds|all medicines|all products|all items|full list|catalog|what meds|what medicines|what products|what do you sell|what do you have|available meds|available medicines|available products|show inventory|inventory table|list inventory|see all)\b/i.test(lower) ||
-             /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू)/i.test(text) ||
-             /(सभी दवा|दवाइयों की लिस्ट|सारे प्रोडक्ट्स|कैटलॉग|क्या क्या उपलब्ध|लिस्ट दो|सूची दो)/i.test(text);
+      return /\b(list of all|list all|give list|give me list|show list|all meds|all medicines|all products|all items|all services|all dishes|all plans|full list|catalog|catalogue|inventory|menu|what meds|what medicines|what products|what items|what do you sell|what do you have|what do you offer|what is available|available meds|available medicines|available products|available items|show inventory|inventory table|list inventory|see all|view all)\b/i.test(lower) ||
+             /\bwhat (plans|dishes|services|products|items|medicines|meds|models|food) (do you have|are available|do you offer)\b/i.test(lower) ||
+             /\b(list of (the )?(meds|medicines|products|items|plans|dishes|services|inventory))\b/i.test(lower) ||
+             /\b(what are (the|your) (products|items|medicines|meds|services|plans|dishes))\b/i.test(lower) ||
+             /\b(all (items|products|meds|medicines|dishes|plans|services) list)\b/i.test(lower) ||
+             /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू|सर्व सेवा|मेन्यू)/i.test(text) ||
+             /(सभी दवा|दवाइयों की लिस्ट|सारे प्रोडक्ट्स|कैटलॉग|क्या क्या उपलब्ध|लिस्ट दो|सूची दो|सारे आइटम|मेन्यू दिखाओ)/i.test(text);
     }
 
     function isSectionNavigationQuery(text) {
       const lower = String(text || '').toLowerCase().trim();
       return /\b(scroll to|take me to|navigate to|go to|show me the section|where is the|jump to|open section|view section)\b/i.test(lower) ||
-             /\b(where is (the )?(inventory|table|pricing|contact|how it works|medicines|products|catalog|counter|doctor|appointment))\b/i.test(lower) ||
+             /\b(where is (the )?(inventory|table|pricing|contact|how it works|medicines|products|catalog|shop|menu|counter|doctor|appointment))\b/i.test(lower) ||
              /(विभागावर जा|दाखवा|नेऊन जा|कुठे आहे)/i.test(text) ||
              /(सेक्शन पर ले जाओ|कहाँ है|दिखाओ|स्क्रॉल करो)/i.test(text);
     }
@@ -978,14 +982,14 @@
       const t = String(topic || '').toLowerCase().trim();
 
       const idCandidates = [];
-      if (/\b(med|medicine|drug|pharmacy|pill|tablet|prescription|inventory|stock|product|catalog)\b/i.test(t)) {
-        idCandidates.push('inventory-section', 'inventory', 'medicines', 'meds', 'products', 'catalog', 'inventory-table-container', 'inventory-tbody');
+      if (/\b(med|medicine|drug|pharmacy|pill|tablet|prescription|inventory|stock|product|catalog|item|shop|store|menu)\b/i.test(t)) {
+        idCandidates.push('inventory-section', 'inventory', 'medicines', 'meds', 'products', 'catalog', 'shop', 'store', 'menu', 'inventory-table-container', 'inventory-tbody');
       }
       if (/\b(price|pricing|plan|cost|rate|subscription)\b/i.test(t)) {
-        idCandidates.push('pricing-section', 'pricing', 'plans', 'costs', 'rates');
+        idCandidates.push('pricing-section', 'pricing', 'plans', 'costs', 'rates', 'pricing-table');
       }
-      if (/\b(how it works|guide|demo|integration|setup)\b/i.test(t)) {
-        idCandidates.push('how-it-works-section', 'how-it-works', 'guide', 'demo');
+      if (/\b(how it works|guide|demo|integration|setup|features|overview)\b/i.test(t)) {
+        idCandidates.push('how-it-works-section', 'how-it-works', 'guide', 'features', 'overview', 'demo');
       }
       if (/\b(contact|support|help|call|email|reach|counter|location|address)\b/i.test(t)) {
         idCandidates.push('contact-section', 'contact', 'support', 'help', 'location', 'footer');
@@ -1004,13 +1008,13 @@
       const headings = document.querySelectorAll('h1, h2, h3, h4');
       for (const h of headings) {
         const hText = (h.textContent || '').toLowerCase();
-        if (/\b(med|medicine|inventory|stock|product|catalog)\b/i.test(t) &&
-            /\b(inventory|medicine|medicines|product|products|catalog|stock)\b/i.test(hText)) {
-          const container = h.closest('.card, section, article, div[class*="section"]') || h;
+        if (/\b(med|medicine|inventory|stock|product|catalog|shop|menu)\b/i.test(t) &&
+            /\b(inventory|medicine|medicines|product|products|catalog|stock|menu|shop)\b/i.test(hText)) {
+          const container = h.closest('.card, section, article, div[class*="section"], div[class*="container"]') || h;
           return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
         }
-        if (/\b(how it works|integration|setup)\b/i.test(t) &&
-            /\b(how|work|works|integration)\b/i.test(hText)) {
+        if (/\b(how it works|features|overview|guide)\b/i.test(t) &&
+            /\b(how|work|works|features|overview|guide)\b/i.test(hText)) {
           const container = h.closest('.card, section, article, div[class*="section"]') || h;
           return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
         }
@@ -1024,11 +1028,12 @@
         }
       }
 
-      if (/\b(med|medicine|inventory|stock|product|catalog)\b/i.test(t)) {
-        const table = document.querySelector('#inventory-tbody, table, .inventory');
+      // Universal fallback to any table or product container if looking for catalog/inventory
+      if (/\b(med|medicine|inventory|stock|product|catalog|item|menu)\b/i.test(t)) {
+        const table = document.querySelector('#inventory-tbody, table, .inventory, .products-grid, .menu-grid');
         if (table) {
           const container = table.closest('.card, section, article') || table;
-          return { element: container, id: container.id || '', label: 'Live Inventory Table' };
+          return { element: container, id: container.id || '', label: 'Live Catalog Table' };
         }
       }
 
@@ -1038,8 +1043,10 @@
     function formatSectionLabel(id) {
       if (/inventory/i.test(id)) return 'Live Inventory Table';
       if (/medicine|meds/i.test(id)) return 'Medicines Catalog';
+      if (/product/i.test(id)) return 'Products Catalog';
+      if (/menu/i.test(id)) return 'Menu Section';
       if (/how-it-works/i.test(id)) return 'How It Works Guide';
-      if (/pricing/i.test(id)) return 'Pricing & Plans';
+      if (/pricing|plan/i.test(id)) return 'Pricing & Plans';
       if (/contact/i.test(id)) return 'Contact & Support';
       if (/appointment/i.test(id)) return 'Appointments & Booking';
       return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -1071,6 +1078,25 @@
       }
     }
 
+    const UNIVERSAL_STOPWORDS = new Set([
+      // English grammatical & common words
+      'the', 'a', 'an', 'and', 'or', 'for', 'of', 'in', 'on', 'at', 'to', 'from', 'with', 'by', 'is', 'are', 'was', 'were',
+      'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'can', 'could', 'will', 'would', 'should',
+      // Question & intent words
+      'what', 'which', 'who', 'how', 'where', 'when', 'why', 'give', 'show', 'tell', 'check', 'get', 'see', 'find', 'me', 'us',
+      'price', 'cost', 'rate', 'rates', 'fee', 'fees', 'mrp', 'charges', 'howmuch', 'much',
+      'stock', 'stocks', 'available', 'availability', 'quantity', 'count', 'units', 'many',
+      'buy', 'sell', 'order', 'please', 'details', 'detail', 'info', 'information',
+      // Packaging & unit words across all domains (medical, grocery, retail, tech)
+      'item', 'items', 'product', 'products', 'model', 'models', 'piece', 'pieces', 'pcs', 'pack', 'packs', 'package',
+      'tablet', 'tablets', 'capsule', 'capsules', 'syrup', 'syrups', 'injection', 'injections', 'drops', 'ointment', 'cream',
+      'strip', 'strips', 'box', 'boxes', 'bottle', 'bottles', 'pouch', 'pouches', 'bag', 'bags', 'packet', 'packets',
+      'kg', 'gm', 'g', 'mg', 'ml', 'ltr', 'liter', 'liters', 'cm', 'mm', 'inch', 'size', 'color', 'brand',
+      // Marathi / Hindi common words
+      'आहे', 'नाही', 'काय', 'कशी', 'किती', 'द्या', 'सांगा', 'दाखवा', 'पाहिजे', 'किंमत', 'भाव', 'दर', 'साठा', 'स्टॉक',
+      'है', 'नहीं', 'क्या', 'कितना', 'कितने', 'दीजिए', 'बताइए', 'दिखाइए', 'चाहिए', 'कीमत', 'दाम', 'रेट'
+    ]);
+
     function getAllCatalogItems(agentConfig) {
       const items = [];
       const seen = new Set();
@@ -1078,9 +1104,9 @@
       function addItem(it) {
         if (!it) return;
         const name = String(it.name || it.product || it.title || it.item || '').trim();
-        if (!name || name.length < 2 || name.length > 70) return;
+        if (!name || name.length < 2 || name.length > 90) return;
         if (seen.has(name.toLowerCase())) return;
-        if (/^(what is|tell me|how to|why|who|can you|action|sr\.?no|name|product|item|price|stock|total|status)$/i.test(name)) return;
+        if (/^(what is|tell me|how to|why|who|can you|action|sr\.?no|name|product|item|price|stock|total|status|select)$/i.test(name)) return;
         if (name.includes('?') || name.includes('{')) return;
 
         seen.add(name.toLowerCase());
@@ -1097,23 +1123,26 @@
         });
       }
 
-      // Tier 1: Host Page JavaScript Database State (window.EchoAIData / window.echoLiveInventory / window.EchoInventory)
+      // Tier 1: Host Page JavaScript Database State (window.EchoAIData / window.echoLiveInventory / window.EchoInventory / window.products / window.inventory)
       if (typeof window !== 'undefined') {
-        const hostObj = window.EchoAIData || window.echoLiveInventory || window.EchoInventory;
-        const inv = hostObj?.liveInventory || hostObj?.inventory || hostObj?.products || hostObj?.database || hostObj?.items;
+        const hostObj = window.EchoAIData || window.echoLiveInventory || window.EchoInventory || window.productsData || window.catalogData;
+        const inv = hostObj?.liveInventory || hostObj?.inventory || hostObj?.products || hostObj?.database || hostObj?.items || hostObj?.catalog || hostObj?.menu;
         if (inv) {
           if (Array.isArray(inv)) {
             inv.forEach(addItem);
           } else if (typeof inv === 'object') {
             for (const [key, val] of Object.entries(inv)) {
               if (val && typeof val === 'object') {
-                addItem({ name: val.name || key, ...val });
+                addItem({ name: val.name || val.title || key, ...val });
               } else if (val !== undefined) {
                 addItem({ name: key, stock: val });
               }
             }
           }
         }
+        if (Array.isArray(window.products)) window.products.forEach(addItem);
+        if (Array.isArray(window.inventory)) window.inventory.forEach(addItem);
+        if (Array.isArray(window.catalog)) window.catalog.forEach(addItem);
       }
 
       // Tier 2: Agent's Structured Database Records from Firestore
@@ -1121,27 +1150,177 @@
         agentConfig.databaseRecords.forEach(addItem);
       }
 
-      // Tier 3: Autonomous Live DOM Table Scraper
+      // Tier 3: Structured JSON-LD / Schema.org (Universal for e-commerce, restaurants, healthcare)
       if (typeof document !== 'undefined') {
-        const rows = document.querySelectorAll('#inventory-tbody tr, table tbody tr, .product-card, .medicine-item, [data-product]');
-        rows.forEach(row => {
-          const cells = Array.from(row.querySelectorAll('td, th, .name, .title, p, span'))
-            .map(c => c.textContent.trim())
-            .filter(t => t.length > 0);
-          if (cells.length >= 2) {
-            const rawTitle = cells[0];
-            if (rawTitle && rawTitle.length >= 3 && rawTitle.length < 50 &&
-                !/^(name|item|product|price|stock|action|sr\.?no|total|status)$/i.test(rawTitle) &&
-                !rawTitle.includes('?')) {
-              const priceMatch = cells.find(t => /[₹$€£]|rs\.?/i.test(t)) || '';
-              const stockMatch = cells.find(t => /^\d+\s*(strips?|units?|tablets?|boxes?|items?|pcs?)?$/i.test(t)) || '';
-              addItem({
-                name: rawTitle,
-                price: priceMatch,
-                stock: stockMatch ? parseInt(stockMatch.replace(/\D/g, ''), 10) : null,
-                unit: stockMatch ? stockMatch.replace(/^\d+\s*/, '') || 'units' : 'units'
+        try {
+          const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]');
+          jsonLdScripts.forEach(s => {
+            try {
+              const parsed = JSON.parse(s.textContent || '{}');
+              const entries = Array.isArray(parsed) ? parsed : (parsed['@graph'] || [parsed]);
+              entries.forEach(entry => {
+                const type = entry['@type'];
+                if (type === 'Product' || type === 'IndividualProduct' || type === 'MenuItem' || type === 'Service') {
+                  const offer = Array.isArray(entry.offers) ? entry.offers[0] : entry.offers;
+                  const price = offer ? (offer.price ? `${offer.priceCurrency || '$'}${offer.price}` : '') : '';
+                  const avail = offer?.availability || '';
+                  const inStock = /InStock/i.test(avail) ? 50 : (/OutOfStock/i.test(avail) ? 0 : null);
+                  addItem({
+                    name: entry.name,
+                    price: price,
+                    stock: inStock,
+                    description: entry.description || '',
+                    category: entry.category || ''
+                  });
+                } else if (type === 'ItemList' && Array.isArray(entry.itemListElement)) {
+                  entry.itemListElement.forEach(itemEl => {
+                    const item = itemEl.item || itemEl;
+                    if (item && item.name) {
+                      const offer = item.offers;
+                      const price = offer ? (offer.price ? `${offer.priceCurrency || '$'}${offer.price}` : '') : '';
+                      addItem({ name: item.name, price, description: item.description || '' });
+                    }
+                  });
+                }
               });
+            } catch (_) {}
+          });
+        } catch (_) {}
+      }
+
+      // Tier 4: Autonomous Universal DOM Scraper (Tables, Cards, Grids across any industry)
+      if (typeof document !== 'undefined') {
+        // A. Table row scraper with header inspection & column awareness
+        const tables = document.querySelectorAll('table');
+        tables.forEach(table => {
+          const headerCells = Array.from(table.querySelectorAll('thead th, tr:first-child th')).map(th => th.textContent.trim().toLowerCase());
+          let nameColIdx = -1;
+          let priceColIdx = -1;
+          let stockColIdx = -1;
+          let descColIdx = -1;
+
+          headerCells.forEach((h, idx) => {
+            if (/name|product|item|title|medicine|dish|service|plan/i.test(h) && nameColIdx === -1) nameColIdx = idx;
+            else if (/price|cost|rate|mrp|fee/i.test(h) && priceColIdx === -1) priceColIdx = idx;
+            else if (/stock|qty|quantity|units|available|status/i.test(h) && stockColIdx === -1) stockColIdx = idx;
+            else if (/desc|composition|dosage|details|category/i.test(h) && descColIdx === -1) descColIdx = idx;
+          });
+
+          const rows = table.querySelectorAll('tbody tr, tr');
+          rows.forEach((row, rowIdx) => {
+            if (row.querySelector('th') && rowIdx === 0) return;
+
+            const tds = Array.from(row.querySelectorAll('td'));
+            if (tds.length >= 2) {
+              // Find clean title cell: use header index if valid, else first non-numeric non-checkbox cell
+              let titleTd = nameColIdx >= 0 && nameColIdx < tds.length ? tds[nameColIdx] : null;
+              if (!titleTd) {
+                for (let i = 0; i < Math.min(tds.length, 3); i++) {
+                  const cellText = tds[i].textContent.trim();
+                  if (!cellText || /^[#\d]{1,4}$/.test(cellText) || cellText.length < 2) continue;
+                  titleTd = tds[i];
+                  break;
+                }
+                if (!titleTd) titleTd = tds[0];
+              }
+
+              // Extract clean primary title from first line or title element
+              const titleEl = titleTd.querySelector('.name, .title, strong, b, h4, h5, a');
+              let rawTitle = '';
+              if (titleEl && titleEl.textContent.trim().length >= 2) {
+                rawTitle = titleEl.textContent.trim();
+              } else {
+                const lines = titleTd.innerText ? titleTd.innerText.split('\n').map(l => l.trim()).filter(Boolean) : [titleTd.textContent.trim()];
+                rawTitle = lines[0] || '';
+              }
+
+              // Extract secondary lines / composition / details
+              const lines = titleTd.innerText ? titleTd.innerText.split('\n').map(l => l.trim()).filter(Boolean) : [];
+              let secondaryDesc = lines.slice(1).join(' ');
+              if (!secondaryDesc && descColIdx >= 0 && descColIdx < tds.length) {
+                secondaryDesc = tds[descColIdx].textContent.trim();
+              }
+
+              // Extract price
+              let priceMatch = '';
+              if (priceColIdx >= 0 && priceColIdx < tds.length) {
+                priceMatch = tds[priceColIdx].textContent.trim();
+              } else {
+                for (let i = 0; i < tds.length; i++) {
+                  if (tds[i] === titleTd) continue;
+                  const t = tds[i].textContent.trim();
+                  if (/[₹$€£]|rs\.?|usd|eur/i.test(t) || /^\s*\d+([.,]\d{1,2})?\s*$/.test(t)) {
+                    priceMatch = t;
+                    break;
+                  }
+                }
+              }
+
+              // Extract stock
+              let stockVal = null;
+              let unitVal = 'units';
+              if (stockColIdx >= 0 && stockColIdx < tds.length) {
+                const t = tds[stockColIdx].textContent.trim();
+                const m = t.match(/^(\d+)\s*([a-zA-Z]+)?/);
+                if (m) {
+                  stockVal = parseInt(m[1], 10);
+                  if (m[2]) unitVal = m[2];
+                } else if (/in stock|available/i.test(t)) {
+                  stockVal = 100;
+                } else if (/out of stock|sold out|unavailable/i.test(t)) {
+                  stockVal = 0;
+                }
+              } else {
+                for (let i = 0; i < tds.length; i++) {
+                  if (tds[i] === titleTd) continue;
+                  const t = tds[i].textContent.trim();
+                  const m = t.match(/^(\d+)\s*([a-zA-Z]+)?/);
+                  if (m && !/[₹$€£]|rs\.?/i.test(t)) {
+                    stockVal = parseInt(m[1], 10);
+                    if (m[2]) unitVal = m[2];
+                    break;
+                  } else if (/in stock|available/i.test(t)) {
+                    stockVal = 100;
+                    break;
+                  } else if (/out of stock|sold out/i.test(t)) {
+                    stockVal = 0;
+                    break;
+                  }
+                }
+              }
+
+              if (rawTitle && rawTitle.length >= 2 && !/^(name|item|product|price|stock|action|sr\.?no|total|status|select|delete|edit)$/i.test(rawTitle) && !rawTitle.includes('?')) {
+                addItem({
+                  name: rawTitle,
+                  price: priceMatch,
+                  stock: stockVal,
+                  unit: unitVal,
+                  description: secondaryDesc,
+                  dosage: secondaryDesc
+                });
+              }
             }
+          });
+        });
+
+        // B. Card / Grid / List items scraper
+        const cardElements = document.querySelectorAll('.product-card, .item-card, .shop-item, .product-item, .medicine-item, [data-product], .menu-item, article.product');
+        cardElements.forEach(card => {
+          const titleEl = card.querySelector('.name, .title, h2, h3, h4, h5, [data-title], a[class*="title"], a[class*="name"]');
+          const rawTitle = titleEl ? titleEl.textContent.trim() : (card.getAttribute('data-product') || card.getAttribute('data-name') || '');
+          const priceEl = card.querySelector('.price, [data-price], .cost, .amount');
+          const priceMatch = priceEl ? priceEl.textContent.trim() : (card.getAttribute('data-price') || '');
+          const stockEl = card.querySelector('.stock, [data-stock], .quantity, .availability');
+          const stockText = stockEl ? stockEl.textContent.trim() : (card.getAttribute('data-stock') || '');
+          const m = stockText.match(/^(\d+)\s*([a-zA-Z]+)?/);
+
+          if (rawTitle && rawTitle.length >= 2 && !rawTitle.includes('?')) {
+            addItem({
+              name: rawTitle,
+              price: priceMatch,
+              stock: m ? parseInt(m[1], 10) : (/in stock/i.test(stockText) ? 100 : (/out of stock/i.test(stockText) ? 0 : null)),
+              unit: m && m[2] ? m[2] : 'units'
+            });
           }
         });
       }
@@ -1198,110 +1377,119 @@
       if (!target) return null;
 
       const cleanTarget = target.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-      const targetTokens = cleanTarget.split(' ').filter(w => w.length >= 2);
+      const allTokens = cleanTarget.split(' ').filter(w => w.length >= 2);
 
-      // If array of items
-      if (Array.isArray(inventorySource)) {
-        for (const item of inventorySource) {
-          const name = String(item.name || item.product || item.title || '').toLowerCase();
-          const category = String(item.category || item.dosage || item.description || '').toLowerCase();
-          if (name && (name.includes(target) || target.includes(name) || name.includes(cleanTarget) || cleanTarget.includes(name))) {
-            return item;
-          }
-          if (category && (category.includes(target) || target.includes(category))) {
-            return item;
-          }
+      // Filter out universal stopwords and unit/packaging stopwords
+      const distinctiveTokens = allTokens.filter(tok => !UNIVERSAL_STOPWORDS.has(tok));
+      const searchTokens = distinctiveTokens.length > 0 ? distinctiveTokens : allTokens;
+
+      const itemsList = Array.isArray(inventorySource)
+        ? inventorySource
+        : Object.entries(inventorySource).map(([k, v]) => (typeof v === 'object' && v !== null ? { name: v.name || k, ...v } : { name: k, stock: v }));
+
+      // Phase 1: Exact normalized substring match on clean name
+      for (const item of itemsList) {
+        const name = String(item.name || item.product || item.title || '').toLowerCase().trim();
+        const cleanName = name.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+        if (name && (name === target || cleanName === cleanTarget || name.includes(target) || cleanName.includes(cleanTarget))) {
+          return item;
         }
-        let best = null;
-        let maxOverlap = 0;
-        for (const item of inventorySource) {
-          const name = String(item.name || item.product || item.title || '').toLowerCase();
-          const category = String(item.category || item.dosage || item.description || '').toLowerCase();
-          const combined = `${name} ${category}`;
-          let overlap = 0;
-          for (const tok of targetTokens) {
-            if (combined.includes(tok)) overlap++;
-          }
-          if (overlap > maxOverlap && overlap >= Math.min(1, targetTokens.length)) {
-            maxOverlap = overlap;
-            best = item;
-          }
-        }
-        if (best) return best;
       }
 
-      // If object map (e.g. window.EchoAIData.liveInventory)
-      if (typeof inventorySource === 'object') {
-        for (const [key, val] of Object.entries(inventorySource)) {
-          const keyLower = String(key || '').toLowerCase();
-          const valObj = typeof val === 'object' && val !== null ? val : { stock: val };
-          const valName = String(valObj.name || valObj.title || valObj.product || key).toLowerCase();
-          const valCategory = String(valObj.category || valObj.dosage || valObj.description || '').toLowerCase();
-          const combined = `${keyLower} ${valName} ${valCategory}`;
+      // Phase 2: Distinctive Token Overlap Match
+      let best = null;
+      let maxScore = 0;
 
-          if (keyLower.includes(target) || target.includes(keyLower) ||
-              valName.includes(target) || target.includes(valName) ||
-              combined.includes(cleanTarget) || (cleanTarget.length > 3 && combined.includes(cleanTarget))) {
-            return { name: valObj.name || key, ...valObj };
+      for (const item of itemsList) {
+        const name = String(item.name || item.product || item.title || '').toLowerCase().trim();
+        const details = String(item.description || item.dosage || item.composition || item.category || '').toLowerCase().trim();
+        const combined = `${name} ${details}`.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        const itemTokens = new Set(combined.split(' '));
+
+        let matchCount = 0;
+        let nameMatchCount = 0;
+
+        for (const tok of searchTokens) {
+          if (name.includes(tok)) {
+            nameMatchCount += 2; // Extra weight for matching the actual name
+            matchCount++;
+          } else if (itemTokens.has(tok) || combined.includes(tok)) {
+            matchCount++;
           }
         }
 
-        let best = null;
-        let maxOverlap = 0;
-        for (const [key, val] of Object.entries(inventorySource)) {
-          const keyLower = String(key || '').toLowerCase();
-          const valObj = typeof val === 'object' && val !== null ? val : { stock: val };
-          const valName = String(valObj.name || valObj.title || valObj.product || key).toLowerCase();
-          const valCategory = String(valObj.category || valObj.dosage || valObj.description || '').toLowerCase();
-          const combined = `${keyLower} ${valName} ${valCategory}`;
-
-          let overlap = 0;
-          for (const tok of targetTokens) {
-            if (combined.includes(tok)) overlap++;
-          }
-          if (overlap > maxOverlap && overlap >= Math.min(1, targetTokens.length)) {
-            maxOverlap = overlap;
-            best = { name: valObj.name || key, ...valObj };
-          }
+        const score = nameMatchCount + matchCount;
+        // Require at least one distinctive token to match in the item name
+        if (nameMatchCount > 0 && score > maxScore) {
+          maxScore = score;
+          best = item;
         }
-        if (best) return best;
       }
 
+      if (best && maxScore >= 2) {
+        return best;
+      }
+
+      // Item genuinely not in database -> return null (NO FALSE POSITIVES!)
       return null;
     }
 
-    function formatRealtimeStockResponse(itemData, queryLang) {
+    function formatRealtimeStockResponse(itemData, queryLang = 'en-US', queryText = '') {
       const name = itemData.name || itemData.product || itemData.title || 'The requested item';
+      const cleanTitle = name.split(/[\(\n,]/)[0].trim() || name;
       const stock = itemData.stock !== undefined ? itemData.stock : (itemData.quantity !== undefined ? itemData.quantity : null);
-      const price = itemData.price ? (typeof itemData.price === 'number' ? `₹${itemData.price}` : itemData.price) : '';
+      const price = itemData.price ? (typeof itemData.price === 'number' ? `₹${itemData.price}` : String(itemData.price).trim()) : '';
       const unit = itemData.unit || 'units';
       const rx = itemData.rx || itemData.prescriptionRequired;
 
+      const lowerQ = String(queryText || '').toLowerCase();
+      const isPriceQuery = /\b(price|cost|rate|rates|how much|fee|mrp|charges)\b/i.test(lowerQ) || /(किंमत|भाव|दर|कीमत|दाम)/i.test(lowerQ);
+      const isStockQuery = /\b(stock|available|quantity|how many|count|units)\b/i.test(lowerQ) || /(साठा|शिल्लक|स्टॉक|उपलब्ध)/i.test(lowerQ);
+
+      // 1. Specific Price Intent
+      if (isPriceQuery) {
+        if (queryLang === 'mr-IN') {
+          return price 
+            ? `${cleanTitle} ची किंमत ${price}${unit ? ` प्रति ${unit}` : ''} आहे.${stock !== null && stock > 0 ? ` (सध्या ${stock} ${unit} साठ्यामध्ये उपलब्ध).` : ''}`
+            : `${cleanTitle} आमच्या डेटाबेसमध्ये उपलब्ध आहे. ताज्या किंमतीसाठी कृपया काउंटरशी संपर्क साधा.`;
+        }
+        if (queryLang === 'hi-IN') {
+          return price 
+            ? `${cleanTitle} की कीमत ${price}${unit ? ` प्रति ${unit}` : ''} है।${stock !== null && stock > 0 ? ` (वर्तमान में ${stock} ${unit} स्टॉक में उपलब्ध)।` : ''}`
+            : `${cleanTitle} हमारे डेटाबेस में उपलब्ध है। नवीनतम कीमत के लिए कृपया संपर्क करें।`;
+        }
+        return price
+          ? `The price of ${cleanTitle} is ${price}${unit ? ` per ${unit}` : ''}.${stock !== null && stock > 0 ? ` (Currently in stock: ${stock} ${unit}).` : ''}`
+          : `${cleanTitle} is listed in our database${stock !== null ? ` with ${stock} ${unit} in stock` : ''}. Please check with support for live rates.`;
+      }
+
+      // 2. Specific Stock Intent / Default Stock Response
       if (queryLang === 'mr-IN') {
         if (stock !== null && stock > 0) {
-          return `${name} सध्या उपलब्ध आहे. शिल्लक साठा: ${stock} ${unit}${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
+          return `${cleanTitle} सध्या उपलब्ध आहे! आमच्याकडे ${stock} ${unit} शिल्लक साठा आहे${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
         } else if (stock === 0) {
-          return `क्षमस्व, ${name} चा साठा सध्या संपला आहे. नवीन स्टॉक लवकरच उपलब्ध होईल!`;
+          return `क्षमस्व, ${cleanTitle} चा साठा सध्या संपला आहे. नवीन स्टॉक लवकरच उपलब्ध होईल!`;
         }
       }
 
       if (queryLang === 'hi-IN') {
         if (stock !== null && stock > 0) {
-          return `${name} वर्तमान में उपलब्ध है। स्टॉक: ${stock} ${unit}${price ? ` (कीमत: ${price})` : ''} उपलब्ध है।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
+          return `${cleanTitle} वर्तमान में उपलब्ध है! हमारे पास ${stock} ${unit} का स्टॉक है${price ? ` (कीमत: ${price})` : ''}।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
         } else if (stock === 0) {
-          return `क्षमा करें, ${name} अभी आउट ऑफ स्टॉक है। जल्द ही नया स्टॉक उपलब्ध होगा!`;
+          return `क्षमा करें, ${cleanTitle} अभी आउट ऑफ स्टॉक है। जल्द ही नया स्टॉक उपलब्ध होगा!`;
         }
       }
 
       // English default
       if (stock !== null && stock > 0) {
-        return `${name} is currently in stock! We have ${stock} ${unit} available${price ? ` at ${price} each` : ''}.${rx ? ' Please note a valid doctor prescription is required.' : ''}`;
+        return `${cleanTitle} is currently in stock! We have ${stock} ${unit} available${price ? ` at ${price} each` : ''}.${rx ? ' Please note a valid doctor prescription is required.' : ''}`;
       } else if (stock === 0) {
-        return `I'm sorry, ${name} is currently out of stock. We can notify you once new inventory arrives!`;
+        return `I'm sorry, ${cleanTitle} is currently out of stock. We can notify you once new inventory arrives!`;
       }
 
       if (itemData.message) return itemData.message;
-      return `${name} is available in our store.${price ? ` Price: ${price}.` : ''}`;
+      return `${cleanTitle} is available in our store.${price ? ` Price: ${price}.` : ''}`;
     }
 
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
@@ -1681,29 +1869,34 @@ ${cleanFaqBlock}`;
       const meaningfulWords = cleanWords.filter(w => !stopWords.has(w));
       const queryLang = detectTextLanguage(text);
 
-      // 1. Direct Catalog List Query Handler (e.g. "give list of all meds", "show all products")
+      // 1. Direct Catalog List Query Handler (e.g. "give list of all meds", "show all products", "show menu")
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig);
       if (bridge && bridge.status === 'FOUND_CATALOG_LIST') {
         const allItems = Array.isArray(bridge.data) && bridge.data.length > 0 ? bridge.data : getAllCatalogItems(agentConfig);
-        const sec = findHostSection('inventory');
+        const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
 
-        const isMed = allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || ''))) ||
-                      agentConfig?.type === 'pharmacy' ||
+        const isMed = /\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
+                      allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || ''))) ||
                       /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || '');
-        const nounEn = isMed ? 'medicines' : 'items';
-        const nounHi = isMed ? 'दवाइयां' : 'उत्पाद';
-        const nounMr = isMed ? 'औषधे' : 'वस्तू';
+        const isFood = /\b(menu|dish|food|pizza|burger|eat|drink|restaurant|cafe)\b/i.test(text) ||
+                       /\b(restaurant|cafe|food|dining|bakery)\b/i.test(agentConfig?.description || agentConfig?.name || '');
+        const isPlan = /\b(plan|tier|subscription|pricing)\b/i.test(text);
+        const isService = /\b(service|services|consultation)\b/i.test(text);
+
+        const nounEn = isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'products';
+        const nounHi = isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद';
+        const nounMr = isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने';
 
         let replyText = '';
         if (allItems.length > 0) {
           const itemSummary = allItems.map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
           if (queryLang === 'mr-IN') {
-            replyText = `आमच्या लाइव्ह डेटाबेसमध्ये सध्या उपलब्ध ${nounMr}: ${itemSummary}.${sec ? ' मी आपल्या स्क्रीनला थेट लाइव्ह स्टॉक तक्त्यावर नेले आहे!' : ''}`;
+            replyText = `आमच्या लाइव्ह डेटाबेसमध्ये सध्या उपलब्ध ${nounMr}: ${itemSummary}.${sec ? ` मी स्क्रीन खाली थेट ${sec.label}वर नेली आहे!` : ''}`;
           } else if (queryLang === 'hi-IN') {
-            replyText = `हमारे लाइव डेटाबेस में उपलब्ध ${nounHi}: ${itemSummary}।${sec ? ' मैंने स्क्रीन को सीधे लाइव टेबल पर स्क्रॉल कर दिया है!' : ''}`;
+            replyText = `हमारे लाइव डेटाबेस में उपलब्ध ${nounHi}: ${itemSummary}।${sec ? ` मैंने स्क्रीन को सीधे ${sec.label} पर स्क्रॉल कर दिया है!` : ''}`;
           } else {
-            replyText = `We currently have ${allItems.length} ${nounEn} in our live database: ${itemSummary}.${sec ? ' I have scrolled your screen down to the live inventory table!' : ''}`;
+            replyText = `We currently have ${allItems.length} ${nounEn} in our live database: ${itemSummary}.${sec ? ` I have scrolled your screen down to the ${sec.label}!` : ''}`;
           }
         } else {
           if (sec) {
@@ -1716,11 +1909,11 @@ ${cleanFaqBlock}`;
             }
           } else {
             if (queryLang === 'mr-IN') {
-              replyText = `मी डेटाबेस तपासला, परंतु या कॅटलॉगमध्ये सध्या कोणत्याही वस्तू किंवा औषधांची नोंद नाही. आपण आमच्या सेवा किंवा वैशिष्ट्यांबद्दल जाणून घेऊ इच्छिता का?`;
+              replyText = `मी डेटाबेस तपासला, परंतु सध्या या कॅटलॉगमध्ये कोणत्याही वस्तूंची नोंद नाही. आपण आमच्या सेवांबद्दल विचारू शकता.`;
             } else if (queryLang === 'hi-IN') {
-              replyText = `मैंने डेटाबेस चेक किया, लेकिन इस कैटलॉग में कोई उत्पाद या दवा रिकॉर्ड दर्ज नहीं है। यदि आप हमारी सेवाओं या सुविधाओं के बारे में जानना चाहते हैं, तो कृपया पूछें।`;
+              replyText = `मैंने डेटाबेस चेक किया, लेकिन इस कैटलॉग में कोई उत्पाद रिकॉर्ड दर्ज नहीं है। यदि आप अन्य सेवाओं के बारे में जानना चाहते हैं, तो कृपया पूछें।`;
             } else {
-              replyText = `I checked our database, but no product or medicine records are currently loaded in this catalog. If you would like to know about our services or features, please let me know!`;
+              replyText = `I checked our database, but no ${nounEn} are currently loaded in this catalog. If you would like to know about our services or features, please let me know!`;
             }
           }
         }
@@ -1751,35 +1944,49 @@ ${cleanFaqBlock}`;
 
       // 3. Exact Database Item Found in Host State / Live API
       if (bridge && (bridge.status === 'FOUND_IN_HOST_STATE' || bridge.status === 'FOUND_IN_LIVE_API')) {
-        const formatted = formatRealtimeStockResponse(bridge.data, queryLang);
-        const sec = findHostSection('inventory');
+        const formatted = formatRealtimeStockResponse(bridge.data, queryLang, text);
+        const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
+        const cleanBtnName = (bridge.data.name || 'Item').split(/[\(\n,]/)[0].trim().substring(0, 30);
         return {
           reply: formatted,
-          navAction: sec ? { label: `View ${bridge.data.name || 'Item'} in Table`, sectionInfo: sec } : null
+          navAction: sec ? { label: `View ${cleanBtnName} in Table`, sectionInfo: sec } : null
         };
       }
 
       // 4. Item Not Listed in Catalog
       if (bridge && bridge.status === 'ITEM_NOT_FOUND') {
         const item = bridge.item || 'The requested item';
+        const cleanItem = String(item).split(/[\(\n,]/)[0].trim();
         const allItems = getAllCatalogItems(agentConfig);
-        const topAvailable = allItems.slice(0, 3).map(i => i.name).filter(Boolean);
-        const sec = findHostSection('inventory');
+        const topAvailable = allItems.slice(0, 3).map(i => i.name.split(/[\(\n,]/)[0].trim()).filter(Boolean);
+        const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
+
+        const isMed = /\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
+                      allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || ''))) ||
+                      /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || '');
+        const isFood = /\b(menu|dish|food|pizza|burger|eat|drink|restaurant|cafe)\b/i.test(text) ||
+                       /\b(restaurant|cafe|food|dining|bakery)\b/i.test(agentConfig?.description || agentConfig?.name || '');
+        const isPlan = /\b(plan|tier|subscription|pricing)\b/i.test(text);
+        const isService = /\b(service|services|consultation)\b/i.test(text);
+
+        const nounEn = isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'products';
+        const nounHi = isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद';
+        const nounMr = isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने';
 
         let replyText = '';
         if (queryLang === 'mr-IN') {
-          replyText = `मी तपासले, पण "${item}" सध्या आमच्या लाइव्ह कॅटलॉगमध्ये उपलब्ध नाही.${topAvailable.length > 0 ? ` आमच्याकडे सध्या उपलब्ध पर्याय: ${topAvailable.join(', ')}.` : ''} आपण उपलब्ध औषधांची माहिती पाहू इच्छिता?`;
+          replyText = `मी तपासले, पण "${cleanItem}" सध्या आमच्या डेटाबेसमध्ये उपलब्ध नाही.${topAvailable.length > 0 ? ` आमच्याकडे उपलब्ध ${nounMr}: ${topAvailable.join(', ')}.` : ''} आपण उपलब्ध यादी पाहू इच्छिता?`;
         } else if (queryLang === 'hi-IN') {
-          replyText = `मैंने चेक किया, लेकिन "${item}" वर्तमान में हमारे लाइव कैटलॉग में उपलब्ध नहीं है।${topAvailable.length > 0 ? ` हमारे पास उपलब्ध दवाइयां: ${topAvailable.join(', ')}।` : ''} क्या आप उपलब्ध कैटलॉग देखना चाहेंगे?`;
+          replyText = `मैंने चेक किया, लेकिन "${cleanItem}" वर्तमान में हमारे डेटाबेस में उपलब्ध नहीं है।${topAvailable.length > 0 ? ` हमारे पास उपलब्ध ${nounHi}: ${topAvailable.join(', ')}।` : ''} क्या आप उपलब्ध सूची देखना चाहेंगे?`;
         } else {
-          replyText = `I checked our live catalog, but "${item}" is not currently listed.${topAvailable.length > 0 ? ` Available options in stock include: ${topAvailable.join(', ')}.` : ''} Would you like to check our live inventory section?`;
+          replyText = `I checked our database, but "${cleanItem}" is not currently listed.${topAvailable.length > 0 ? ` Available ${nounEn} in stock include: ${topAvailable.join(', ')}.` : ''} Would you like to check our ${sec ? sec.label : 'catalog'}?`;
         }
 
         return {
           reply: replyText,
-          navAction: sec ? { label: 'View Live Catalog Table', sectionInfo: sec } : null
+          navAction: sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null
         };
       }
 
@@ -2454,8 +2661,35 @@ ${cleanFaqBlock}`;
         try { window.speechSynthesis.resume(); } catch (_) {}
       }
 
-      const cleanSpoken = String(text).replace(/[*#_`]/g, '').trim();
+      let cleanSpoken = String(text).replace(/[*#_`]/g, '').trim();
       if (!cleanSpoken) return;
+
+      // Smart TTS brevity: If text is a long catalog listing, summarize concisely for spoken audio (< 25 words)
+      const catalogMatch = cleanSpoken.match(/^We currently have (\d+) ([\w\s]+?) in our live database: (.*?)\.(.*)$/i);
+      if (catalogMatch) {
+        const count = catalogMatch[1];
+        const noun = catalogMatch[2];
+        const items = catalogMatch[3].split(',').map(s => s.trim());
+        const sample = items.slice(0, 3).join(', ');
+        const ending = catalogMatch[4] ? catalogMatch[4].trim() : '';
+        cleanSpoken = `We have ${count} ${noun} in our live database, including ${sample}. ${ending}`.trim();
+      }
+      const mrCatalogMatch = cleanSpoken.match(/^आमच्या लाइव्ह डेटाबेसमध्ये सध्या उपलब्ध ([\w\s]+?): (.*?)\.(.*)$/i);
+      if (mrCatalogMatch) {
+        const noun = mrCatalogMatch[1];
+        const items = mrCatalogMatch[2].split(',').map(s => s.trim());
+        const sample = items.slice(0, 3).join(', ');
+        const ending = mrCatalogMatch[3] ? mrCatalogMatch[3].trim() : '';
+        cleanSpoken = `आमच्या डेटाबेसमध्ये उपलब्ध ${noun}: ${sample}. ${ending}`.trim();
+      }
+      const hiCatalogMatch = cleanSpoken.match(/^हमारे लाइव डेटाबेस में उपलब्ध ([\w\s]+?): (.*?)\.(.*)$/i);
+      if (hiCatalogMatch) {
+        const noun = hiCatalogMatch[1];
+        const items = hiCatalogMatch[2].split(',').map(s => s.trim());
+        const sample = items.slice(0, 3).join(', ');
+        const ending = hiCatalogMatch[3] ? hiCatalogMatch[3].trim() : '';
+        cleanSpoken = `हमारे डेटाबेस में उपलब्ध ${noun}: ${sample}। ${ending}`.trim();
+      }
 
       const utterance = new SpeechSynthesisUtterance(cleanSpoken);
       const resolved = resolveVoiceForText(agentConfig.voice, cleanSpoken);
