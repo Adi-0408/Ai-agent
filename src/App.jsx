@@ -171,6 +171,7 @@ export default function App() {
   const [driveStatus, setDriveStatus] = useState(() => getDriveConnectionStatus());
   const [isVoiceTestModalOpen, setIsVoiceTestModalOpen] = useState(false);
   const [isComposerMicListening, setIsComposerMicListening] = useState(false);
+  const [isChatResponding, setIsChatResponding] = useState(false);
   const composerRecognitionRef = useRef(null);
 
   const handleSaveAgentCustomKey = async (newKey) => {
@@ -1327,18 +1328,21 @@ export default function App() {
     }
 
     // Standard conversational completion
+    setIsChatResponding(true);
     try {
       const defaultSupportPrompt = "You are a friendly, helpful AI voice assistant for customer support. Answer visitor questions politely and concisely in 1-2 spoken sentences.";
+      const activeKey = currentAssistant?.apiKey || getUserApiKeys().activeKey || '';
       const aiReply = await generateAIResponse(
         text.trim(),
         currentAssistant?.prompt || defaultSupportPrompt,
-        currentAssistant?.knowledgeBase || []
+        currentAssistant?.knowledgeBase || [],
+        activeKey
       );
 
       const assistantMessage = {
         id: 'msg-' + (Date.now() + 1),
         sender: 'assistant',
-        text: aiReply,
+        text: aiReply || "I am here to assist you! How can I help you with your AI voice agent today?",
         timestamp: 'Just now'
       };
 
@@ -1347,6 +1351,28 @@ export default function App() {
       );
     } catch (err) {
       console.warn("AI response error:", err);
+      let safeFallback = "I am here to help! ";
+      const lower = text.toLowerCase();
+      if (lower.includes('embed') || lower.includes('integrate') || lower.includes('api key')) {
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+        safeFallback += `To embed this AI agent on your website, copy the script tag from the Embed tab: <script src="${origin}/widget.js" data-agent-id="${currentAssistant?.name || 'AI-Agent'}" data-api-key="YOUR_GROQ_KEY"></script>. Place it before the closing </body> tag of your website HTML.`;
+      } else if (lower.includes('train') || lower.includes('knowledge') || lower.includes('upload')) {
+        safeFallback += "You can train the AI by adding questions and answers in the Knowledge Base tab or uploading JSON/SQL database files in the Composer.";
+      } else {
+        safeFallback += "How can I assist you with your AI voice agent today?";
+      }
+
+      const fallbackMsg = {
+        id: 'msg-' + (Date.now() + 1),
+        sender: 'assistant',
+        text: safeFallback,
+        timestamp: 'Just now'
+      };
+      setThreads((prev) =>
+        prev.map((t) => (t.id === currentThreadId ? { ...t, messages: [...t.messages, fallbackMsg] } : t))
+      );
+    } finally {
+      setIsChatResponding(false);
     }
   };
 
@@ -3526,6 +3552,14 @@ export default function App() {
                             Analyzing Frontend pages, converting Backend routes to tools, and indexing Database records with Groq/Gemini.
                           </div>
                         </div>
+                      </div>
+                    )}
+
+                    {/* Chat Responding Loading Indicator */}
+                    {isChatResponding && (
+                      <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-white border border-slate-200 text-slate-600 text-xs shadow-sm max-w-[160px]">
+                        <Bot size={15} className="text-indigo-600 animate-pulse" />
+                        <span className="font-medium animate-pulse">Thinking...</span>
                       </div>
                     )}
 

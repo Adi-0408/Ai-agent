@@ -2,6 +2,7 @@
  * Strict 100% Bring-Your-Own-Key (BYOK) AI Completion Service
  * Zero developer keys baked in. Reads strictly from user state / localStorage.
  */
+import { detectTextLanguage } from '../utils/voiceConsistency.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -376,18 +377,38 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   }
 
   const cleanMessage = String(messageText || '').trim();
-  const baseIdentity = promptContext || 'You are the official AI Customer Support & Help Desk Agent for this business.';
+  const promptContext = promptText || 'You are the official AI Customer Support & Help Desk Agent for this business.';
+  const kbContext = kbList && kbList.length > 0
+    ? `\n\nVerified Knowledge Base Facts:\n${JSON.stringify(kbList)}`
+    : '';
+
+  const userKeys = getUserApiKeys();
+  const effectiveGroqKey = (apiKey && apiKey.startsWith('gsk_')) ? apiKey : userKeys.groqKey;
+  const effectiveGeminiKey = (apiKey && (apiKey.startsWith('AIza') || !apiKey.startsWith('gsk_'))) ? apiKey : userKeys.geminiKey;
+
+  const baseIdentity = promptContext;
   const systemInstructions = `${baseIdentity}${kbContext}
 
 CORE MISSION & ASSIGNMENT:
-You are the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, clarity, speed, and accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, technical issues, and general company policies, guiding customers every step of the way.
+You are the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, technical issues, and general company policies, guiding customers every step of the way.
+
+POLITE MANNERS & ETIQUETTE:
+You are exceptionally polite, respectful, warm, and well-mannered at all times. Use courteous phrasing (e.g. "Namaskar", "Hello, I would be delighted to assist", "Please feel free to ask", "Certainly"). Treat every visitor with patience and kindness.
+
+EVERYDAY KNOWLEDGE & GENERAL INTELLIGENCE:
+You possess broad everyday common knowledge, general facts, time/date awareness, and everyday conversational intelligence. When customers engage in small talk, greetings, general inquiries, or everyday conversation, answer them warmly, intelligently, and politely. Never refuse casual conversation or claim you can only discuss business FAQs.
+
+MANDATORY TURN-LEVEL CODE-SWITCHING RULE (CRITICAL):
+You MUST independently evaluate the language of the LATEST user message on EVERY turn, regardless of what language was used in previous conversation history turns.
+- Mid-Conversation Language Switching: If the customer starts a conversation in English and switches to Marathi mid-conversation (in Devanagari script or Romanized/Marathish like 'kasa ahes', 'mala sanga', 'ahe', 'kay ahe', 'kuthe ahe'), you MUST IMMEDIATELY switch your response to polite, natural Marathi (मराठी).
+- If the customer switches to Hindi (Devanagari or Hinglish like 'kaise ho', 'kya hai', 'bataiye'), you MUST reply in polite, natural Hindi (हिंदी).
+- If the customer switches back to English, reply in natural English.
+- NEVER remain stuck in the previous turn's language when the customer has switched languages!
 
 CRITICAL OPERATIONAL RULES:
 1. Dual-Channel Excellence (Voice & Chat): You serve customers seamlessly whether they speak via microphone or type in text chat. Keep answers clear, conversational, and direct (1 to 2 spoken sentences) so they sound completely natural when spoken aloud while remaining crisp and readable in chat. Never use markdown asterisks (*), hashtags (#), bullet points, or raw JSON.
 2. Customer Advocate & Problem Solver: Greet visitors warmly, address customer concerns with patience, and help them find solutions. For business, pricing, or product inquiries, accurately reference the Verified Knowledge Base Facts above.
-3. Everyday & Normal Questions: Warmly and helpfully answer everyday inquiries, greetings, pleasantries, small talk, and general knowledge questions. Never refuse ordinary conversation or claim you cannot answer casual pleasantries.
-4. Output Format: ALWAYS output pure spoken/chat conversational text directly. NEVER output JSON objects, schema configs, or code blocks.
-5. Multilingual Fluency: You are fully fluent in English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the customer asks in Hindi, answer in polite, natural Hindi. If the customer asks in Marathi, answer in polite, natural Marathi. If the customer asks in English, answer in English.`;
+3. Output Format: ALWAYS output pure spoken/chat conversational text directly. NEVER output JSON objects, schema configs, or code blocks.`;
 
   // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
@@ -478,37 +499,55 @@ CRITICAL OPERATIONAL RULES:
   }
 
   // Marathi conversational queries
-  if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)\b/i.test(cleanMessage) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {
+  if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)/i.test(cleanMessage) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {
     return "नमस्कार! मी आपला व्हॉइस असिस्टंट आहे. मी आपल्याला कशी मदत करू शकतो?";
   }
-  if (/(तुम्ही कोण आहात|तुमचे नाव काय|ओळख द्या)\b/i.test(cleanMessage) || /\b(tumhi kon ahat)\b/i.test(lower)) {
+  if (/(तुम्ही कोण आहात|तुमचे नाव काय|ओळख द्या)/i.test(cleanMessage) || /\b(tumhi kon ahat)\b/i.test(lower)) {
     return "मी आपला अधिकृत एआय व्हॉइस असिस्टंट आहे. मी आपल्या सर्व प्रश्नांची उत्तरे देण्यासाठी उपलब्ध आहे.";
   }
-  if (/(तुम्ही काय करू शकता|मदत करा|सेवा|वैशिष्ट्ये)\b/i.test(cleanMessage) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
+  if (/(तुम्ही काय करू शकता|मदत करा|सेवा|वैशिष्ट्ये)/i.test(cleanMessage) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
     return "मी आपल्या सेवांची माहिती देऊ शकतो आणि आपल्या सर्व शंकांचे निरसन करू शकतो. आपल्याला काय जाणून घ्यायचे आहे?";
   }
-  if (/(धन्यवाद|आभार|खूप छान)\b/i.test(cleanMessage) || /\b(dhanyavad|dhanyavaad|aabhar)\b/i.test(lower)) {
+  if (/(धन्यवाद|आभार|खूप छान)/i.test(cleanMessage) || /\b(dhanyavad|dhanyavaad|aabhar)\b/i.test(lower)) {
     return "आपले मनःपूर्वक स्वागत आहे! मी आपल्याला आणखी काही मदत करू शकतो का?";
   }
-  if (/(अलविदा|बाय|पुन्हा भेटू|काळजी घ्या)\b/i.test(cleanMessage)) {
+  if (/(अलविदा|बाय|पुन्हा भेटू|काळजी घ्या)/i.test(cleanMessage)) {
     return "धन्यवाद! काळजी घ्या आणि आपला दिवस चांगला जावो.";
   }
 
   // Hindi conversational queries
-  if (/(नमस्ते|प्रणाम|हेलो|हाय|कैसे हो|क्या हाल है|शुभ प्रभात)\b/i.test(cleanMessage) || /\b(namaste|kaise ho|kya haal)\b/i.test(lower)) {
+  if (/(नमस्ते|प्रणाम|हेलो|हाय|कैसे हो|क्या हाल है|शुभ प्रभात)/i.test(cleanMessage) || /\b(namaste|kaise ho|kya haal)\b/i.test(lower)) {
     return "नमस्ते! मैं आपका एआई वॉइस असिस्टेंट हूँ। मैं आज आपकी क्या सहायता कर सकता हूँ?";
   }
-  if (/(आप कौन हैं|तुम्हारा नाम क्या|अपना परिचय)\b/i.test(cleanMessage) || /\b(aap kaun hain)\b/i.test(lower)) {
+  if (/(आप कौन हैं|तुम्हारा नाम क्या|अपना परिचय)/i.test(cleanMessage) || /\b(aap kaun hain)\b/i.test(lower)) {
     return "मैं आपकी वेबसाइट का आधिकारिक एआई वॉइस गाइड हूँ। मैं आपकी सभी पूछताछ में मदद कर सकता हूँ।";
   }
-  if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं|सेवाएं)\b/i.test(cleanMessage) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
+  if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं|सेवाएं)/i.test(cleanMessage) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
     return "मैं आपको हमारी सेवाओं, उत्पादों और जानकारी के बारे में विस्तृत सहायता प्रदान कर सकता हूँ। आप क्या जानना चाहते हैं?";
   }
-  if (/(धन्यवाद|शुक्रिया|बहुत अच्छा)\b/i.test(cleanMessage) || /\b(dhanyawad|shukriya)\b/i.test(lower)) {
+  if (/(धन्यवाद|शुक्रिया|बहुत अच्छा)/i.test(cleanMessage) || /\b(dhanyawad|shukriya)\b/i.test(lower)) {
     return "आपका बहुत-बहुत स्वागत है! क्या मैं आपकी किसी अन्य चीज़ में सहायता कर सकता हूँ?";
   }
-  if (/(अलविदा|बाय|फिर मिलेंगे)\b/i.test(cleanMessage)) {
+  if (/(अलविदा|बाय|फिर मिलेंगे)/i.test(cleanMessage)) {
     return "धन्यवाद! आपका दिन शुभ हो, फिर मिलेंगे।";
+  }
+
+  // Platform & Embedding Capabilities FAQs
+  if (/\b(embed|integrate|script tag|widget\.js|embed this ai agent|how do i embed|add to website|put on website|website using my api key)\b/i.test(lower)) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    return `To embed your AI voice agent on any website, copy the script tag from the Embed tab or Composer: <script src="${origin}/widget.js" data-agent-id="YOUR_AGENT_NAME" data-api-key="YOUR_GROQ_KEY"></script>. Place this single line before the closing </body> tag of your website HTML, and your floating voice widget will appear instantly!`;
+  }
+  if (/\b(synthesiz|walk me through|frontend.*backend|full[- ]stack|from files|attach files)\b/i.test(lower)) {
+    return "To synthesize an agent from full-stack files, click the '+' paperclip icon or drag-and-drop your frontend components, backend API routes, and database schemas into the Composer. Then click 'Synthesize', and the AI will automatically create an agent tailored to your codebase!";
+  }
+  if (/\b(upload json|upload sql|train the ai|knowledge base|upload files|add faq|add documents)\b/i.test(lower)) {
+    return "You can train your AI agent by uploading JSON, CSV, or SQL files in the Knowledge Base tab, or by adding custom Q&A pairs. The agent extracts verified facts from your files and uses them to answer visitor questions with 100% accuracy.";
+  }
+  if (/\b(talk to my agent|dashboard voice sandbox|test sandbox|voice tester|test modal|try voice|voice test)\b/i.test(lower)) {
+    return "You can test your agent right now by clicking 'Voice Sandbox' in the dashboard! You can speak naturally in English, Hindi, or Marathi, and the agent will auto-detect your language and reply aloud in real time.";
+  }
+  if (/\b(api key|groq key|gemini key|where do i get api key|how to add key)\b/i.test(lower)) {
+    return "You can add your free Groq or Google Gemini API key by clicking Settings (gear icon) in the sidebar. Both Groq and Google Gemini offer generous free tiers with ultra-fast response times!";
   }
 
   // Check website purpose / main point
@@ -554,14 +593,29 @@ CRITICAL OPERATIONAL RULES:
     return bestMatch.a;
   }
 
+  const inputLang = detectTextLanguage(cleanMessage);
+
   // 4. If no user API key was configured and no match found
   if (!userKeys.hasKey && !apiKey) {
-    if (opt.throwOnMissingKey) {
+    if (options?.throwOnMissingKey) {
       const error = new Error('MISSING_USER_API_KEY');
       error.code = 'MISSING_USER_API_KEY';
       throw error;
     }
+    if (inputLang === 'mr-IN') {
+      return `आपल्या प्रश्नाबद्दल धन्यवाद! मी आपल्या सर्व सेवा आणि उत्पादनांबद्दल माहिती देण्यासाठी उपलब्ध आहे. कृपया मला आणखी तपशील सांगा.`;
+    }
+    if (inputLang === 'hi-IN') {
+      return `आपके प्रश्न के लिए धन्यवाद! मैं हमारी सेवाओं और उत्पादों के बारे में आपकी सहायता के लिए तैयार हूँ। कृपया मुझे और विवरण बताएं।`;
+    }
     return `No personal API key configured. You can ask about our indexed products, or add your personal Groq or Gemini API key in Settings to unlock real-time AI reasoning.`;
+  }
+
+  if (inputLang === 'mr-IN') {
+    return `मी समजतो की आपण "${cleanMessage}" बद्दल विचारत आहात. मी आपल्या सेवा आणि प्रश्नांची उत्तरे देण्यासाठी उपलब्ध आहे. कृपया मला आणखी सांगा!`;
+  }
+  if (inputLang === 'hi-IN') {
+    return `मैं समझता हूँ कि आप "${cleanMessage}" के बारे में पूछ रहे हैं। मैं आपकी सहायता के लिए तैयार हूँ। कृपया मुझे और बताएं!`;
   }
 
   return `I understand your question about "${cleanMessage}". While I check our database, feel free to ask about our flagship products, engineering specifications, or consultation options!`;

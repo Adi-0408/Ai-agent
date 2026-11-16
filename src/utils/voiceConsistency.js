@@ -359,6 +359,7 @@ export function resolveLockedVoice(personaName = 'Adam') {
 
 /**
  * Detect language from text content: 'mr-IN' (Marathi), 'hi-IN' (Hindi), or 'en-US' (English)
+ * Supports both native Devanagari script and romanized Marathish/Hinglish.
  * @param {string} text
  * @returns {'mr-IN' | 'hi-IN' | 'en-US'}
  */
@@ -367,29 +368,51 @@ export function detectTextLanguage(text) {
   const clean = text.trim();
 
   // 1. Devanagari script detection (\u0900 to \u097F)
-  const devanagariCount = (clean.match(/[\u0900-\u097F]/g) || []).length;
-  if (devanagariCount > 0) {
-    // Check for distinctive Marathi vocabulary and grammatical markers
-    const marathiPattern = /\b(आहे|आहेत|नाही|नाहीत|काय|कसे|कसा|कशी|करा|करावे|होय|मला|तुम्ही|आपण|नमस्कार|सांगा|पाहिजे|झाले|झाली|झाला|करतो|करते|आहात|माझे|माझं|तुझे|तुझं|कशा|कोठे|कुठे|कधी|कोण|कसं|होते|होती|होता|आमचे|तुमचे|का|नक्की|छान|मित्रा|मित्रांनो)\b/i;
-    const marathiSuffixes = /(ंच्या|च्या|तील|वरून|साठी|प्रमाणे|बद्दल|कडे)\b/;
+  const devanagariMatches = clean.match(/[\u0900-\u097F]/g);
+  if (devanagariMatches && devanagariMatches.length > 0) {
+    let mrScore = 0;
+    let hiScore = 0;
 
-    if (marathiPattern.test(clean) || marathiSuffixes.test(clean)) {
-      return 'mr-IN';
-    }
+    // Distinctive Marathi markers
+    const mrWords = /\b(आहे|आहेत|नाही|नाहीत|काय|कसे|कसा|कशी|करा|करावे|होय|मला|तुम्ही|आपण|आपले|आपली|आपल्या|नमस्कार|सांगा|सांगू|पाहिजे|झाले|झाली|झाला|करतो|करते|आहात|माझे|माझं|तुझे|तुझं|कुठे|कधी|कोण|कसं|आमचे|तुमचे|का|नक्की|छान|विचारू|शकता|द्या|येथे|बद्दल|वार|आज|उद्या|काल|कळवा)\b/g;
+    const mrSuffixes = /(ंच्या|च्या|तील|वरून|साठी|बद्दल|कडून|नुसार)/g;
+    const mrVerbEndings = /(तोय|तेय|ताहेत|तात|णार|लेलं)/g;
+
+    const mrW = clean.match(mrWords);
+    if (mrW) mrScore += mrW.length * 2;
+    const mrS = clean.match(mrSuffixes);
+    if (mrS) mrScore += mrS.length * 2;
+    const mrV = clean.match(mrVerbEndings);
+    if (mrV) mrScore += mrV.length * 2;
+
+    // Distinctive Hindi markers
+    const hiWords = /\b(है|हैं|हो|हूँ|हूं|था|थी|थे|क्या|कैसे|कैसा|कैसी|कहाँ|कहा|बताओ|बताइए|चाहिए|आपकी|आपका|आपके|मुझे|हमे|हमें|नहीं|शुक्रिया|नमस्ते|करना|करते|करता|करती|सकते|सकता|सकती|होगा|होगी|होंगे)\b/g;
+    const hiW = clean.match(hiWords);
+    if (hiW) hiScore += hiW.length * 2;
+
+    if (mrScore > hiScore) return 'mr-IN';
+    if (hiScore > mrScore) return 'hi-IN';
+
+    // If ambiguous Devanagari, check for 'आहे' or 'च्या'
+    if (/(आहे|च्या|सांगा|काय)/.test(clean)) return 'mr-IN';
     return 'hi-IN';
   }
 
-  // 2. Romanized Hindi (Hinglish) & Romanized Marathi detection
+  // 2. Romanized Hindi (Hinglish) & Romanized Marathi (Marathish) detection
   const lower = clean.toLowerCase();
-  const marathiRoman = /\b(kasa|kase|kashi|ahes|ahe|ahet|nahi|kaay|kay|tumhi|tumi|mala|namaskar|dhanyavad|sang|sanga|pahije|zhala|jhala|zhal|karto|karte|kuth|kuthe|aapan|kasa\s+ahes|kay\s+chalalay)\b/i;
-  if (marathiRoman.test(lower)) {
-    return 'mr-IN';
-  }
+  let mrRomanScore = 0;
+  let hiRomanScore = 0;
 
-  const hindiRoman = /\b(kya|kaise|kaisa|kaisi|hai|hain|nahi|nahin|namaste|dhanyawad|dhanyavad|shukriya|mujhe|aap|hum|batao|bataiye|chahiye|karo|karna|hoga|hogi|theek|accha|achha|kaise\s+ho|kya\s+haal)\b/i;
-  if (hindiRoman.test(lower)) {
-    return 'hi-IN';
-  }
+  const mrRoman = /\b(kasa|kashi|ahes|ahe|ahet|nahit|kaay|tumhi|tumi|mala|amhi|aamhi|sanga|sangu|pahije|zhala|jhala|zhal|kuthe|aapan|aple|apli|shakto|shakte|vichara|baddal|sathi|madhye|aaj|udya|kiti|tumche|aamche|tula)\b/g;
+  const hiRoman = /\b(kya|kaise|kaisa|kaisi|hai|hain|nahin|namaste|shukriya|mujhe|aap|hum|batao|bataiye|chahiye|hoga|hogi|theek|accha|achha|kahan|kidhar|kitna|kripya)\b/g;
+
+  const mrM = lower.match(mrRoman);
+  if (mrM) mrRomanScore += mrM.length;
+  const hiM = lower.match(hiRoman);
+  if (hiM) hiRomanScore += hiM.length;
+
+  if (mrRomanScore > hiRomanScore) return 'mr-IN';
+  if (hiRomanScore > mrRomanScore) return 'hi-IN';
 
   return 'en-US';
 }

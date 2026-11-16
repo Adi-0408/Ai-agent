@@ -784,36 +784,36 @@
       const meaningfulWords = cleanWords.filter(w => !stopWords.has(w));
 
       // Marathi Conversational Queries
-      if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)\b/i.test(text) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {
+      if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)/i.test(text) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {
         return `नमस्कार! मी ${agentConfig.name} आहे, आपला व्हॉइस असिस्टंट. मी आपल्याला कशी मदत करू शकतो?`;
       }
-      if (/(तुम्ही कोण आहात|तुमचे नाव काय|ओळख द्या)\b/i.test(text) || /\b(tumhi kon ahat)\b/i.test(lower)) {
+      if (/(तुम्ही कोण आहात|तुमचे नाव काय|ओळख द्या)/i.test(text) || /\b(tumhi kon ahat)\b/i.test(lower)) {
         return `मी ${agentConfig.name} आहे, या वेबसाइटचा अधिकृत एआय व्हॉइस असिस्टंट.`;
       }
-      if (/(तुम्ही काय करू शकता|मदत करा|सेवा|वैशिष्ट्ये)\b/i.test(text) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
+      if (/(तुम्ही काय करू शकता|मदत करा|सेवा|वैशिष्ट्ये)/i.test(text) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
         return "मी आपल्या सर्व शंकांचे निरसन करू शकतो आणि आमच्या सेवांबद्दल माहिती देऊ शकतो. आपल्याला काय जाणून घ्यायचे आहे?";
       }
-      if (/(धन्यवाद|आभार|खूप छान)\b/i.test(text) || /\b(dhanyavad|dhanyavaad|aabhar)\b/i.test(lower)) {
+      if (/(धन्यवाद|आभार|खूप छान)/i.test(text) || /\b(dhanyavad|dhanyavaad|aabhar)\b/i.test(lower)) {
         return "आपले मनःपूर्वक स्वागत आहे! मी आपल्याला आणखी काही मदत करू शकतो का?";
       }
-      if (/(अलविदा|बाय|पुन्हा भेटू|काळजी घ्या)\b/i.test(text)) {
+      if (/(अलविदा|बाय|पुन्हा भेटू|काळजी घ्या)/i.test(text)) {
         return "धन्यवाद! काळजी घ्या आणि आपला दिवस चांगला जावो.";
       }
 
       // Hindi Conversational Queries
-      if (/(नमस्ते|प्रणाम|हेलो|हाय|कैसे हो|क्या हाल है|शुभ प्रभात)\b/i.test(text) || /\b(namaste|kaise ho|kya haal)\b/i.test(lower)) {
+      if (/(नमस्ते|प्रणाम|हेलो|हाय|कैसे हो|क्या हाल है|शुभ प्रभात)/i.test(text) || /\b(namaste|kaise ho|kya haal)\b/i.test(lower)) {
         return `नमस्ते! मैं ${agentConfig.name} हूँ, आपका एआई वॉइस गाइड। मैं आज आपकी क्या सहायता कर सकता हूँ?`;
       }
-      if (/(आप कौन हैं|तुम्हारा नाम क्या|अपना परिचय)\b/i.test(text) || /\b(aap kaun hain)\b/i.test(lower)) {
+      if (/(आप कौन हैं|तुम्हारा नाम क्या|अपना परिचय)/i.test(text) || /\b(aap kaun hain)\b/i.test(lower)) {
         return `मैं ${agentConfig.name} हूँ, आपकी वेबसाइट का आधिकारिक एआई वॉइस गाइड।`;
       }
-      if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं|सेवाएं)\b/i.test(text) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
+      if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं|सेवाएं)/i.test(text) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
         return "मैं आपको हमारी सेवाओं, उत्पादों और जानकारी के बारे में विस्तृत सहायता प्रदान कर सकता हूँ। आप क्या जानना चाहते हैं?";
       }
-      if (/(धन्यवाद|शुक्रिया|बहुत अच्छा)\b/i.test(text) || /\b(dhanyawad|shukriya)\b/i.test(lower)) {
+      if (/(धन्यवाद|शुक्रिया|बहुत अच्छा)/i.test(text) || /\b(dhanyawad|shukriya)\b/i.test(lower)) {
         return "आपका बहुत-बहुत स्वागत है! क्या मैं आपकी किसी अन्य चीज़ में सहायता कर सकता हूँ?";
       }
-      if (/(अलविदा|बाय|फिर मिलेंगे)\b/i.test(text)) {
+      if (/(अलविदा|बाय|फिर मिलेंगे)/i.test(text)) {
         return "धन्यवाद! आपका दिन शुभ हो, फिर मिलेंगे।";
       }
 
@@ -891,7 +891,14 @@
         return bestItem.a;
       }
 
-      // 7. Contextual Fallback
+      // 7. Contextual Fallback in Exact Language
+      const queryLang = detectTextLanguage(text);
+      if (queryLang === 'mr-IN') {
+        return `मी समजतो की आपण "${text}" बद्दल विचारत आहात. मी आपल्या सेवा आणि प्रश्नांची उत्तरे देण्यासाठी उपलब्ध आहे. कृपया मला आणखी सांगा!`;
+      }
+      if (queryLang === 'hi-IN') {
+        return `मैं समझता हूँ कि आप "${text}" के बारे में पूछ रहे हैं। मैं आपकी सहायता के लिए तैयार हूँ। कृपया मुझे और बताएं!`;
+      }
       const sampleQuestions = kb.slice(0, 3).map(k => k.q).filter(Boolean);
       if (sampleQuestions.length > 0) {
         return `I understand you're asking about "${text}". While I don't have that specific detail, I can answer questions like: ${sampleQuestions.join(', ')}. What would you like to explore?`;
@@ -1016,6 +1023,11 @@
       orb.className = 'vhd-orb-btn listening';
       voiceLabel.textContent = 'Thinking...';
 
+      const detectedQueryLang = detectTextLanguage(userText);
+      if (recognition && currentSpeechLang === 'auto') {
+        recognition.lang = detectedQueryLang;
+      }
+
       let reply = '';
       const apiKey = (currentScript && (currentScript.getAttribute('data-api-key') || currentScript.getAttribute('data-key'))) ||
                      agentConfig.apiKey ||
@@ -1046,7 +1058,7 @@
         try {
           const kbFacts = (agentConfig.knowledgeBase || []).slice(0, 25);
           const kbText = kbFacts.length > 0 ? `\nVerified Website Knowledge Base Facts:\n${JSON.stringify(kbFacts)}` : '';
-          const systemContext = `Your name is "${agentConfig.name}". You are "${agentConfig.name}", the official omni-channel AI Customer Support & Help Desk Agent for this website. Your primary mission is to assist customers and website visitors with empathy, clarity, and speed across BOTH voice conversations and interactive chat. Never introduce yourself as "app Concierge", "Site Sentinel", "Help Desk AI", or any other name. Always identify yourself as "${agentConfig.name}".\n\n${agentConfig.prompt || agentConfig.systemPrompt || `You are ${agentConfig.name}, the dedicated AI Customer Support Agent for this website.`}${kbText}\n\nCRITICAL DUAL-CHANNEL SUPPORT RULES:\n1. Conversational Voice & Chat Output: Respond in 1 to 2 clear, spoken, natural sentences directly answering the customer. Never output markdown asterisks (*), hashtags (#), bullet points, or raw JSON, as this will be read aloud by browser voice synthesis.\n2. Customer Help & Advocacy: Listen carefully to customer needs, solve issues promptly, and guide visitors through services, pricing, and procedures based on verified website facts above.\n3. Everyday & Normal Questions: Warmly and helpfully answer everyday inquiries, greetings, pleasantries, small talk, and general knowledge questions. Never refuse ordinary conversation or state you lack data for ordinary questions.\n4. Output Format: ALWAYS output pure spoken/chat conversational text directly. NEVER output JSON, code blocks, or configuration objects.\n5. Multilingual Rules: You support English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the user asks in Hindi, reply in natural, polite Hindi. If the user asks in Marathi, reply in natural, polite Marathi. If the user asks in English, reply in natural English.`;
+          const systemContext = `Your name is "${agentConfig.name}". You are "${agentConfig.name}", the official omni-channel AI Customer Support & Help Desk Agent for this website. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, and speed across BOTH voice conversations and interactive chat. Never introduce yourself as "app Concierge", "Site Sentinel", "Help Desk AI", or any other name. Always identify yourself as "${agentConfig.name}".\n\n${agentConfig.prompt || agentConfig.systemPrompt || `You are ${agentConfig.name}, the dedicated AI Customer Support Agent for this website.`}${kbText}\n\nPOLITE MANNERS & ETIQUETTE:\nBe exceptionally polite, respectful, warm, and well-mannered at all times. Use courteous phrasing (e.g. "Namaskar", "Hello, I would be delighted to assist", "Certainly"). Treat every visitor with patience and kindness.\n\nEVERYDAY KNOWLEDGE & GENERAL INTELLIGENCE:\nYou possess broad everyday common knowledge, general facts, time/date awareness, and conversational intelligence. When customers engage in small talk, greetings, general inquiries, or everyday conversation, answer them warmly, intelligently, and politely. Never refuse casual conversation.\n\nMANDATORY TURN-LEVEL CODE-SWITCHING RULE (CRITICAL):\nYou MUST independently evaluate the language of the LATEST user message on EVERY turn, regardless of what language was used in previous conversation history turns.\n- Mid-Conversation Language Switching: If the customer starts a conversation in English and switches to Marathi mid-conversation (in Devanagari script or Romanized/Marathish like 'kasa ahes', 'mala sanga', 'ahe', 'kay ahe', 'kuthe ahe'), you MUST IMMEDIATELY switch your response to polite, natural Marathi (मराठी).\n- If the customer switches to Hindi (Devanagari or Hinglish like 'kaise ho', 'kya hai', 'bataiye'), you MUST reply in polite, natural Hindi (हिंदी).\n- If the customer switches back to English, reply in natural English.\n- NEVER remain stuck in the previous turn's language when the customer has switched languages!\n\nCRITICAL OPERATIONAL RULES:\n1. Conversational Voice & Chat Output: Respond in 1 to 2 clear, spoken, natural sentences directly answering the customer. Never output markdown asterisks (*), hashtags (#), bullet points, or raw JSON, as this will be read aloud by browser voice synthesis.\n2. Customer Advocate & Problem Solver: Greet visitors warmly, address customer concerns with patience, and help them find solutions. For business, pricing, or product inquiries, accurately reference the Verified Knowledge Base Facts above.\n3. Output Format: ALWAYS output pure spoken/chat conversational text directly. NEVER output JSON, code blocks, or configuration objects.`;
 
           const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -1328,20 +1340,53 @@
     function detectTextLanguage(text) {
       if (!text || typeof text !== 'string') return 'en-US';
       const clean = text.trim();
-      const devanagariCount = (clean.match(/[\u0900-\u097F]/g) || []).length;
-      if (devanagariCount > 0) {
-        const marathiPattern = /\b(आहे|आहेत|नाही|नाहीत|काय|कसे|कसा|कशी|करा|करावे|होय|मला|तुम्ही|आपण|नमस्कार|सांगा|पाहिजे|झाले|झाली|झाला|करतो|करते|आहात|माझे|माझं|तुझे|तुझं|कशा|कोठे|कुठे|कधी|कोण|कसं|होते|होती|होता|आमचे|तुमचे|का|नक्की|छान|मित्रा|मित्रांनो)\b/i;
-        const marathiSuffixes = /(ंच्या|च्या|तील|वरून|साठी|प्रमाणे|बद्दल|कडे)\b/;
-        if (marathiPattern.test(clean) || marathiSuffixes.test(clean)) {
-          return 'mr-IN';
-        }
+
+      // 1. Devanagari script detection (\u0900 to \u097F)
+      const devanagariMatches = clean.match(/[\u0900-\u097F]/g);
+      if (devanagariMatches && devanagariMatches.length > 0) {
+        let mrScore = 0;
+        let hiScore = 0;
+
+        // Distinctive Marathi markers
+        const mrWords = /\b(आहे|आहेत|नाही|नाहीत|काय|कसे|कसा|कशी|करा|करावे|होय|मला|तुम्ही|आपण|आपले|आपली|आपल्या|नमस्कार|सांगा|सांगू|पाहिजे|झाले|झाली|झाला|करतो|करते|आहात|माझे|माझं|तुझे|तुझं|कुठे|कधी|कोण|कसं|आमचे|तुमचे|का|नक्की|छान|विचारू|शकता|द्या|येथे|बद्दल|वार|आज|उद्या|काल|कळवा)\b/g;
+        const mrSuffixes = /(ंच्या|च्या|तील|वरून|साठी|बद्दल|कडून|नुसार)/g;
+        const mrVerbEndings = /(तोय|तेय|ताहेत|तात|णार|लेलं)/g;
+
+        const mrW = clean.match(mrWords);
+        if (mrW) mrScore += mrW.length * 2;
+        const mrS = clean.match(mrSuffixes);
+        if (mrS) mrScore += mrS.length * 2;
+        const mrV = clean.match(mrVerbEndings);
+        if (mrV) mrScore += mrV.length * 2;
+
+        // Distinctive Hindi markers
+        const hiWords = /\b(है|हैं|हो|हूँ|हूं|था|थी|थे|क्या|कैसे|कैसा|कैसी|कहाँ|कहा|बताओ|बताइए|चाहिए|आपकी|आपका|आपके|मुझे|हमे|हमें|नहीं|शुक्रिया|नमस्ते|करना|करते|करता|करती|सकते|सकता|सकती|होगा|होगी|होंगे)\b/g;
+        const hiW = clean.match(hiWords);
+        if (hiW) hiScore += hiW.length * 2;
+
+        if (mrScore > hiScore) return 'mr-IN';
+        if (hiScore > mrScore) return 'hi-IN';
+
+        if (/(आहे|च्या|सांगा|काय)/.test(clean)) return 'mr-IN';
         return 'hi-IN';
       }
+
+      // 2. Romanized Hindi (Hinglish) & Romanized Marathi (Marathish) detection
       const lower = clean.toLowerCase();
-      const marathiRoman = /\b(kasa|kase|kashi|ahes|ahe|ahet|nahi|kaay|kay|tumhi|tumi|mala|namaskar|dhanyavad|sang|sanga|pahije|zhala|jhala|zhal|karto|karte|kuth|kuthe|aapan)\b/i;
-      if (marathiRoman.test(lower)) return 'mr-IN';
-      const hindiRoman = /\b(kya|kaise|kaisa|kaisi|hai|hain|nahi|nahin|namaste|dhanyawad|dhanyavad|shukriya|mujhe|aap|hum|batao|bataiye|chahiye|karo|karna|hoga|hogi|theek|accha|achha)\b/i;
-      if (hindiRoman.test(lower)) return 'hi-IN';
+      let mrRomanScore = 0;
+      let hiRomanScore = 0;
+
+      const mrRoman = /\b(kasa|kashi|ahes|ahe|ahet|nahit|kaay|tumhi|tumi|mala|amhi|aamhi|sanga|sangu|pahije|zhala|jhala|zhal|kuthe|aapan|aple|apli|shakto|shakte|vichara|baddal|sathi|madhye|aaj|udya|kiti|tumche|aamche|tula)\b/g;
+      const hiRoman = /\b(kya|kaise|kaisa|kaisi|hai|hain|nahin|namaste|shukriya|mujhe|aap|hum|batao|bataiye|chahiye|hoga|hogi|theek|accha|achha|kahan|kidhar|kitna|kripya)\b/g;
+
+      const mrM = lower.match(mrRoman);
+      if (mrM) mrRomanScore += mrM.length;
+      const hiM = lower.match(hiRoman);
+      if (hiM) hiRomanScore += hiM.length;
+
+      if (mrRomanScore > hiRomanScore) return 'mr-IN';
+      if (hiRomanScore > mrRomanScore) return 'hi-IN';
+
       return 'en-US';
     }
 

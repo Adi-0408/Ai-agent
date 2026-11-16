@@ -16,7 +16,13 @@ import {
   Activity,
   Languages
 } from 'lucide-react';
-import { resolveLockedVoice, resolveVoiceForText, speakTextWithWatchdog, stopCurrentSpeech } from '../utils/voiceConsistency';
+import {
+  resolveLockedVoice,
+  resolveVoiceForText,
+  speakTextWithWatchdog,
+  stopCurrentSpeech,
+  detectTextLanguage
+} from '../utils/voiceConsistency';
 import { generateAIResponse, getUserApiKeys, transcribeAudioWithGroqWhisper } from '../services/aiCompletionService';
 
 export default function VoiceTestModal({ isOpen, onClose, assistant }) {
@@ -42,6 +48,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
   const recognitionRef = useRef(null);
   const recordedTranscriptRef = useRef('');
   const interimTranscriptRef = useRef('');
+  const lastDetectedLangRef = useRef('en-US');
   const speechHandledRef = useRef(false);
   const synthRef = useRef(typeof window !== 'undefined' ? window.speechSynthesis : null);
   const chatBottomRef = useRef(null);
@@ -254,7 +261,9 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         rec.continuous = true;
         rec.interimResults = true;
         const defaultBrowserLang = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'en-US';
-        rec.lang = (selectedLang && selectedLang !== 'auto') ? selectedLang : defaultBrowserLang;
+        rec.lang = (selectedLang && selectedLang !== 'auto')
+          ? selectedLang
+          : (lastDetectedLangRef.current || defaultBrowserLang);
 
         rec.onstart = () => {
           setIsRecording(true);
@@ -354,6 +363,21 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
     setInterimTranscript('');
     recordedTranscriptRef.current = '';
     interimTranscriptRef.current = '';
+
+    // Turn-level dynamic language detection & badge update
+    const detectedCode = detectTextLanguage(cleanText);
+    if (selectedLang === 'auto') {
+      if (detectedCode === 'mr-IN') {
+        setDetectedLangBadge('🚩 मराठी');
+        lastDetectedLangRef.current = 'mr-IN';
+      } else if (detectedCode === 'hi-IN') {
+        setDetectedLangBadge('🇮🇳 हिंदी');
+        lastDetectedLangRef.current = 'hi-IN';
+      } else {
+        setDetectedLangBadge('🇬🇧 English');
+        lastDetectedLangRef.current = 'en-IN';
+      }
+    }
 
     const userMsg = {
       id: 'usr-' + Date.now(),
