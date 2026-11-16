@@ -326,36 +326,81 @@ export async function transcribeAudioWithGroqWhisper(audioBlob, customApiKey = '
 }
 
 /**
- * Cleans and sanitizes raw model output into natural, spoken text.
- * Strips raw JSON objects, schema configs, markdown asterisks, or stray formatting.
+ * Cleans and sanitizes model output into natural, readable, conversational text.
+ * Strips accidental JSON objects, configuration schemas, or stray formatting.
+ * Preserves clean paragraphs, numbered lists, and code snippets for neat chat rendering.
  */
-export function sanitizeSpokenResponse(rawText) {
+export function sanitizeSpokenResponse(rawText, userQuery = '', options = {}) {
   if (!rawText) return "Hello! How can I assist you today?";
   let text = String(rawText).trim();
 
   // If response accidentally begins with or contains JSON format like {"agent_config": ...}
   if (text.startsWith('{') || text.startsWith('[') || text.includes('"agent_config"') || text.includes('"personality"')) {
+    const qLower = String(userQuery || '').toLowerCase();
+    
+    // If the user was asking how to get an API key
+    if (/\b(?:key|api\s*key|groq|gemini|google)\b/i.test(qLower) && /\b(?:how|where|get|find|obtain|create)\b/i.test(qLower)) {
+      return `To get your free API key for Groq or Google Gemini:
+
+1. **Groq API Key (Recommended - Ultra-Fast <200ms)**:
+   • Visit the Groq Console: https://console.groq.com/keys
+   • Sign in with your Google or GitHub account.
+   • Click **Create API Key**, give it a name, and copy your key (starts with "gsk_").
+
+2. **Google Gemini API Key (Generous Free Tier)**:
+   • Visit Google AI Studio: https://aistudio.google.com/app/apikey
+   • Sign in with your Google account.
+   • Click **Create API Key** and copy your key (starts with "AIza...").
+
+3. **Save Key in Dashboard**:
+   • Click the **Settings** gear icon in the left sidebar (or the API Keys tab).
+   • Paste your Groq or Gemini key and click **Save Key**. All your assistants and testing sandboxes will immediately use it!`;
+    }
+
+    // If the user was asking how to embed
+    if (/\b(?:embed|integrate|script tag|widget|website)\b/i.test(qLower)) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+      const astName = options?.agentName || 'AI Voice Agent';
+      return `To embed your AI voice agent on any website:
+
+1. **Copy the embed script**:
+<script src="${origin}/widget.js" data-agent-id="${astName}" data-api-key="YOUR_GROQ_KEY"></script>
+
+2. **Add to your website**:
+Paste this single line directly before the closing </body> tag of your website HTML.
+
+3. **API Key**:
+Replace "YOUR_GROQ_KEY" with your free Groq API key (\`gsk_...\`), or if your key is already saved in the dashboard, the widget will connect automatically.
+
+Your floating voice assistant widget will appear immediately on your site, with full support for real-time voice, text chat, and auto-language detection in English, Hindi, and Marathi!`;
+    }
+
     try {
       const parsed = JSON.parse(text);
-      if (parsed.message) return sanitizeSpokenResponse(parsed.message);
-      if (parsed.response) return sanitizeSpokenResponse(parsed.response);
-      if (parsed.description) return sanitizeSpokenResponse(parsed.description);
-      if (parsed.agent_config?.description) return sanitizeSpokenResponse(parsed.agent_config.description);
-      if (parsed.personality?.summary) return sanitizeSpokenResponse(parsed.personality.summary);
+      if (parsed.message) return sanitizeSpokenResponse(parsed.message, userQuery, options);
+      if (parsed.response) return sanitizeSpokenResponse(parsed.response, userQuery, options);
+      if (parsed.answer) return sanitizeSpokenResponse(parsed.answer, userQuery, options);
+      if (parsed.description) return sanitizeSpokenResponse(parsed.description, userQuery, options);
+      if (parsed.agent_config?.description) return sanitizeSpokenResponse(parsed.agent_config.description, userQuery, options);
+      if (parsed.personality?.summary) return sanitizeSpokenResponse(parsed.personality.summary, userQuery, options);
     } catch (_) {
       // Partial / truncated JSON extraction
       const descMatch = text.match(/"description"\s*:\s*"([^"]+)"/i);
-      if (descMatch) return sanitizeSpokenResponse(descMatch[1]);
-      const nameMatch = text.match(/"agent_name"\s*:\s*"([^"]+)"/i);
-      if (nameMatch) return `I am ${nameMatch[1]}, ready to assist you. How can I help you today?`;
+      if (descMatch && descMatch[1].length > 15) return sanitizeSpokenResponse(descMatch[1], userQuery, options);
       const msgMatch = text.match(/"message"\s*:\s*"([^"]+)"/i);
-      if (msgMatch) return sanitizeSpokenResponse(msgMatch[1]);
+      if (msgMatch && msgMatch[1].length > 15) return sanitizeSpokenResponse(msgMatch[1], userQuery, options);
     }
-    return "I am configured and ready to assist you. How can I help you today?";
+    return "I am configured and ready to assist you. What would you like to know or customize today?";
   }
 
-  // Remove markdown asterisks, bolding, hashes, and code blocks
-  return text.replace(/[*#_`]/g, '').replace(/```[\s\S]*?```/g, '').trim();
+  // Remove markdown asterisks, bolding hashes when requested for pure speech audio,
+  // but preserve clean punctuation and structure
+  if (options?.forSpeechAudio) {
+    return text.replace(/[*#_`]/g, '').replace(/```[\s\S]*?```/g, '').trim();
+  }
+
+  // For chat presentation, preserve clean structure and strip only excessive backticks
+  return text.trim();
 }
 
 /**
@@ -377,7 +422,8 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   }
 
   const cleanMessage = String(messageText || '').trim();
-  const promptContext = promptText || 'You are the official AI Customer Support & Help Desk Agent for this business.';
+  const agentDisplayName = options?.agentName || options?.assistantName || (typeof promptText === 'string' && promptText.includes('named "') ? (promptText.match(/named\s*"([^"]+)"/i) || [])[1] : '') || 'Krushna AI Voice Agent';
+  const promptContext = promptText || `You are ${agentDisplayName}, the official AI Customer Support & Help Desk Agent for this business.`;
   const kbContext = kbList && kbList.length > 0
     ? `\n\nVerified Knowledge Base Facts:\n${JSON.stringify(kbList)}`
     : '';
@@ -386,11 +432,23 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   const effectiveGroqKey = (apiKey && apiKey.startsWith('gsk_')) ? apiKey : userKeys.groqKey;
   const effectiveGeminiKey = (apiKey && (apiKey.startsWith('AIza') || !apiKey.startsWith('gsk_'))) ? apiKey : userKeys.geminiKey;
 
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   const baseIdentity = promptContext;
+  const isCustomerMode = options?.mode === 'customer' || options?.isLiveWidget;
+  const platformKnowledgeBlock = isCustomerMode ? '' : `
+PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
+- Free Groq API Key (<200ms latency): Obtained for free from https://console.groq.com/keys by clicking "Create API Key". Format starts with 'gsk_'.
+- Free Google Gemini API Key: Obtained for free from Google AI Studio at https://aistudio.google.com/app/apikey.
+- Adding Keys: Users enter and save their personal key by clicking the Settings (gear icon) in the left sidebar or the API Keys tab. Keys are stored 100% locally in the browser (BYOK).
+- Embedding on Website: Simply add this single script line right before the closing </body> tag:
+  <script src="${currentOrigin}/widget.js" data-agent-id="${agentDisplayName}" data-api-key="YOUR_GROQ_KEY"></script>
+- Multilingual Support: The agent supports English, Hindi (हिंदी), and Marathi (मराठी) with auto-detection for voice recognition and spoken responses.
+`;
+
   const systemInstructions = `${baseIdentity}${kbContext}
 
 CORE MISSION & ASSIGNMENT:
-You are the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, technical issues, and general company policies, guiding customers every step of the way.
+You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, technical issues, and general company policies, guiding customers every step of the way.
 
 POLITE MANNERS & ETIQUETTE:
 You are exceptionally polite, respectful, warm, and well-mannered at all times. Use courteous phrasing (e.g. "Namaskar", "Hello, I would be delighted to assist", "Please feel free to ask", "Certainly"). Treat every visitor with patience and kindness.
@@ -404,11 +462,11 @@ You MUST independently evaluate the language of the LATEST user message on EVERY
 - If the customer switches to Hindi (Devanagari or Hinglish like 'kaise ho', 'kya hai', 'bataiye'), you MUST reply in polite, natural Hindi (हिंदी).
 - If the customer switches back to English, reply in natural English.
 - NEVER remain stuck in the previous turn's language when the customer has switched languages!
-
-CRITICAL OPERATIONAL RULES:
-1. Dual-Channel Excellence (Voice & Chat): You serve customers seamlessly whether they speak via microphone or type in text chat. Keep answers clear, conversational, and direct (1 to 2 spoken sentences) so they sound completely natural when spoken aloud while remaining crisp and readable in chat. Never use markdown asterisks (*), hashtags (#), bullet points, or raw JSON.
-2. Customer Advocate & Problem Solver: Greet visitors warmly, address customer concerns with patience, and help them find solutions. For business, pricing, or product inquiries, accurately reference the Verified Knowledge Base Facts above.
-3. Output Format: ALWAYS output pure spoken/chat conversational text directly. NEVER output JSON objects, schema configs, or code blocks.`;
+${platformKnowledgeBlock}
+CRITICAL OPERATIONAL & FORMATTING RULES:
+1. Pure Spoken & Chat Text: Always output neat, direct conversational paragraphs or structured numbered steps.
+2. NEVER Output JSON Or Config Schemas: You are in DIRECT CHAT / VOICE MODE. You MUST NEVER output JSON configurations, code schemas, or objects like {"agent_config": ...}.
+3. Dual-Channel Excellence: Keep answers crisp, polite, and helpful so they sound natural when spoken aloud and look neat and readable in chat.`;
 
   // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
@@ -431,15 +489,15 @@ CRITICAL OPERATIONAL RULES:
               content: cleanMessage
             }
           ],
-          max_tokens: 160,
-          temperature: 0.6
+          max_tokens: 800,
+          temperature: 0.5
         })
       });
 
       if (groqRes.ok) {
         const data = await groqRes.json();
         if (data.choices && data.choices[0] && data.choices[0].message) {
-          return sanitizeSpokenResponse(data.choices[0].message.content);
+          return sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
         }
       }
     } catch (err) {
@@ -447,30 +505,70 @@ CRITICAL OPERATIONAL RULES:
     }
   }
 
-  // 2. Try Gemini API with User-Provided Key
+  // 2. Try Gemini API with User-Provided Key (system_instruction schema, gemini-2.5-flash)
   if (effectiveGeminiKey) {
     try {
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${effectiveGeminiKey}`;
+      const geminiModel = options?.geminiModel || 'gemini-2.5-flash';
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${effectiveGeminiKey}`;
       const geminiRes = await fetch(geminiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: systemInstructions }]
+          },
           contents: [{
             parts: [{
-              text: `${systemInstructions}\n\nUser Question: ${cleanMessage}`
+              text: cleanMessage
             }]
-          }]
+          }],
+          generationConfig: {
+            maxOutputTokens: 800,
+            temperature: 0.5
+          }
         })
       });
 
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0]) {
-          return sanitizeSpokenResponse(data.candidates[0].content.parts[0].text);
+          return sanitizeSpokenResponse(data.candidates[0].content.parts[0].text, cleanMessage, { ...options, agentName: agentDisplayName });
         }
       }
     } catch (err) {
       console.warn("Gemini request failed, falling back to local KB:", err);
+    }
+  }
+
+  // 3. Try OpenAI API with User-Provided Key (sk-...)
+  const effectiveOpenAiKey = (apiKey && apiKey.startsWith('sk-')) ? apiKey : '';
+  if (effectiveOpenAiKey) {
+    try {
+      const openAiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${effectiveOpenAiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemInstructions },
+            { role: 'user', content: cleanMessage }
+          ],
+          max_tokens: 800,
+          temperature: 0.5
+        })
+      });
+
+      if (openAiRes.ok) {
+        const data = await openAiRes.json();
+        if (data.choices && data.choices[0] && data.choices[0].message) {
+          return sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+        }
+      }
+    } catch (err) {
+      console.warn("OpenAI request failed:", err);
     }
   }
 
@@ -533,9 +631,22 @@ CRITICAL OPERATIONAL RULES:
   }
 
   // Platform & Embedding Capabilities FAQs
-  if (/\b(embed|integrate|script tag|widget\.js|embed this ai agent|how do i embed|add to website|put on website|website using my api key)\b/i.test(lower)) {
+  if (/\b(embed|integrate|script tag|widget\.js|embed this ai agent|how do i embed|add to website|put on website|website using my api key|embed.*website)\b/i.test(lower)) {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-    return `To embed your AI voice agent on any website, copy the script tag from the Embed tab or Composer: <script src="${origin}/widget.js" data-agent-id="YOUR_AGENT_NAME" data-api-key="YOUR_GROQ_KEY"></script>. Place this single line before the closing </body> tag of your website HTML, and your floating voice widget will appear instantly!`;
+    const cleanAgentName = agentDisplayName || 'Krushna AI Voice Agent';
+    const displayKey = effectiveGroqKey ? `${effectiveGroqKey.slice(0, 8)}...` : 'YOUR_GROQ_KEY';
+    return `To embed your AI voice agent on any website:
+
+1. **Copy the embed script tag**:
+<script src="${origin}/widget.js" data-agent-id="${cleanAgentName}" data-api-key="${displayKey}"></script>
+
+2. **Paste into your website HTML**:
+Place this single line directly before the closing </body> tag of your website HTML.
+
+3. **API Key Setup**:
+Replace "${displayKey}" with your personal Groq API key (\`gsk_...\`), or if your key is already saved in the dashboard Settings, the widget will connect automatically.
+
+Your floating voice assistant widget will appear immediately on your site, with full support for real-time voice, interactive chat, and automatic language detection in English, Hindi, and Marathi!`;
   }
   if (/\b(synthesiz|walk me through|frontend.*backend|full[- ]stack|from files|attach files)\b/i.test(lower)) {
     return "To synthesize an agent from full-stack files, click the '+' paperclip icon or drag-and-drop your frontend components, backend API routes, and database schemas into the Composer. Then click 'Synthesize', and the AI will automatically create an agent tailored to your codebase!";
@@ -546,8 +657,22 @@ CRITICAL OPERATIONAL RULES:
   if (/\b(talk to my agent|dashboard voice sandbox|test sandbox|voice tester|test modal|try voice|voice test)\b/i.test(lower)) {
     return "You can test your agent right now by clicking 'Voice Sandbox' in the dashboard! You can speak naturally in English, Hindi, or Marathi, and the agent will auto-detect your language and reply aloud in real time.";
   }
-  if (/\b(api key|groq key|gemini key|where do i get api key|how to add key)\b/i.test(lower)) {
-    return "You can add your free Groq or Google Gemini API key by clicking Settings (gear icon) in the sidebar. Both Groq and Google Gemini offer generous free tiers with ultra-fast response times!";
+  if (/\b(?:(?:how\s+(?:do\s+i|can\s+i|to)\s+)?(?:get|find|obtain|create|generate|acquire|setup|add|enter|use)\s+.*(?:api\s*key|groq\s*key|gemini\s*key|google\s*key|key)|(?:where|how)\s+(?:do\s+i|can\s+i|to)\s+(?:get|find|obtain|create)\s+.*key|(?:groq|gemini|google)\s+(?:api\s*)?key|api\s*key\s*(?:of|for|from)\s*(?:google|groq|gemini)|key\s+(?:of|for|from)\s*(?:the\s*)?(?:google|groq|gemini)|where\s+.*key|get.*(?:groq|gemini|google).*key)\b/i.test(lower)) {
+    return `To get your free API key for Groq or Google Gemini:
+
+1. **Groq API Key (Recommended - Ultra-Fast <200ms)**:
+   • Visit the Groq Console: https://console.groq.com/keys
+   • Sign in with your Google or GitHub account.
+   • Click **Create API Key**, give it a name, and copy your key (starts with "gsk_").
+
+2. **Google Gemini API Key (Generous Free Tier)**:
+   • Visit Google AI Studio: https://aistudio.google.com/app/apikey
+   • Sign in with your Google account.
+   • Click **Create API Key** and copy your key (starts with "AIza...").
+
+3. **Save Key in Dashboard**:
+   • Click the **Settings** gear icon in the left sidebar (or the API Keys tab).
+   • Paste your Groq or Gemini key and click **Save Key**. All your assistants and testing sandboxes will immediately use it!`;
   }
 
   // Check website purpose / main point
@@ -612,11 +737,11 @@ CRITICAL OPERATIONAL RULES:
   }
 
   if (inputLang === 'mr-IN') {
-    return `मी समजतो की आपण "${cleanMessage}" बद्दल विचारत आहात. मी आपल्या सेवा आणि प्रश्नांची उत्तरे देण्यासाठी उपलब्ध आहे. कृपया मला आणखी सांगा!`;
+    return `मी आपल्या प्रश्नाचे मनःपूर्वक स्वागत करतो! आपण आमच्या सेवा, उत्पादने, किंमती किंवा वेळापत्रकांबद्दल विचारू शकता. मी कशी मदत करू?`;
   }
   if (inputLang === 'hi-IN') {
-    return `मैं समझता हूँ कि आप "${cleanMessage}" के बारे में पूछ रहे हैं। मैं आपकी सहायता के लिए तैयार हूँ। कृपया मुझे और बताएं!`;
+    return `मैं आपके प्रश्न का स्वागत करता हूँ! आप हमारी सेवाओं, उत्पादों, कीमतों या अपॉइंटमेंट के बारे में पूछ सकते हैं। मैं आपकी क्या सहायता करूँ?`;
   }
 
-  return `I understand your question about "${cleanMessage}". While I check our database, feel free to ask about our flagship products, engineering specifications, or consultation options!`;
+  return `I am here to assist you with our services, catalog, live inventory, and pricing. Please let me know what details or section you would like to explore!`;
 }

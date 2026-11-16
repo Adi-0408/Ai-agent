@@ -383,6 +383,26 @@
         align-self: flex-end;
         border-bottom-right-radius: 4px;
       }
+      .vhd-nav-pill-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        padding: 5px 12px;
+        background: rgba(56, 189, 248, 0.18);
+        border: 1px solid rgba(56, 189, 248, 0.4);
+        color: #38bdf8;
+        border-radius: 8px;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .vhd-nav-pill-btn:hover {
+        background: rgba(56, 189, 248, 0.32);
+        border-color: #38bdf8;
+        transform: translateY(-1px);
+      }
       .vhd-voice-hero {
         background: radial-gradient(circle at center, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
         padding: 18px 0;
@@ -847,10 +867,26 @@
     });
 
     // Append Chat Message
-    function appendMsg(text, sender) {
+    function appendMsg(text, sender, navAction = null) {
       const div = document.createElement('div');
       div.className = `vhd-msg vhd-msg-${sender}`;
-      div.textContent = text;
+
+      const textNode = document.createElement('div');
+      textNode.textContent = text;
+      div.appendChild(textNode);
+
+      if (navAction && navAction.label && navAction.sectionInfo) {
+        const navBtn = document.createElement('button');
+        navBtn.type = 'button';
+        navBtn.className = 'vhd-nav-pill-btn';
+        navBtn.innerHTML = `📍 <span>${navAction.label}</span> &rarr;`;
+        navBtn.onclick = (e) => {
+          e.stopPropagation();
+          scrollToHostSection(navAction.sectionInfo);
+        };
+        div.appendChild(navBtn);
+      }
+
       body.appendChild(div);
       body.scrollTop = body.scrollHeight;
     }
@@ -903,8 +939,24 @@
       return true;
     }
 
+    function isCatalogListQuery(text) {
+      const lower = String(text || '').toLowerCase().trim();
+      return /\b(list of all|list all|give list|give me list|show list|all meds|all medicines|all products|all items|full list|catalog|what meds|what medicines|what products|what do you sell|what do you have|available meds|available medicines|available products|show inventory|inventory table|list inventory|see all)\b/i.test(lower) ||
+             /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू)/i.test(text) ||
+             /(सभी दवा|दवाइयों की लिस्ट|सारे प्रोडक्ट्स|कैटलॉग|क्या क्या उपलब्ध|लिस्ट दो|सूची दो)/i.test(text);
+    }
+
+    function isSectionNavigationQuery(text) {
+      const lower = String(text || '').toLowerCase().trim();
+      return /\b(scroll to|take me to|navigate to|go to|show me the section|where is the|jump to|open section|view section)\b/i.test(lower) ||
+             /\b(where is (the )?(inventory|table|pricing|contact|how it works|medicines|products|catalog|counter|doctor|appointment))\b/i.test(lower) ||
+             /(विभागावर जा|दाखवा|नेऊन जा|कुठे आहे)/i.test(text) ||
+             /(सेक्शन पर ले जाओ|कहाँ है|दिखाओ|स्क्रॉल करो)/i.test(text);
+    }
+
     function isDynamicDataQuery(text) {
       const lower = String(text || '').toLowerCase();
+      if (isCatalogListQuery(text) || isSectionNavigationQuery(text)) return true;
       if (/\b(stock|available|availability|in stock|out of stock|quantity|units?|count|inventory|price|cost|how much|rate|order status|track order|delivery status)\b/i.test(lower) ||
           /(साठा|स्टॉक|उपलब्ध|शिल्लक|किंमत|भाव|ऑर्डर|दर)/i.test(text)) {
         return true;
@@ -919,6 +971,180 @@
         }
       }
       return false;
+    }
+
+    function findHostSection(topic) {
+      if (typeof document === 'undefined') return null;
+      const t = String(topic || '').toLowerCase().trim();
+
+      const idCandidates = [];
+      if (/\b(med|medicine|drug|pharmacy|pill|tablet|prescription|inventory|stock|product|catalog)\b/i.test(t)) {
+        idCandidates.push('inventory-section', 'inventory', 'medicines', 'meds', 'products', 'catalog', 'inventory-table-container', 'inventory-tbody');
+      }
+      if (/\b(price|pricing|plan|cost|rate|subscription)\b/i.test(t)) {
+        idCandidates.push('pricing-section', 'pricing', 'plans', 'costs', 'rates');
+      }
+      if (/\b(how it works|guide|demo|integration|setup)\b/i.test(t)) {
+        idCandidates.push('how-it-works-section', 'how-it-works', 'guide', 'demo');
+      }
+      if (/\b(contact|support|help|call|email|reach|counter|location|address)\b/i.test(t)) {
+        idCandidates.push('contact-section', 'contact', 'support', 'help', 'location', 'footer');
+      }
+      if (/\b(appointment|book|schedule|doctor|consult|visit)\b/i.test(t)) {
+        idCandidates.push('appointment-section', 'appointment', 'booking', 'schedule');
+      }
+
+      for (const id of idCandidates) {
+        const el = document.getElementById(id);
+        if (el) {
+          return { element: el, id, label: formatSectionLabel(id) };
+        }
+      }
+
+      const headings = document.querySelectorAll('h1, h2, h3, h4');
+      for (const h of headings) {
+        const hText = (h.textContent || '').toLowerCase();
+        if (/\b(med|medicine|inventory|stock|product|catalog)\b/i.test(t) &&
+            /\b(inventory|medicine|medicines|product|products|catalog|stock)\b/i.test(hText)) {
+          const container = h.closest('.card, section, article, div[class*="section"]') || h;
+          return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
+        }
+        if (/\b(how it works|integration|setup)\b/i.test(t) &&
+            /\b(how|work|works|integration)\b/i.test(hText)) {
+          const container = h.closest('.card, section, article, div[class*="section"]') || h;
+          return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
+        }
+        if (/\b(pricing|price|plans)\b/i.test(t) && /\b(pricing|price|plans)\b/i.test(hText)) {
+          const container = h.closest('.card, section, article, div[class*="section"]') || h;
+          return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
+        }
+        if (/\b(contact|support)\b/i.test(t) && /\b(contact|support|help)\b/i.test(hText)) {
+          const container = h.closest('.card, section, article, div[class*="section"]') || h;
+          return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
+        }
+      }
+
+      if (/\b(med|medicine|inventory|stock|product|catalog)\b/i.test(t)) {
+        const table = document.querySelector('#inventory-tbody, table, .inventory');
+        if (table) {
+          const container = table.closest('.card, section, article') || table;
+          return { element: container, id: container.id || '', label: 'Live Inventory Table' };
+        }
+      }
+
+      return null;
+    }
+
+    function formatSectionLabel(id) {
+      if (/inventory/i.test(id)) return 'Live Inventory Table';
+      if (/medicine|meds/i.test(id)) return 'Medicines Catalog';
+      if (/how-it-works/i.test(id)) return 'How It Works Guide';
+      if (/pricing/i.test(id)) return 'Pricing & Plans';
+      if (/contact/i.test(id)) return 'Contact & Support';
+      if (/appointment/i.test(id)) return 'Appointments & Booking';
+      return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    function scrollToHostSection(sectionInfo) {
+      if (!sectionInfo || !sectionInfo.element) return false;
+      try {
+        sectionInfo.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        const el = sectionInfo.element;
+        const origTransition = el.style.transition;
+        const origBoxShadow = el.style.boxShadow;
+        const origOutline = el.style.outline;
+
+        el.style.transition = 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)';
+        el.style.boxShadow = '0 0 0 4px #38bdf8, 0 10px 30px -5px rgba(56, 189, 248, 0.5)';
+        el.style.outline = '2px solid #38bdf8';
+
+        setTimeout(() => {
+          el.style.boxShadow = origBoxShadow;
+          el.style.outline = origOutline;
+          el.style.transition = origTransition;
+        }, 3000);
+        return true;
+      } catch (err) {
+        console.warn('[Echo AI Navigation] Failed smooth scroll:', err);
+        return false;
+      }
+    }
+
+    function getAllCatalogItems(agentConfig) {
+      const items = [];
+      const seen = new Set();
+
+      function addItem(it) {
+        if (!it) return;
+        const name = String(it.name || it.product || it.title || '').trim();
+        if (!name || seen.has(name.toLowerCase())) return;
+        seen.add(name.toLowerCase());
+        items.push({
+          name,
+          price: it.price ? (typeof it.price === 'number' ? `₹${it.price}` : it.price) : '',
+          stock: it.stock !== undefined ? it.stock : (it.quantity !== undefined ? it.quantity : null),
+          unit: it.unit || 'units',
+          rx: Boolean(it.rx || it.prescriptionRequired),
+          category: it.category || ''
+        });
+      }
+
+      if (typeof window !== 'undefined') {
+        const hostObj = window.EchoAIData || window.echoLiveInventory || window.EchoInventory;
+        const inv = hostObj?.liveInventory || hostObj?.inventory || hostObj?.products;
+        if (inv) {
+          if (Array.isArray(inv)) {
+            inv.forEach(addItem);
+          } else if (typeof inv === 'object') {
+            for (const [key, val] of Object.entries(inv)) {
+              if (val && typeof val === 'object') {
+                addItem({ name: val.name || key, ...val });
+              } else if (val !== undefined) {
+                addItem({ name: key, stock: val });
+              }
+            }
+          }
+        }
+      }
+
+      if (typeof document !== 'undefined') {
+        const rows = document.querySelectorAll('#inventory-tbody tr, table tbody tr, .product-card, .medicine-item, [data-product]');
+        rows.forEach(row => {
+          const cells = Array.from(row.querySelectorAll('td, th, .name, .title, p, span'))
+            .map(c => c.textContent.trim())
+            .filter(t => t.length > 0);
+          if (cells.length >= 2) {
+            const rawTitle = cells[0];
+            if (rawTitle && rawTitle.length < 60 && !/^(name|item|product|price|stock|action|sr\.?no)$/i.test(rawTitle)) {
+              const priceMatch = cells.find(t => /[₹$€£]|rs\.?/i.test(t)) || '';
+              const stockMatch = cells.find(t => /^\d+\s*(strips?|units?|tablets?|boxes?|items?|pcs?)?$/i.test(t)) || '';
+              addItem({
+                name: rawTitle,
+                price: priceMatch,
+                stock: stockMatch ? parseInt(stockMatch.replace(/\D/g, ''), 10) : null,
+                unit: stockMatch ? stockMatch.replace(/^\d+\s*/, '') || 'units' : 'units'
+              });
+            }
+          }
+        });
+      }
+
+      if (items.length === 0 && agentConfig?.knowledgeBase) {
+        agentConfig.knowledgeBase.forEach(kb => {
+          if (kb.q && kb.a && isCustomerSafeFaq(kb.q, kb.a)) {
+            const qLower = kb.q.toLowerCase();
+            if (/price|cost|stock|available|medicine|product|fee/i.test(qLower)) {
+              const cleanQ = kb.q.replace(/^(what is the price of|cost of|is|do you have|what are)\s+/i, '').replace(/[?]/g, '').trim();
+              if (cleanQ.length > 2) {
+                addItem({ name: cleanQ, price: kb.a });
+              }
+            }
+          }
+        });
+      }
+
+      return items;
     }
 
     function extractTargetItem(text, history = []) {
@@ -968,23 +1194,30 @@
       const target = String(rawTarget || '').toLowerCase().trim();
       if (!target) return null;
 
-      const targetTokens = target.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+      const cleanTarget = target.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      const targetTokens = cleanTarget.split(' ').filter(w => w.length >= 2);
 
       // If array of items
       if (Array.isArray(inventorySource)) {
         for (const item of inventorySource) {
-          const name = (item.name || item.product || item.title || '').toLowerCase();
-          if (name && (name.includes(target) || target.includes(name))) {
+          const name = String(item.name || item.product || item.title || '').toLowerCase();
+          const category = String(item.category || item.dosage || item.description || '').toLowerCase();
+          if (name && (name.includes(target) || target.includes(name) || name.includes(cleanTarget) || cleanTarget.includes(name))) {
+            return item;
+          }
+          if (category && (category.includes(target) || target.includes(category))) {
             return item;
           }
         }
         let best = null;
         let maxOverlap = 0;
         for (const item of inventorySource) {
-          const name = (item.name || item.product || item.title || '').toLowerCase();
+          const name = String(item.name || item.product || item.title || '').toLowerCase();
+          const category = String(item.category || item.dosage || item.description || '').toLowerCase();
+          const combined = `${name} ${category}`;
           let overlap = 0;
           for (const tok of targetTokens) {
-            if (name.includes(tok)) overlap++;
+            if (combined.includes(tok)) overlap++;
           }
           if (overlap > maxOverlap && overlap >= Math.min(1, targetTokens.length)) {
             maxOverlap = overlap;
@@ -994,25 +1227,38 @@
         if (best) return best;
       }
 
-      // If object map
+      // If object map (e.g. window.EchoAIData.liveInventory)
       if (typeof inventorySource === 'object') {
         for (const [key, val] of Object.entries(inventorySource)) {
-          const keyLower = key.toLowerCase();
-          if (keyLower.includes(target) || target.includes(keyLower)) {
-            return typeof val === 'object' ? { name: key, ...val } : { name: key, stock: val };
+          const keyLower = String(key || '').toLowerCase();
+          const valObj = typeof val === 'object' && val !== null ? val : { stock: val };
+          const valName = String(valObj.name || valObj.title || valObj.product || key).toLowerCase();
+          const valCategory = String(valObj.category || valObj.dosage || valObj.description || '').toLowerCase();
+          const combined = `${keyLower} ${valName} ${valCategory}`;
+
+          if (keyLower.includes(target) || target.includes(keyLower) ||
+              valName.includes(target) || target.includes(valName) ||
+              combined.includes(cleanTarget) || (cleanTarget.length > 3 && combined.includes(cleanTarget))) {
+            return { name: valObj.name || key, ...valObj };
           }
         }
+
         let best = null;
         let maxOverlap = 0;
         for (const [key, val] of Object.entries(inventorySource)) {
-          const keyLower = key.toLowerCase();
+          const keyLower = String(key || '').toLowerCase();
+          const valObj = typeof val === 'object' && val !== null ? val : { stock: val };
+          const valName = String(valObj.name || valObj.title || valObj.product || key).toLowerCase();
+          const valCategory = String(valObj.category || valObj.dosage || valObj.description || '').toLowerCase();
+          const combined = `${keyLower} ${valName} ${valCategory}`;
+
           let overlap = 0;
           for (const tok of targetTokens) {
-            if (keyLower.includes(tok)) overlap++;
+            if (combined.includes(tok)) overlap++;
           }
           if (overlap > maxOverlap && overlap >= Math.min(1, targetTokens.length)) {
             maxOverlap = overlap;
-            best = typeof val === 'object' ? { name: key, ...val } : { name: key, stock: val };
+            best = { name: valObj.name || key, ...valObj };
           }
         }
         if (best) return best;
@@ -1030,7 +1276,7 @@
 
       if (queryLang === 'mr-IN') {
         if (stock !== null && stock > 0) {
-          return `${name} सध्या उपलब्ध आहे. शिल्लक साठा (Stock): ${stock} ${unit}${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
+          return `${name} सध्या उपलब्ध आहे. शिल्लक साठा: ${stock} ${unit}${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
         } else if (stock === 0) {
           return `क्षमस्व, ${name} चा साठा सध्या संपला आहे. नवीन स्टॉक लवकरच उपलब्ध होईल!`;
         }
@@ -1038,7 +1284,7 @@
 
       if (queryLang === 'hi-IN') {
         if (stock !== null && stock > 0) {
-          return `${name} वर्तमान में उपलब्ध है। स्टॉक (Stock): ${stock} ${unit}${price ? ` (कीमत: ${price})` : ''} उपलब्ध है।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
+          return `${name} वर्तमान में उपलब्ध है। स्टॉक: ${stock} ${unit}${price ? ` (कीमत: ${price})` : ''} उपलब्ध है।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
         } else if (stock === 0) {
           return `क्षमा करें, ${name} अभी आउट ऑफ स्टॉक है। जल्द ही नया स्टॉक उपलब्ध होगा!`;
         }
@@ -1057,17 +1303,38 @@
 
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
     async function resolveDatabaseBridge(query, agentConfig) {
-      // Step A — Dynamic Intent Classification:
-      // Check if customer query asks for dynamic data (stock, price, availability, orders, etc.)
-      if (!isDynamicDataQuery(query)) {
+      const isList = isCatalogListQuery(query);
+      const isNav = isSectionNavigationQuery(query);
+      const isDynamic = isDynamicDataQuery(query);
+
+      if (!isList && !isNav && !isDynamic) {
         return { status: 'NOT_DYNAMIC_QUERY', item: null, data: null };
+      }
+
+      // Handle Catalog List query
+      if (isList) {
+        const allItems = getAllCatalogItems(agentConfig);
+        return {
+          status: 'FOUND_CATALOG_LIST',
+          item: 'catalog',
+          data: allItems
+        };
+      }
+
+      // Handle Section Navigation query
+      if (isNav) {
+        const sec = findHostSection(query);
+        return {
+          status: 'NAVIGATE_SECTION',
+          item: sec ? sec.label : 'section',
+          data: sec
+        };
       }
 
       const targetItem = extractTargetItem(query, conversationHistory);
 
-      // Step B — Stage 1: Check Host Page State (window.EchoAIData):
+      // Stage 1: Check Host Page State (window.EchoAIData)
       if (typeof window !== 'undefined' && window.EchoAIData) {
-        // If queryDatabase function is provided
         if (typeof window.EchoAIData.queryDatabase === 'function') {
           try {
             const hostResult = await window.EchoAIData.queryDatabase(query);
@@ -1083,10 +1350,24 @@
           }
         }
 
-        // Fuzzy-search inventory, liveInventory, or products
         const hostInventory = window.EchoAIData.inventory || window.EchoAIData.liveInventory || window.EchoAIData.products;
         if (hostInventory) {
           const match = matchInInventory(hostInventory, targetItem || query);
+          if (match) {
+            return {
+              status: 'FOUND_IN_HOST_STATE',
+              item: targetItem,
+              data: match
+            };
+          }
+        }
+      }
+
+      // Stage 1.5: Autonomous DOM Scraper for products on page
+      if (typeof document !== 'undefined') {
+        const domItems = getAllCatalogItems(agentConfig);
+        if (domItems.length > 0) {
+          const match = matchInInventory(domItems, targetItem || query);
           if (match) {
             return {
               status: 'FOUND_IN_HOST_STATE',
@@ -1109,7 +1390,7 @@
         }
       }
 
-      // Step C — Stage 2: Check Live API (data-api-endpoint / Custom Tools)
+      // Stage 2: Check Live API (data-api-endpoint / Custom Tools)
       const apiEndpoint = (currentScript && currentScript.getAttribute('data-api-endpoint')) ||
                           agentConfig.apiEndpoint ||
                           (agentConfig.tools && agentConfig.tools.find(t => t.endpoint && !t.endpoint.includes('example.com'))?.endpoint) ||
@@ -1153,9 +1434,9 @@
         }
       }
 
-      // If the API is not configured, times out, or returns 4xx/5xx:
+      // If the item is not found in database:
       return {
-        status: 'API_NOT_CONFIGURED_OR_OFFLINE',
+        status: 'ITEM_NOT_FOUND',
         item: targetItem,
         data: null
       };
@@ -1175,8 +1456,10 @@
         bridgeBlock = `STATUS: FOUND_IN_HOST_STATE\nDATA: ${JSON.stringify(bridgeResult.data)}`;
       } else if (bridgeResult && bridgeResult.status === 'FOUND_IN_LIVE_API') {
         bridgeBlock = `STATUS: FOUND_IN_LIVE_API\nDATA: ${JSON.stringify(bridgeResult.data)}`;
-      } else if (bridgeResult && bridgeResult.status === 'API_NOT_CONFIGURED_OR_OFFLINE') {
-        bridgeBlock = `STATUS: NOT_CONFIGURED_OR_OFFLINE\nTARGET_ITEM: "${bridgeResult.item || 'The requested item'}"`;
+      } else if (bridgeResult && bridgeResult.status === 'FOUND_CATALOG_LIST') {
+        bridgeBlock = `STATUS: FOUND_CATALOG_LIST\nDATA: ${JSON.stringify(bridgeResult.data)}`;
+      } else if (bridgeResult && bridgeResult.status === 'ITEM_NOT_FOUND') {
+        bridgeBlock = `STATUS: ITEM_NOT_FOUND\nTARGET_ITEM: "${bridgeResult.item || 'The requested item'}"`;
       } else {
         bridgeBlock = `STATUS: NO_DYNAMIC_DATA_REQUESTED`;
       }
@@ -1193,7 +1476,8 @@ CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
 - Answer strictly using the injected [LIVE_BRIDGE_DATA] and [CLEAN_CUSTOMER_FAQ_KB] provided below.
 - If [LIVE_BRIDGE_DATA] contains exact stock, price, order status, or availability (e.g., '42 strips available at ₹185.50'), state the exact numbers naturally and concisely in 1-2 spoken-friendly sentences.
-- If [LIVE_BRIDGE_DATA] returns NOT_CONFIGURED_OR_OFFLINE, DO NOT make up prices or stock numbers, and DO NOT mention APIs or technical errors. Reply naturally: '${bridgeResult?.item || 'The requested item'} is in our catalog. To check live real-time stock, please verify with our counter/support team.'
+- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize the available catalog products/medicines with prices concisely in 1-2 sentences and confirm you have scrolled them to the inventory section.
+- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the customer that the requested item is not currently listed in our live catalog, mention available alternatives if present, and offer to scroll them to the catalog section. NEVER say "verify with our counter/support team" or give generic error text.
 - Keep responses plain-text, conversational, and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
 - LANGUAGE: ${langDirective}
 
@@ -1348,21 +1632,89 @@ ${cleanFaqBlock}`;
       const meaningfulWords = cleanWords.filter(w => !stopWords.has(w));
       const queryLang = detectTextLanguage(text);
 
-      // Check Real-Time Live Website Database / Inventory first for stock & pricing questions
+      // 1. Direct Catalog List Query Handler (e.g. "give list of all meds", "show all products")
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig);
-      if (bridge && (bridge.status === 'FOUND_IN_HOST_STATE' || bridge.status === 'FOUND_IN_LIVE_API')) {
-        return formatRealtimeStockResponse(bridge.data, queryLang);
+      if (bridge && bridge.status === 'FOUND_CATALOG_LIST') {
+        const allItems = Array.isArray(bridge.data) && bridge.data.length > 0 ? bridge.data : getAllCatalogItems(agentConfig);
+        const sec = findHostSection('inventory');
+        if (sec) scrollToHostSection(sec);
+
+        let replyText = '';
+        if (allItems.length > 0) {
+          const itemSummary = allItems.map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+          if (queryLang === 'mr-IN') {
+            replyText = `आमच्या लाइव्ह कॅटलॉगमध्ये सध्या उपलब्ध औषधे: ${itemSummary}. मी आपल्या स्क्रीनला थेट लाइव्ह स्टॉक तक्त्यावर नेले आहे!`;
+          } else if (queryLang === 'hi-IN') {
+            replyText = `हमारे लाइव कैटलॉग में उपलब्ध दवाइयां: ${itemSummary}। मैंने स्क्रीन को सीधे लाइव इन्वेंटरी टेबल पर स्क्रॉल कर दिया है!`;
+          } else {
+            replyText = `We currently have ${allItems.length} medicines in our live inventory: ${itemSummary}. I have scrolled your screen down to the live inventory table!`;
+          }
+        } else {
+          if (queryLang === 'mr-IN') {
+            replyText = `आमचा संपूर्ण कॅटलॉग थेट खालील तक्त्यामध्ये उपलब्ध आहे. मी आपल्याला तेथे नेले आहे!`;
+          } else if (queryLang === 'hi-IN') {
+            replyText = `हमारा पूरा कैटलॉग नीचे टेबल में उपलब्ध है। मैंने आपको वहां स्क्रॉल कर दिया है!`;
+          } else {
+            replyText = `Our full catalog is available directly in the table on this page. I have scrolled your screen right to it!`;
+          }
+        }
+
+        return {
+          reply: replyText,
+          navAction: sec ? { label: 'View Live Inventory Table', sectionInfo: sec } : null
+        };
       }
 
-      if (bridge && bridge.status === 'API_NOT_CONFIGURED_OR_OFFLINE') {
+      // 2. Direct Section Navigation Handler (e.g. "take me to pricing", "where is contact")
+      if (bridge && bridge.status === 'NAVIGATE_SECTION') {
+        const sec = bridge.data || findHostSection(text);
+        if (sec) {
+          scrollToHostSection(sec);
+          let navReply = `Certainly! I have scrolled your screen directly to our ${sec.label} section right here.`;
+          if (queryLang === 'mr-IN') {
+            navReply = `नक्कीच! मी आपल्या स्क्रीनला थेट आमच्या ${sec.label} विभागावर नेले आहे.`;
+          } else if (queryLang === 'hi-IN') {
+            navReply = `ज़रूर! मैंने स्क्रीन को सीधे हमारे ${sec.label} सेक्शन पर स्क्रॉल कर दिया है।`;
+          }
+          return {
+            reply: navReply,
+            navAction: { label: `Jump to ${sec.label}`, sectionInfo: sec }
+          };
+        }
+      }
+
+      // 3. Exact Database Item Found in Host State / Live API
+      if (bridge && (bridge.status === 'FOUND_IN_HOST_STATE' || bridge.status === 'FOUND_IN_LIVE_API')) {
+        const formatted = formatRealtimeStockResponse(bridge.data, queryLang);
+        const sec = findHostSection('inventory');
+        if (sec) scrollToHostSection(sec);
+        return {
+          reply: formatted,
+          navAction: sec ? { label: `View ${bridge.data.name || 'Item'} in Table`, sectionInfo: sec } : null
+        };
+      }
+
+      // 4. Item Not Listed in Catalog
+      if (bridge && bridge.status === 'ITEM_NOT_FOUND') {
         const item = bridge.item || 'The requested item';
+        const allItems = getAllCatalogItems(agentConfig);
+        const topAvailable = allItems.slice(0, 3).map(i => i.name).filter(Boolean);
+        const sec = findHostSection('inventory');
+        if (sec) scrollToHostSection(sec);
+
+        let replyText = '';
         if (queryLang === 'mr-IN') {
-          return `${item} आमच्या कॅटलॉगमध्ये उपलब्ध आहे. सध्याचा अचूक रिअल-टाइम साठा (Stock) तपासण्यासाठी कृपया आमच्या काउंटरशी संपर्क साधा.`;
+          replyText = `मी तपासले, पण "${item}" सध्या आमच्या लाइव्ह कॅटलॉगमध्ये उपलब्ध नाही.${topAvailable.length > 0 ? ` आमच्याकडे सध्या उपलब्ध पर्याय: ${topAvailable.join(', ')}.` : ''} आपण उपलब्ध औषधांची माहिती पाहू इच्छिता?`;
+        } else if (queryLang === 'hi-IN') {
+          replyText = `मैंने चेक किया, लेकिन "${item}" वर्तमान में हमारे लाइव कैटलॉग में उपलब्ध नहीं है।${topAvailable.length > 0 ? ` हमारे पास उपलब्ध दवाइयां: ${topAvailable.join(', ')}।` : ''} क्या आप उपलब्ध कैटलॉग देखना चाहेंगे?`;
+        } else {
+          replyText = `I checked our live catalog, but "${item}" is not currently listed.${topAvailable.length > 0 ? ` Available options in stock include: ${topAvailable.join(', ')}.` : ''} Would you like to check our live inventory section?`;
         }
-        if (queryLang === 'hi-IN') {
-          return `${item} हमारे कैटलॉग में उपलब्ध है। वर्तमान लाइव स्टॉक (Stock) की पुष्टि के लिए कृपया हमारे काउंटर से संपर्क करें।`;
-        }
-        return `${item} is in our catalog. To check live real-time stock, please verify with our counter/support team.`;
+
+        return {
+          reply: replyText,
+          navAction: sec ? { label: 'View Live Catalog Table', sectionInfo: sec } : null
+        };
       }
 
       // Marathi Conversational Queries
@@ -1478,19 +1830,32 @@ ${cleanFaqBlock}`;
         return bestItem.a;
       }
 
-      // 7. Contextual Fallback in Exact Language
-      if (queryLang === 'mr-IN') {
-        return `मी समजतो की आपण "${text}" बद्दल विचारत आहात. मी आपल्या सेवा आणि प्रश्नांची उत्तरे देण्यासाठी उपलब्ध आहे. कृपया मला आणखी सांगा!`;
-      }
-      if (queryLang === 'hi-IN') {
-        return `मैं समझता हूँ कि आप "${text}" के बारे में पूछ रहे हैं। मैं आपकी सहायता के लिए तैयार हूँ। कृपया मुझे और बताएं!`;
-      }
-      const sampleQuestions = kb.slice(0, 3).map(k => k.q).filter(Boolean);
-      if (sampleQuestions.length > 0) {
-        return `I understand you're asking about "${text}". While I don't have that specific detail, I can answer questions like: ${sampleQuestions.join(', ')}. What would you like to explore?`;
+      // 7. Polite Everyday Knowledge & Catalog Guidance Fallback
+      const allItems = getAllCatalogItems(agentConfig);
+      if (allItems.length > 0 && /\b(medicine|med|product|item|drug|table|catalog|stock|price)\b/i.test(lower)) {
+        const itemSummary = allItems.slice(0, 4).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+        const sec = findHostSection('inventory');
+        if (sec) scrollToHostSection(sec);
+        let catReply = `In our live inventory, we currently offer: ${itemSummary}. I have scrolled your screen down to the live inventory table!`;
+        if (queryLang === 'mr-IN') {
+          catReply = `आमच्या लाइव्ह कॅटलॉगमध्ये उपलब्ध औषधे: ${itemSummary}. मी स्क्रीन थेट लाइव्ह स्टॉक तक्त्यावर नेली आहे!`;
+        } else if (queryLang === 'hi-IN') {
+          catReply = `हमारे लाइव कैटलॉग में उपलब्ध दवाइयां: ${itemSummary}। मैंने स्क्रीन को सीधे लाइव इन्वेंटरी टेबल पर स्क्रॉल कर दिया है!`;
+        }
+        return {
+          reply: catReply,
+          navAction: sec ? { label: 'View Live Inventory Table', sectionInfo: sec } : null
+        };
       }
 
-      return `I'm ${agentConfig.name}. I didn't quite catch that, but please feel free to ask about our services, support, or pricing!`;
+      if (queryLang === 'mr-IN') {
+        return `मी ${agentConfig.name} आहे. मी आपल्या प्रश्नाचे स्वागत करतो. आपण आमच्या उपलब्ध औषधे, लाइव्ह साठा, किंमती किंवा अपॉइंटमेंटबद्दल विचारू शकता. मी कशी मदत करू?`;
+      }
+      if (queryLang === 'hi-IN') {
+        return `मैं ${agentConfig.name} हूँ। मैं आपकी सहायता के लिए तत्पर हूँ। आप हमारी उपलब्ध दवाइयों, लाइव स्टॉक, कीमतों या अपॉइंटमेंट के बारे में पूछ सकते हैं। मैं आपकी क्या मदद करूँ?`;
+      }
+
+      return `Hello, I'm ${agentConfig.name}! I am your customer support guide for this website. You can ask me about our catalog, live stock, pricing, or ask me to scroll to any section on this page!`;
     }
 
     // Maintain multi-turn conversation memory & session logs
@@ -1623,6 +1988,7 @@ ${cleanFaqBlock}`;
       }
 
       let reply = '';
+      let navAction = null;
       const apiKey = (currentScript && (currentScript.getAttribute('data-api-key') || currentScript.getAttribute('data-key'))) ||
                      agentConfig.apiKey ||
                      window.AI_AGENT_API_KEY ||
@@ -1630,16 +1996,31 @@ ${cleanFaqBlock}`;
 
       // 1. Deterministically resolve Live Real-Time Website Database Bridge first
       const bridgeResult = await resolveDatabaseBridge(userText, agentConfig);
+      if (bridgeResult && (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API' || bridgeResult.status === 'FOUND_CATALOG_LIST' || bridgeResult.status === 'NAVIGATE_SECTION' || bridgeResult.status === 'ITEM_NOT_FOUND')) {
+        const localRes = await inferLocalAgentResponse(userText, bridgeResult);
+        if (typeof localRes === 'object' && localRes !== null) {
+          reply = localRes.reply || '';
+          navAction = localRes.navAction || null;
+        } else {
+          reply = localRes;
+        }
+      }
 
-      // 2. Call BYOK LLM if API Key is configured
-      if (apiKey) {
+      // 2. Call BYOK LLM if API Key is configured and bridge hasn't resolved it
+      if (!reply && apiKey) {
         const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang);
         reply = await callLLMWithBYOK(userText, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
       }
 
       // 3. Fallback to Local Semantic Knowledge Reasoner if API key is not present or BYOK failed
       if (!reply) {
-        reply = await inferLocalAgentResponse(userText, bridgeResult);
+        const localRes = await inferLocalAgentResponse(userText, bridgeResult);
+        if (typeof localRes === 'object' && localRes !== null) {
+          reply = localRes.reply || '';
+          navAction = localRes.navAction || null;
+        } else {
+          reply = localRes;
+        }
       }
 
       conversationHistory.push({ role: 'assistant', content: reply });
@@ -1648,7 +2029,7 @@ ${cleanFaqBlock}`;
 
       orb.className = 'vhd-orb-btn speaking';
       voiceLabel.textContent = 'Speaking...';
-      appendMsg(reply, 'agent');
+      appendMsg(reply, 'agent', navAction);
       speakReply(reply);
     }
 

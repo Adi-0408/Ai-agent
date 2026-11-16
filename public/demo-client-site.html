@@ -59,21 +59,145 @@
       <p>This is an example of an external website where a client has embedded your AI Voice Help Desk agent.</p>
     </header>
 
-    <div class="card">
-      <h2>How it works for your clients:</h2>
-      <p style="margin-top: 10px;">
-        The client only needed to add one line of code to their website before <code>&lt;/body&gt;</code>:
+    <div id="inventory-section" class="card" style="border: 1px solid rgba(56, 189, 248, 0.3); background: rgba(15, 23, 42, 0.85);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h2 id="inventory-heading" style="color: #38bdf8; font-size: 18px;">⚡ Live Store Inventory (Real-Time Database Bridge)</h2>
+        <span style="font-size: 11px; background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 8px; border-radius: 6px; font-weight: 600;">● Live Connected (window.EchoAIData)</span>
+      </div>
+      <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 16px;">
+        This demonstrates how Echo AI reads changing real-time data directly from your website. You can ask the assistant in English, Hindi, or Marathi:
+        <br/><em>"Augmentin 625 Duo Tablet available stock"</em> or <em>"dolo 650"</em> or <em>"give list of all meds"</em>.
       </p>
-      <pre id="embed-snippet" style="background: #070a12; padding: 12px; border-radius: 8px; font-size: 13px; overflow-x: auto; color: #38bdf8;">
+
+      <div id="inventory-table-container" style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 12.5px; text-align: left;">
+          <thead>
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: #94a3b8;">
+              <th style="padding: 8px;">Medicine / Product</th>
+              <th style="padding: 8px;">Price</th>
+              <th style="padding: 8px;">Live Stock</th>
+              <th style="padding: 8px;">Prescription</th>
+              <th style="padding: 8px; text-align: right;">Simulate Live Change</th>
+            </tr>
+          </thead>
+          <tbody id="inventory-tbody">
+            <!-- Rendered dynamically from window.EchoAIData -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="how-it-works-section" class="card">
+      <h2>How Real-Time Data Works for Your Website:</h2>
+      <p style="margin-top: 10px; font-size: 13px; color: #94a3b8;">
+        Your website simply exposes <code>window.EchoAIData</code> before the script tag, OR adds <code>data-api-endpoint="/api/stock"</code>. The AI reads live numbers instantly:
+      </p>
+      <pre style="background: #070a12; padding: 12px; border-radius: 8px; font-size: 12px; overflow-x: auto; color: #38bdf8; margin-top: 10px;">
+&lt;script&gt;
+  window.EchoAIData = {
+    liveInventory: {
+      "augmentin 625 duo tablet": { stock: 42, price: "₹185.50", rx: true }
+    }
+  };
+&lt;/script&gt;
 &lt;script src="./widget.js" data-agent-id="YOUR_AGENT_ID" defer&gt;&lt;/script&gt;</pre>
     </div>
 
-    <div class="card">
+    <div id="try-it-section" class="card">
       <h2>Try it out!</h2>
       <p>Look at the <strong>bottom-right corner</strong> of this page. You will see the floating Voice Help Desk launcher button.</p>
-      <p>Click on it to expand the voice panel, then tap the microphone orb to speak with the assistant in real-time!</p>
+      <p>Click on it to expand the voice panel, then tap the microphone orb to speak or type in the chat!</p>
     </div>
   </div>
+
+  <!-- Real-Time Website Inventory Hook for Voice Assistant -->
+  <script>
+    window.EchoAIData = {
+      type: 'pharmacy',
+      storeName: 'Apollo & Wellness Pharmacy',
+      liveInventory: {
+        "augmentin 625 duo tablet": {
+          name: "Augmentin 625 Duo Tablet",
+          stock: 42,
+          unit: "strips (10 tablets per strip)",
+          price: "₹185.50",
+          available: true,
+          rx: true,
+          category: "Antibiotic",
+          dosage: "Amoxicillin (500mg) + Clavulanic Acid (125mg)"
+        },
+        "azithromycin 500mg": {
+          name: "Azithromycin 500mg Tablet",
+          stock: 18,
+          unit: "strips (3 tablets per strip)",
+          price: "₹120.00",
+          available: true,
+          rx: true,
+          category: "Antibiotic"
+        },
+        "paracetamol 650mg": {
+          name: "Dolo 650 / Paracetamol 650mg",
+          stock: 150,
+          unit: "strips",
+          price: "₹32.00",
+          available: true,
+          rx: false,
+          category: "Antipyretic / Pain Relief"
+        },
+        "pan d capsule": {
+          name: "Pan D Capsule",
+          stock: 65,
+          unit: "strips",
+          price: "₹195.00",
+          available: true,
+          rx: true,
+          category: "Antacid / Gastro"
+        }
+      },
+      queryDatabase: async function(query) {
+        const q = String(query).toLowerCase();
+        for (const [key, item] of Object.entries(window.EchoAIData.liveInventory)) {
+          const itemLower = (item.name || '').toLowerCase();
+          const keyLower = key.toLowerCase();
+          if (q.includes(keyLower) || keyLower.includes(q) || q.includes(itemLower) || itemLower.includes(q)) {
+            return item;
+          }
+        }
+        return null;
+      }
+    };
+
+    function renderInventoryTable() {
+      const tbody = document.getElementById('inventory-tbody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      for (const [key, item] of Object.entries(window.EchoAIData.liveInventory)) {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+        tr.innerHTML = `
+          <td style="padding: 10px 8px; font-weight: 600; color: #f8fafc;">${item.name}</td>
+          <td style="padding: 10px 8px; color: #34d399; font-weight: 600;">${item.price}</td>
+          <td style="padding: 10px 8px;"><span id="stock-${key}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-weight: bold;">${item.stock}</span> <span style="font-size: 11px; color: #94a3b8;">${item.unit}</span></td>
+          <td style="padding: 10px 8px; font-size: 11.5px; color: ${item.rx ? '#f59e0b' : '#94a3b8'};">${item.rx ? '⚠️ Rx Required' : 'OTC'}</td>
+          <td style="padding: 10px 8px; text-align: right;">
+            <button onclick="changeStock('${key}', -1)" style="padding: 3px 8px; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; border-radius: 5px; cursor: pointer; font-size: 11px; margin-right: 4px;">-1 Sell</button>
+            <button onclick="changeStock('${key}', 10)" style="padding: 3px 8px; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; border-radius: 5px; cursor: pointer; font-size: 11px;">+10 Stock</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    window.changeStock = function(key, delta) {
+      if (window.EchoAIData.liveInventory[key]) {
+        window.EchoAIData.liveInventory[key].stock = Math.max(0, window.EchoAIData.liveInventory[key].stock + delta);
+        const el = document.getElementById('stock-' + key);
+        if (el) el.textContent = window.EchoAIData.liveInventory[key].stock;
+      }
+    };
+
+    window.addEventListener('DOMContentLoaded', renderInventoryTable);
+  </script>
 
   <!-- The Embeddable Voice Help Desk Widget -->
   <script>
@@ -97,16 +221,11 @@
       }
       agentId = agentId || 'help desk';
 
-      const snippetEl = document.getElementById('embed-snippet');
-      if (snippetEl) {
-        const voiceAttr = voice ? ` data-voice="${voice}"` : '';
-        snippetEl.textContent = `<script src="./widget.js" data-agent-id="${agentId}"${voiceAttr} data-api-key="${apiKey}" defer><\/script>`;
-      }
       const script = document.createElement('script');
       script.src = './widget.js';
       script.setAttribute('data-agent-id', agentId);
       if (voice) script.setAttribute('data-voice', voice);
-      script.setAttribute('data-api-key', apiKey);
+      if (apiKey) script.setAttribute('data-api-key', apiKey);
       script.defer = true;
       document.body.appendChild(script);
     })();
