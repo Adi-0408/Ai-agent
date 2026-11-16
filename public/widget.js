@@ -534,14 +534,15 @@
       recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = true;
-      recognition.lang = currentSpeechLang === 'auto' ? 'hi-IN' : currentSpeechLang;
+      const defaultNavLang = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'en-US';
+      recognition.lang = currentSpeechLang === 'auto' ? defaultNavLang : currentSpeechLang;
 
       recognition.onstart = () => {
         isListening = true;
         finalRecordedTranscript = '';
         lastCapturedSpokenText = '';
         orb.className = 'vhd-orb-btn listening';
-        voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Listening (Auto-Detecting language)...' :
+        voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Listening to your voice...' :
                                  currentSpeechLang.startsWith('hi') ? 'आपकी आवाज़ सुन रहे हैं...' :
                                  currentSpeechLang.startsWith('mr') ? 'तुमचा आवाज ऐकत आहोत...' :
                                  'Listening to your voice...';
@@ -567,6 +568,13 @@
         console.warn('[Voice Help Desk] Speech recognition error:', event?.error);
         isListening = false;
         orb.className = 'vhd-orb-btn';
+        if (activeStream) {
+          try { activeStream.getTracks().forEach(track => track.stop()); } catch (_) {}
+          activeStream = null;
+        }
+        if (widgetMediaRecorder && widgetMediaRecorder.state !== 'inactive') {
+          try { widgetMediaRecorder.stop(); } catch (_) {}
+        }
         if (event?.error === 'not-allowed' || event?.error === 'permission-denied') {
           voiceLabel.textContent = 'Mic blocked! Allow in URL bar';
           appendMsg('Microphone access was denied. Please click the camera/lock icon in your address bar and allow microphone permissions.', 'agent');
@@ -575,7 +583,7 @@
         } else if (event?.error === 'audio-capture') {
           voiceLabel.textContent = 'No microphone device found';
         } else {
-          voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Tap to Speak (Auto-Detect)' : 'Tap to Speak';
+          voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Tap to Speak' : 'Tap to Speak';
         }
       };
 
@@ -616,7 +624,8 @@
               const wRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${apiKey}` },
-                body: formData
+                body: formData,
+                signal: AbortSignal.timeout(5000)
               });
 
               if (wRes.ok) {
@@ -683,12 +692,22 @@
       }, 300);
     }
 
-    // Voice Orb Click
+    // Voice Orb Click (Supports Instant Barge-in)
     orb.addEventListener('click', async () => {
       if (!recognition) {
         alert('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
         return;
       }
+
+      // If agent is speaking, cancel speech and reset state immediately (Barge-in)
+      if (window.speechSynthesis && (window.speechSynthesis.speaking || orb.classList.contains('speaking'))) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+        if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
+        if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
+        window.__vhdActiveUtterance = null;
+        orb.className = 'vhd-orb-btn';
+      }
+
       if (isListening) {
         recognition.stop();
       } else {
@@ -1027,7 +1046,7 @@
         try {
           const kbFacts = (agentConfig.knowledgeBase || []).slice(0, 25);
           const kbText = kbFacts.length > 0 ? `\nVerified Website Knowledge Base Facts:\n${JSON.stringify(kbFacts)}` : '';
-          const systemContext = `Your name is "${agentConfig.name}". You are "${agentConfig.name}", the official AI voice guide for this website. Never introduce yourself as "app Concierge", "Site Sentinel", "Help Desk AI", or any other name. Always identify yourself as "${agentConfig.name}".\n\n${agentConfig.prompt || agentConfig.systemPrompt || `You are ${agentConfig.name}, the official AI voice guide for this website.`}${kbText}\n\nCRITICAL INSTRUCTIONS:\n1. Conversational Voice Output: Respond in 1 to 2 clear, natural, spoken sentences directly answering the visitor. Never output markdown asterisks, hashtags, or bullet points as this will be read aloud by browser voice synthesis.\n2. Normal Everyday Inquiries: Warmly and helpfully answer normal everyday questions, greetings, small talk, and common conversational queries. Never decline ordinary conversation or state you lack data for everyday pleasantries.\n3. Website & Product Inquiries: For questions regarding products, services, policies, or specifications, accurately reference the verified facts above.\n4. Output Format: ALWAYS output pure spoken speech text directly. NEVER output JSON, code blocks, or configuration objects.\n5. Multilingual Rules: You support English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the user asks in Hindi, reply in natural, polite Hindi. If the user asks in Marathi, reply in natural, polite Marathi. If the user asks in English, reply in natural English.`;
+          const systemContext = `Your name is "${agentConfig.name}". You are "${agentConfig.name}", the official omni-channel AI Customer Support & Help Desk Agent for this website. Your primary mission is to assist customers and website visitors with empathy, clarity, and speed across BOTH voice conversations and interactive chat. Never introduce yourself as "app Concierge", "Site Sentinel", "Help Desk AI", or any other name. Always identify yourself as "${agentConfig.name}".\n\n${agentConfig.prompt || agentConfig.systemPrompt || `You are ${agentConfig.name}, the dedicated AI Customer Support Agent for this website.`}${kbText}\n\nCRITICAL DUAL-CHANNEL SUPPORT RULES:\n1. Conversational Voice & Chat Output: Respond in 1 to 2 clear, spoken, natural sentences directly answering the customer. Never output markdown asterisks (*), hashtags (#), bullet points, or raw JSON, as this will be read aloud by browser voice synthesis.\n2. Customer Help & Advocacy: Listen carefully to customer needs, solve issues promptly, and guide visitors through services, pricing, and procedures based on verified website facts above.\n3. Everyday & Normal Questions: Warmly and helpfully answer everyday inquiries, greetings, pleasantries, small talk, and general knowledge questions. Never refuse ordinary conversation or state you lack data for ordinary questions.\n4. Output Format: ALWAYS output pure spoken/chat conversational text directly. NEVER output JSON, code blocks, or configuration objects.\n5. Multilingual Rules: You support English, Hindi (हिंदी), and Marathi (मराठी). You MUST always detect the language of the user's message (Hindi, Marathi, or English) and reply in that EXACT SAME language. If the user asks in Hindi, reply in natural, polite Hindi. If the user asks in Marathi, reply in natural, polite Marathi. If the user asks in English, reply in natural English.`;
 
           const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -1376,19 +1395,30 @@
       return { ...resolved, lang: resolved?.voice?.lang || 'en-US' };
     }
 
-    // Speak Reply via Browser Web Speech Synthesis (100% Free & Voice Locked)
+    // Speak Reply via Browser Web Speech Synthesis (Hardened GC Pinning & Watchdog)
     function speakReply(text) {
-      if (!window.speechSynthesis) {
+      if (!window.speechSynthesis || !text) {
+        orb.className = 'vhd-orb-btn';
         voiceLabel.textContent = currentSpeechLang.startsWith('hi') ? 'बोलने के लिए टैप करें' :
                                  currentSpeechLang.startsWith('mr') ? 'बोलण्यासाठी टॅप करा' :
                                  'Tap to Speak';
         return;
       }
 
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
+      // 1. Cleanly cancel pending/paused speech in browser
+      try { window.speechSynthesis.cancel(); } catch (_) {}
+      if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
+      if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
 
-      const resolved = resolveVoiceForText(agentConfig.voice, text);
+      if (window.speechSynthesis.paused) {
+        try { window.speechSynthesis.resume(); } catch (_) {}
+      }
+
+      const cleanSpoken = String(text).replace(/[*#_`]/g, '').trim();
+      if (!cleanSpoken) return;
+
+      const utterance = new SpeechSynthesisUtterance(cleanSpoken);
+      const resolved = resolveVoiceForText(agentConfig.voice, cleanSpoken);
       if (resolved.voice) {
         utterance.voice = resolved.voice;
       }
@@ -1396,26 +1426,60 @@
       utterance.rate = resolved.rate;
       utterance.lang = resolved.lang || 'en-US';
 
-      orb.className = 'vhd-orb-btn speaking';
-      voiceLabel.textContent = resolved.lang.startsWith('hi') ? 'बोल रहे हैं...' :
-                               resolved.lang.startsWith('mr') ? 'बोलत आहे...' :
-                               'Speaking...';
+      // Pin utterance to window so V8 Garbage Collection cannot silence speech mid-sentence
+      window.__vhdActiveUtterance = utterance;
 
-      utterance.onend = () => {
+      let hasFinished = false;
+      const cleanupSpeech = () => {
+        if (hasFinished) return;
+        hasFinished = true;
+        if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
+        if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
+        window.__vhdActiveUtterance = null;
         orb.className = 'vhd-orb-btn';
         voiceLabel.textContent = currentSpeechLang.startsWith('hi') ? 'बोलने के लिए टैप करें' :
                                  currentSpeechLang.startsWith('mr') ? 'बोलण्यासाठी टॅप करा' :
                                  'Tap to Speak';
       };
 
-      utterance.onerror = () => {
-        orb.className = 'vhd-orb-btn';
-        voiceLabel.textContent = currentSpeechLang.startsWith('hi') ? 'बोलने के लिए टैप करें' :
-                                 currentSpeechLang.startsWith('mr') ? 'बोलण्यासाठी टॅप करा' :
-                                 'Tap to Speak';
+      utterance.onstart = () => {
+        orb.className = 'vhd-orb-btn speaking';
+        voiceLabel.textContent = resolved.lang.startsWith('hi') ? 'बोल रहे हैं...' :
+                                 resolved.lang.startsWith('mr') ? 'बोलत आहे...' :
+                                 'Speaking...';
+
+        // Chrome Heartbeat: prevents browser synthesis engine from freezing on utterances > 8s
+        if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
+        window.__vhdHeartbeat = setInterval(() => {
+          if (window.speechSynthesis && window.speechSynthesis.speaking) {
+            window.speechSynthesis.pause();
+            window.speechSynthesis.resume();
+          }
+        }, 7000);
       };
 
-      window.speechSynthesis.speak(utterance);
+      utterance.onend = cleanupSpeech;
+      utterance.onerror = cleanupSpeech;
+
+      // Fallback Watchdog Timer: auto-release UI if browser drops onend
+      const maxSpeechMs = Math.max(4000, Math.round((cleanSpoken.length / 10) * 1000) + 3000);
+      window.__vhdWatchdog = setTimeout(() => {
+        if (!hasFinished) {
+          console.warn('[Widget Voice Watchdog] Speech timed out, releasing orb');
+          try { window.speechSynthesis.cancel(); } catch (_) {}
+          cleanupSpeech();
+        }
+      }, maxSpeechMs);
+
+      try {
+        window.speechSynthesis.speak(utterance);
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      } catch (speakErr) {
+        console.warn('[Widget Voice] Speech error:', speakErr);
+        cleanupSpeech();
+      }
     }
   }
 

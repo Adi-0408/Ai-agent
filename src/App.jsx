@@ -110,7 +110,7 @@ import {
 } from 'lucide-react';
 import { detectFileType, analyzeFullStackFiles } from './utils/codebaseAnalyzer';
 import { synthesizeAgentFromFilesAndPrompt } from './services/agentSynthesizer';
-import { resolveLockedVoice } from './utils/voiceConsistency';
+import { resolveLockedVoice, speakTextWithWatchdog, stopCurrentSpeech } from './utils/voiceConsistency';
 import {
   SAMPLE_FRONTEND_FILE,
   SAMPLE_BACKEND_FILE,
@@ -762,20 +762,17 @@ export default function App() {
       return;
     }
 
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(t => t.stop());
-      }
-    } catch (err) {
-      alert("Microphone permission was denied. Please allow microphone access in your browser address bar.");
-      return;
+    stopCurrentSpeech();
+
+    if (composerRecognitionRef.current) {
+      try { composerRecognitionRef.current.abort(); } catch (_) {}
+      composerRecognitionRef.current = null;
     }
 
     const rec = new SpeechRec();
     rec.continuous = false;
     rec.interimResults = true;
-    rec.lang = currentAssistant?.lang || 'en-US';
+    rec.lang = currentAssistant?.lang || (typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'en-US');
 
     rec.onstart = () => {
       setIsComposerMicListening(true);
@@ -791,7 +788,7 @@ export default function App() {
           interimTxt += event.results[i][0].transcript;
         }
       }
-      const textToSet = finalTxt || interimTxt;
+      const textToSet = (finalTxt || interimTxt).trim();
       if (textToSet) {
         setPromptInput(textToSet);
       }
@@ -800,6 +797,9 @@ export default function App() {
     rec.onerror = (event) => {
       console.warn("Composer voice error:", event.error);
       setIsComposerMicListening(false);
+      if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+        alert("Microphone permission was denied. Please allow microphone access in your browser address bar.");
+      }
     };
 
     rec.onend = () => {
@@ -811,6 +811,7 @@ export default function App() {
       rec.start();
     } catch (e) {
       console.warn("Failed starting composer speech recognition:", e);
+      setIsComposerMicListening(false);
     }
   };
 
@@ -1359,34 +1360,20 @@ export default function App() {
 
   const toggleVoicePlayback = (id) => {
     if (playingVoice === id) {
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
+      stopCurrentSpeech();
       setPlayingVoice(null);
       return;
     }
 
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      const vObj = voiceList.find(v => v.id === id);
-      const sampleText = `Hello! I am ${vObj ? vObj.name : 'your assistant'}. I am your AI voice agent for customer support and website help desk.`;
-      const utterance = new SpeechSynthesisUtterance(sampleText);
+    const vObj = voiceList.find(v => v.id === id);
+    const sampleText = `Hello! I am ${vObj ? vObj.name : 'your assistant'}. I am your dedicated AI customer support agent for both voice and chat assistance.`;
 
-      // Resolve and lock exact persistent voice for this persona
-      const resolved = resolveLockedVoice(vObj?.name || id);
-      if (resolved.voice) {
-        utterance.voice = resolved.voice;
-      }
-      utterance.pitch = resolved.pitch;
-      utterance.rate = resolved.rate;
-
-      utterance.onend = () => setPlayingVoice(null);
-      utterance.onerror = () => setPlayingVoice(null);
-      setPlayingVoice(id);
-      window.speechSynthesis.speak(utterance);
-    } else {
-      setPlayingVoice(id);
-    }
+    setPlayingVoice(id);
+    speakTextWithWatchdog(sampleText, vObj?.name || id, {
+      onStart: () => setPlayingVoice(id),
+      onEnd: () => setPlayingVoice(null),
+      onError: () => setPlayingVoice(null)
+    });
   };
 
   const handleSelectVoiceForAssistant = async (vObj) => {

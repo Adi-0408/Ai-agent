@@ -458,3 +458,133 @@ export function resolveVoiceForText(personaName = 'Adam', text = '') {
   const resolved = resolveLockedVoice(personaName);
   return { ...resolved, lang: resolved?.voice?.lang || 'en-US' };
 }
+
+/**
+ * Active timers for speech heartbeat & watchdog
+ */
+let activeHeartbeatTimer = null;
+let activeWatchdogTimer = null;
+
+/**
+ * Safely cancels any active browser speech and resets watchdog timers
+ */
+export function stopCurrentSpeech() {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  if (activeHeartbeatTimer) {
+    clearInterval(activeHeartbeatTimer);
+    activeHeartbeatTimer = null;
+  }
+  if (activeWatchdogTimer) {
+    clearTimeout(activeWatchdogTimer);
+    activeWatchdogTimer = null;
+  }
+  try {
+    window.speechSynthesis.cancel();
+  } catch (_) {}
+  window.__echoActiveUtterance = null;
+}
+
+/**
+ * Hardened Speech Synthesis execution with Chromium GC Pinning, Heartbeat & Watchdog.
+ * Eliminates browser voice freezing, premature cutoff, and hung 'speaking' states.
+ * 
+ * @param {string} text - The text to speak aloud
+ * @param {string} personaName - Preferred voice persona name (e.g. 'Clara', 'Adam')
+ * @param {{ onStart?: () => void, onEnd?: () => void, onError?: (err: any) => void }} callbacks
+ * @returns {SpeechSynthesisUtterance|null}
+ */
+export function speakTextWithWatchdog(text, personaName = 'Clara', callbacks = {}) {
+  const { onStart, onEnd, onError } = callbacks;
+  if (typeof window === 'undefined' || !window.speechSynthesis || !text) {
+    if (onEnd) onEnd();
+    return null;
+  }
+
+  // 1. Cleanly cancel any pending or paused speech in browser queue
+  stopCurrentSpeech();
+
+  // If paused in Chrome background, force resume
+  if (window.speechSynthesis.paused) {
+    try { window.speechSynthesis.resume(); } catch (_) {}
+  }
+
+  const cleanText = String(text).replace(/[*#_`]/g, '').trim();
+  if (!cleanText) {
+    if (onEnd) onEnd();
+    return null;
+  }
+
+  const utterance = new SpeechSynthesisUtterance(cleanText);
+  const resolved = resolveVoiceForText(personaName, cleanText);
+  if (resolved?.voice) {
+    utterance.voice = resolved.voice;
+  }
+  utterance.pitch = resolved?.pitch || 1.0;
+  utterance.rate = resolved?.rate || 1.0;
+  utterance.lang = resolved?.lang || 'en-US';
+
+  // CRITICAL GC PINNING: Pin utterance to window so V8 GC cannot collect it mid-speech
+  window.__echoActiveUtterance = utterance;
+
+  let hasEnded = false;
+  const finish = (isError = false, errEvent = null) => {
+    if (hasEnded) return;
+    hasEnded = true;
+    if (activeHeartbeatTimer) {
+      clearInterval(activeHeartbeatTimer);
+      activeHeartbeatTimer = null;
+    }
+    if (activeWatchdogTimer) {
+      clearTimeout(activeWatchdogTimer);
+      activeWatchdogTimer = null;
+    }
+    window.__echoActiveUtterance = null;
+    if (isError) {
+      if (onError) onError(errEvent);
+      else if (onEnd) onEnd();
+    } else {
+      if (onEnd) onEnd();
+    }
+  };
+
+  utterance.onstart = () => {
+    if (onStart) onStart();
+
+    // Chromium Heartbeat: Chrome pauses synthesis if utterances run > 8 seconds.
+    // Calling pause() and immediately resume() keeps the engine alive without audio glitch.
+    if (activeHeartbeatTimer) clearInterval(activeHeartbeatTimer);
+    activeHeartbeatTimer = setInterval(() => {
+      if (window.speechSynthesis && window.speechSynthesis.speaking) {
+        window.speechSynthesis.pause();
+        window.speechSynthesis.resume();
+      }
+    }, 7000);
+  };
+
+  utterance.onend = () => finish(false);
+  utterance.onerror = (e) => finish(true, e);
+
+  // Safety Fallback Watchdog Timer:
+  // If the browser drops the onend event, automatically release the UI state
+  const estimatedDurationMs = Math.max(4000, Math.round((cleanText.length / 10) * 1000) + 3000);
+  if (activeWatchdogTimer) clearTimeout(activeWatchdogTimer);
+  activeWatchdogTimer = setTimeout(() => {
+    if (!hasEnded) {
+      console.warn('[Voice Watchdog] Speech timed out, releasing speaking state.');
+      try { window.speechSynthesis.cancel(); } catch (_) {}
+      finish(false);
+    }
+  }, estimatedDurationMs);
+
+  try {
+    window.speechSynthesis.speak(utterance);
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+  } catch (err) {
+    console.warn('[SpeechSynthesis] speak error:', err);
+    finish(true, err);
+  }
+
+  return utterance;
+}

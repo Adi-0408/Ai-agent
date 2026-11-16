@@ -16,7 +16,7 @@ import {
   Activity,
   Languages
 } from 'lucide-react';
-import { resolveLockedVoice, resolveVoiceForText } from '../utils/voiceConsistency';
+import { resolveLockedVoice, resolveVoiceForText, speakTextWithWatchdog, stopCurrentSpeech } from '../utils/voiceConsistency';
 import { generateAIResponse, getUserApiKeys, transcribeAudioWithGroqWhisper } from '../services/aiCompletionService';
 
 export default function VoiceTestModal({ isOpen, onClose, assistant }) {
@@ -101,37 +101,25 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
       try { audioContextRef.current.close(); } catch (e) {}
       audioContextRef.current = null;
     }
+    stopCurrentSpeech();
     setIsRecording(false);
     setAudioLevel(0);
   };
 
-  // Speak text using the assistant's locked persona voice (auto-adapts for English, Hindi, and Marathi)
+  // Speak text using the assistant's locked persona voice with GC pinning, heartbeat & watchdog
   const speakText = (text) => {
-    if (!synthRef.current || !text) return;
-    synthRef.current.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    const resolved = resolveVoiceForText(assistantVoice, text);
-    if (resolved?.voice) {
-      utterance.voice = resolved.voice;
-    }
-    utterance.pitch = resolved?.pitch || 1.0;
-    utterance.rate = resolved?.rate || 1.0;
-    utterance.lang = resolved?.lang || 'en-US';
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
-    synthRef.current.speak(utterance);
+    if (!text) return;
+    speakTextWithWatchdog(text, assistantVoice, {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false)
+    });
   };
 
   // Start recording audio + Speech Recognition
   const startRecordingSession = async () => {
-    if (isSpeaking && synthRef.current) {
-      synthRef.current.cancel();
-      setIsSpeaking(false);
-    }
+    stopCurrentSpeech();
+    setIsSpeaking(false);
     setErrorMessage('');
     setInterimTranscript('');
     speechHandledRef.current = false;
@@ -211,10 +199,12 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         if (finalChunkBlob.size > 1500 && activeKey && activeKey.startsWith('gsk_')) {
           setInterimTranscript('🌐 Auto-detecting voice language with Whisper...');
           try {
-            const whisperRes = await transcribeAudioWithGroqWhisper(finalChunkBlob, activeKey, {
+            const whisperPromise = transcribeAudioWithGroqWhisper(finalChunkBlob, activeKey, {
               language: selectedLang === 'auto' ? undefined : selectedLang,
               verbose: true
             });
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Whisper timeout')), 5000));
+            const whisperRes = await Promise.race([whisperPromise, timeoutPromise]);
             const cleanWhisper = (whisperRes?.text || '').trim();
             const detectedLID = (whisperRes?.language || '').toLowerCase().trim();
 
@@ -230,7 +220,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
               return;
             }
           } catch (wErr) {
-            console.warn('[Whisper LID Error]', wErr);
+            console.warn('[Whisper LID Error / Timeout]', wErr);
           }
         }
 
@@ -256,10 +246,15 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRec) {
       try {
+        if (recognitionRef.current) {
+          try { recognitionRef.current.abort(); } catch (_) {}
+          recognitionRef.current = null;
+        }
         const rec = new SpeechRec();
         rec.continuous = true;
         rec.interimResults = true;
-        rec.lang = (selectedLang && selectedLang !== 'auto') ? selectedLang : 'hi-IN';
+        const defaultBrowserLang = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'en-US';
+        rec.lang = (selectedLang && selectedLang !== 'auto') ? selectedLang : defaultBrowserLang;
 
         rec.onstart = () => {
           setIsRecording(true);
@@ -335,8 +330,15 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
     }
   };
 
-  // Toggle listening state
+  // Toggle listening state (Supports instant barge-in if assistant is speaking)
   const handleToggleListen = () => {
+    if (isSpeaking) {
+      // Instant barge-in: cancel speech and immediately start recording user's new question
+      stopCurrentSpeech();
+      setIsSpeaking(false);
+      startRecordingSession();
+      return;
+    }
     if (isRecording) {
       stopAndSubmitRecording();
     } else {

@@ -276,11 +276,11 @@ Respond ONLY with a valid JSON object matching this structure (no markdown forma
       greeting: `Hello! Welcome to ${siteTitle || defaultName}. How can I assist you with our products, specifications, or inquiries today?`,
       voice: "Clara",
       model: hasAnyKey ? (effectiveGroqKey ? "Groq Qwen 27B (<200ms Free)" : "Google Gemini 3.8 Flash (Free)") : "Offline Rule-Based Edge Engine",
-      systemPrompt: `# ${defaultName} - AI Voice Help Desk
+      systemPrompt: `# ${defaultName} - AI Voice & Chat Customer Support Agent
 
-## Core Identity & Mission
-You are ${defaultName}, the intelligent conversational voice and chat help desk assistant created directly from your website's frontend, backend, and database files.
-Your goal is to answer visitor questions, guide them through products and models, and utilize backend API tools when actions are requested.
+## Core Identity & Assignment
+You are ${defaultName}, the dedicated omni-channel AI Customer Support & Help Desk Agent created directly from this website's codebase, data catalog, and business knowledge.
+Your mission is to provide world-class customer service across BOTH voice and chat systems: helping customers resolve issues, answering product/service questions, explaining pricing and policies, guiding them step-by-step, and triggering backend actions.
 
 ## Guidelines from User Prompt:
 "${userPrompt}"
