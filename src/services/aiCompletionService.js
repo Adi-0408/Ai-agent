@@ -3,6 +3,12 @@
  * Zero developer keys baked in. Reads strictly from user state / localStorage.
  */
 import { detectTextLanguage } from '../utils/voiceConsistency.js';
+import {
+  normalizeUserQuery,
+  classifyIntentConcepts,
+  fuzzyMatchRecord,
+  scoreKbEntryFuzzy
+} from '../utils/fuzzyNlu.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -607,12 +613,13 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
     }
   }
 
-  // 3. Fallback to Local Knowledge Base Matching (100% Keyless Offline Rule-Based Engine)
+  // 3. Fallback to Universal Typo-Tolerant & Word-Order-Independent Local NLU Engine
   const rawTrimmed = cleanMessage.trim();
-  const normalizedNoPunct = rawTrimmed.toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
+  const normalizedFull = normalizeUserQuery(rawTrimmed, dbRecords, kbList);
+  const normalizedNoPunct = (normalizedFull || rawTrimmed).toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
   const rawCleanNoPunct = rawTrimmed.replace(/[!?.,।;:]+$/g, '').replace(/\s+/g, ' ').trim();
 
-  // Standalone English / Marathi / Hindi greetings, gratitude, and farewells ONLY (never hijack questions starting with "hey ...")
+  // Standalone English / Marathi / Hindi greetings, gratitude, and farewells ONLY (typo-tolerant, never hijacks real questions)
   if (/^(hi+|hello+|hey+|hii+|helo+|howdy|greetings|yo|sup|hola|good\s+(morning|afternoon|evening|day))(\s+(there|everyone|sir|ma'?am|mam|bot|assistant|team))?$/i.test(normalizedNoPunct)) {
     return "Hello! I am your AI assistant. How can I help you today?";
   }
@@ -644,12 +651,11 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
     return "धन्यवाद! आपका दिन शुभ हो, फिर मिलेंगे।";
   }
 
-  // Strip leading greeting from real questions (e.g. "hey i want know about the courses" -> "i want know about the courses")
-  const effectiveClean = rawTrimmed.replace(/^(hi+|hello+|hey+|hii+|helo+|howdy|namaste|namaskar|नमस्कार|नमस्ते|हाय|हॅलो|हेलो)[,!.\s]+/i, '').trim() || rawTrimmed;
+  // Strip leading greeting from real questions (using typo-normalized text!)
+  const strippedRaw = rawTrimmed.replace(/^(hi+|hello+|hey+|hii+|helo+|howdy|namaste|namaskar|नमस्कार|नमस्ते|हाय|हॅलो|हेलो)[,!.\s]+/i, '').trim() || rawTrimmed;
+  const effectiveClean = normalizeUserQuery(strippedRaw, dbRecords, kbList) || strippedRaw;
   const lower = effectiveClean.toLowerCase();
-  const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'which', 'your', 'about', 'can', 'you', 'want', 'know', 'tell', 'give', 'please', 'does', 'provide', 'offer', 'hey', 'hello']);
-  const words = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
-  const stem = (w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) ? w.slice(0, -1) : w;
+  const intent = classifyIntentConcepts(lower);
 
   if (/\b(who are you|what is your name|introduce yourself)\b/i.test(lower)) {
     return "I am your AI voice assistant, here to answer your questions and guide you. What would you like to know?";
@@ -731,9 +737,9 @@ Your floating voice assistant widget will appear immediately on your site, with 
   const isSaas = /\b(software|saas|subscription|pricing\s*tier|pro\s*plan|enterprise\s*plan|cloud\s*platform)\b/i.test(combinedContextText);
   const isAutomotive = /\b(car|cars|vehicle|vehicles|dealership|showroom|test\s*drive|suv|sedan)\b/i.test(combinedContextText);
 
-  // Check live database records first if provided (including ordinal, affirmation, price overview & history follow-ups!)
+  // Check live database records first if provided (typo-tolerant, order-independent, ordinal & affirmation aware!)
   if (Array.isArray(dbRecords) && dbRecords.length > 0) {
-    // 1. Ordinal selection ("the first one", "2nd one", "last one")
+    // 1. Ordinal selection ("the first one", "2nd one", "secnd one", "last one")
     let ordRecord = null;
     if (/\b(first|1st|number\s*1|#1|first\s*one)\b/i.test(lower)) ordRecord = dbRecords[0];
     else if (/\b(second|2nd|number\s*2|#2)\b/i.test(lower)) ordRecord = dbRecords[1];
@@ -743,30 +749,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
       return `${ordRecord.name}${ordRecord.price ? ` (${ordRecord.price})` : ''}${ordRecord.description ? `: ${ordRecord.description}` : ''}${ordRecord.stock !== null && ordRecord.stock !== undefined ? ` — ${ordRecord.stock} ${ordRecord.unit || 'units'} available.` : '.'}`;
     }
 
-    // 2. General Pricing / Fee Structure Overview ("fee structure", "pricing", "rates", "all prices")
-    const isPriceOverview = /^(?:what\s+(?:is|are)\s+(?:the|your)\s+|give\s+me\s+(?:the\s+)?|show\s+(?:me\s+)?(?:the\s+)?|tell\s+me\s+(?:about\s+)?(?:the\s+)?)?(?:fee\s*structure|fees?\s*(?:details?|list|chart|overview)?|pricing(?:\s*(?:details?|plans?|tiers?))?|prices?(?:\s*list)?|rates?|charges?|costs?)\s*[?.!]*$/i.test(lower) ||
-                            /\b(fee\s*structure|price\s*list|rate\s*card|all\s*prices|all\s*fees)\b/i.test(lower);
-    if (isPriceOverview && !/\b(in that|for that|of that|for this|for it)\b/i.test(lower)) {
-      const priced = dbRecords.filter(r => r.price);
-      if (priced.length > 0) {
-        const feeSum = priced.slice(0, 6).map(r => `${r.name}: ${r.price}`).join(', ');
-        return `Here is our ${isAcademic ? 'fee structure' : 'pricing'} overview: ${feeSum}. Ask about any specific option for complete details!`;
-      }
-    }
-
-    // 3. Universal Catalog / Details List ("can you give me details of courses", "course details", "which products do you sell", etc.)
-    const isCatalogQuery = /\b(what|which)\s+(all\s+)?(products?|items?|models?|cars?|vehicles?|services?|courses?|programs?|streams?|dishes?|foods?|plans?|tiers?|rooms?|suites?|properties|flats?|meds?|medicines?)\s*(do you|are|can you)?\s*(have|offer|provide|sell|serve|teach|available)?\b/i.test(lower) ||
-                           /\b(list of|list all|all|available|show|know about|tell me about|details of|details about|info on|information on)\s+(the\s+|your\s+|all\s+)?(products|items|models|cars|vehicles|services|courses|programs|streams|dishes|menu|plans|rooms|properties|meds|medicines|catalog|offerings|admissions)\b/i.test(lower) ||
-                           /^(?:(?:give\s+me|show\s+me|tell\s+me)\s+)?(?:the\s+|your\s+)?(course|courses|product|products|menu|plan|plans|room|rooms|service|services|medicine|medicines)\s+(?:details|info|information|list|options)\s*[?.!]*$/i.test(lower);
-    if (isCatalogQuery && !/\b(in that|in this|for that|for this|for it)\b/i.test(lower)) {
-      const summary = dbRecords.slice(0, 6).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
-      if (isAcademic) {
-        return `Our verified academic programs and courses include: ${summary}. Feel free to ask me for admission criteria, eligibility, or details on any course!`;
-      }
-      return `Our verified database includes: ${summary}. You can ask me for real-time availability, pricing, or details on any item!`;
-    }
-
-    // 4. Affirmation / "tell me more" / "yes" continuation
+    // 2. Affirmation / "tell me more" / "yes" continuation
     if (/^(yes|yeah|sure|ok|okay|tell\s*me\s*more|more|show\s*more|next|continue|haan|ho)$/i.test(normalizedNoPunct)) {
       const lastBotText = [...validHistory].reverse().find(m => m.role === 'assistant')?.content || '';
       const mentioned = dbRecords.find(r => r.name && lastBotText.toLowerCase().includes(r.name.toLowerCase()));
@@ -777,34 +760,57 @@ Your floating voice assistant widget will appear immediately on your site, with 
       return `Here are our available options: ${summary}. Name any one or say "the first one" for full details!`;
     }
 
-    // 5. Direct Record Match OR History Follow-Up Match ("what do you provide in that", "price for it")
-    let matchedRecord = dbRecords.find(r => {
-      const rName = (r.name || '').toLowerCase().trim();
-      if (!rName) return false;
-      if (lower === rName) return true;
-      if (lower.length < 4 || rName.length < 4) {
-        const wordRegex = new RegExp('\\b' + lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
-        return wordRegex.test(rName);
-      }
-      return lower.includes(rName) || rName.includes(lower);
-    });
-
-    if (!matchedRecord && /\b(in that|for that|of that|in this|for this|of this|for it|about it|in it|that|this|it)\b/i.test(lower)) {
+    // 3. Specific Item Fuzzy Match FIRST (word-order independent & typo-tolerant: "fess for scince 11th", "scince 11th details", "paracetmol avilable")
+    let matchedRecord = fuzzyMatchRecord(dbRecords, strippedRaw, lower);
+    if (!matchedRecord && intent.hasPronounRef) {
       const recentCombined = validHistory.slice(-4).map(m => m.content).join(' ').toLowerCase();
       matchedRecord = dbRecords.find(r => r.name && recentCombined.includes(r.name.toLowerCase()));
     }
-
     if (matchedRecord) {
       if (isAcademic) {
         return `${matchedRecord.name} is one of our academic programs${matchedRecord.price ? ` (Fee: ${matchedRecord.price})` : ''}.${matchedRecord.description ? ` Details: ${matchedRecord.description}` : ''}`;
       }
       return `${matchedRecord.name} is in our database${matchedRecord.price ? ` at ${matchedRecord.price}` : ''}.${matchedRecord.description ? ` ${matchedRecord.description}` : ''}${matchedRecord.stock !== null && matchedRecord.stock !== undefined ? ` Available: ${matchedRecord.stock} ${matchedRecord.unit || 'units'}.` : ''}`;
     }
+
+    // 4. General Pricing / Fee Structure Overview ("fess structre", "how much do i have to pay?", "pricing")
+    if (intent.isPriceOverview) {
+      const priced = dbRecords.filter(r => r.price);
+      if (priced.length > 0) {
+        const feeSum = priced.slice(0, 6).map(r => `${r.name}: ${r.price}`).join(', ');
+        return `Here is our ${isAcademic ? 'fee structure' : 'pricing'} overview: ${feeSum}. Ask about any specific option for complete details!`;
+      }
+    }
+
+    // 5. Universal Catalog / Details List ("wat cources u prvide", "courses details give me", "what do you teach here?", "what can i eat?")
+    if (intent.isCatalogList) {
+      const summary = dbRecords.slice(0, 6).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
+      if (isAcademic) {
+        return `Our verified academic programs and courses include: ${summary}. Feel free to ask me for admission criteria, eligibility, or details on any course!`;
+      }
+      return `Our verified database includes: ${summary}. You can ask me for real-time availability, pricing, or details on any item!`;
+    }
   }
 
-  // Check products / courses / offerings in Knowledge Base
-  if (/\b(what|which)\s+(all\s+)?(products?|courses?|programs?|models?|cars?|services?|dishes?|plans?|rooms?|offerings?)\s*(do you|are)?\s*(have|offer|provide|sell|serve|available)?\b/i.test(lower) ||
-      /\b(list|all|available|know about|tell me about|details of|details about)\s+(the\s+|your\s+)?(products|courses|programs|models|cars|services|dishes|menu|plans|rooms|offerings|catalog)\b/i.test(lower)) {
+  // Fuzzy Knowledge Base Matching (Typo-tolerant & order-independent)
+  let bestMatch = null;
+  let highestScore = 0;
+
+  for (const item of kbList) {
+    if (!item || !item.a || String(item.a).includes('[')) continue;
+    const sc = scoreKbEntryFuzzy(lower, item);
+    if (sc > highestScore) {
+      highestScore = sc;
+      bestMatch = item;
+    }
+  }
+
+  if (bestMatch && highestScore >= 20) {
+    return bestMatch.a;
+  }
+
+  // Check catalog/offerings in Knowledge Base when dbRecords is empty
+  if (intent.isCatalogList && kbList.length > 0) {
     const productEntry = kbList.find(k => /\b(what products|what courses|courses|models do you offer|catalog|services do you offer|programs|menu|plans|rooms)\b/i.test(k.q));
     if (productEntry && productEntry.a && !productEntry.a.includes('[')) {
       return productEntry.a;
@@ -817,37 +823,13 @@ Your floating voice assistant widget will appear immediately on your site, with 
     }
   }
 
-  let bestMatch = null;
-  let highestScore = 0;
-
-  for (const item of kbList) {
-    const qLower = (item.q || '').toLowerCase();
-    const aLower = (item.a || '').toLowerCase();
-    if (aLower.includes('[')) continue; // Never return bracket placeholders
-    if (lower.includes(qLower) || qLower.includes(lower)) {
-      return item.a;
-    }
-    const matchCount = words.filter(w => {
-      const s = stem(w);
-      return qLower.includes(w) || qLower.includes(s) || aLower.includes(w) || aLower.includes(s);
-    }).length;
-    if (matchCount > highestScore) {
-      highestScore = matchCount;
-      bestMatch = item;
-    }
-  }
-
-  if (bestMatch && highestScore >= 1) {
-    return bestMatch.a;
-  }
-
-  // Universal Archetype Intents WITHOUT requiring an active item (Eligibility, Procedure, Documents/Policy)
-  if (/\b(eligibility|criteria|requirements?|qualification|percentage|marks)\b/i.test(lower)) {
+  // Universal Order-Independent Archetype Intents (Eligibility, Procedure, Documents/Policy)
+  if (intent.isEligibility) {
     if (isAcademic) return 'For admissions, applicants must have passed the qualifying board examination with the required merit marks. Ask about a specific course for exact details!';
     if (isHealthcare) return 'Prescription medicines require a valid doctor prescription; over-the-counter items are available directly.';
     return 'All listed offerings are open to eligible customers directly through our website. Ask about any specific option for full details!';
   }
-  if (/\b(admission\s*(?:process|procedure|steps?)|how to apply|how to order|how to buy|how to book|how to subscribe|table\s*reservations?|reservations?|test\s*drives?|getting\s*started)\b/i.test(lower)) {
+  if (intent.isProcedure) {
     if (isAcademic) return 'To apply, complete the online admission form on this portal and submit your required documents.';
     if (isFood) return 'You can place your order directly from our menu section or reserve a table with us online.';
     if (isHospitality) return 'Select your check-in and check-out dates in our reservation section to confirm your booking.';
@@ -855,11 +837,14 @@ Your floating voice assistant widget will appear immediately on your site, with 
     if (isAutomotive) return 'Schedule a showroom visit or test drive using our online booking form.';
     return 'You can place an order, book, or submit your inquiry directly through our website.';
   }
-  if (/\b(documents?|papers?|certificates?|return\s*policy|refund|shipping|delivery|warranty|check-?in|billing)\b/i.test(lower)) {
+  if (intent.isPolicyDocs) {
     if (isAcademic) return 'Required admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs.';
     if (isHealthcare) return 'Please keep a valid doctor prescription and patient ID ready for prescription items.';
     if (isHospitality) return 'Please carry a valid government photo ID at check-in. Full check-in and cancellation terms are listed on our booking page.';
-    return 'Full policy, shipping/warranty, and requirement details are available on our website—let me know which specific item you are asking about!';
+    return 'We offer transparent return, shipping, and warranty policies on our website—let me know which specific item you are asking about!';
+  }
+  if (bestMatch && highestScore >= 12) {
+    return bestMatch.a;
   }
 
   const inputLang = detectTextLanguage(cleanMessage);

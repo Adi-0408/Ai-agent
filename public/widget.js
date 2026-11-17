@@ -1247,8 +1247,300 @@
       return true;
     }
 
+    // --- UNIVERSAL TYPO-TOLERANT & WORD-ORDER-INDEPENDENT NLU ENGINE (ALL 10 WEBSITE ARCHETYPES) ---
+    function damerauLevenshtein(a, b) {
+      const s = String(a || '');
+      const t = String(b || '');
+      const m = s.length;
+      const n = t.length;
+      if (m === 0) return n;
+      if (n === 0) return m;
+      if (s === t) return 0;
+      if (Math.abs(m - n) > 3) return Math.abs(m - n);
+      const d = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+      for (let i = 0; i <= m; i++) d[i][0] = i;
+      for (let j = 0; j <= n; j++) d[0][j] = j;
+      for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+          const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+          let val = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+          if (i > 1 && j > 1 && s[i - 1] === t[j - 2] && s[i - 2] === t[j - 1]) {
+            val = Math.min(val, d[i - 2][j - 2] + 1);
+          }
+          d[i][j] = val;
+        }
+      }
+      return d[m][n];
+    }
+
+    function bigramSimilarity(a, b) {
+      const s = String(a || '');
+      const t = String(b || '');
+      if (s === t) return 1;
+      if (s.length < 2 || t.length < 2) return 0;
+      const map = new Map();
+      for (let i = 0; i < s.length - 1; i++) {
+        const bg = s.slice(i, i + 2);
+        map.set(bg, (map.get(bg) || 0) + 1);
+      }
+      let overlap = 0;
+      for (let i = 0; i < t.length - 1; i++) {
+        const bg = t.slice(i, i + 2);
+        const c = map.get(bg) || 0;
+        if (c > 0) { overlap++; map.set(bg, c - 1); }
+      }
+      return (2 * overlap) / (s.length - 1 + t.length - 1);
+    }
+
+    function nluStemWord(w) {
+      const s = String(w || '').toLowerCase();
+      if (s.length <= 3) return s;
+      if (s.endsWith('ies') && s.length > 4) return s.slice(0, -3) + 'y';
+      if (s.endsWith('es') && s.length > 4 && /(ch|sh|x|z|o|ss)es$/.test(s)) return s.slice(0, -2);
+      if (s.endsWith('s') && !s.endsWith('ss')) return s.slice(0, -1);
+      return s;
+    }
+
+    function fuzzyTokenMatch(inputTok, targetTok) {
+      const a = String(inputTok || '').toLowerCase().trim();
+      const b = String(targetTok || '').toLowerCase().trim();
+      if (!a || !b) return 0;
+      if (a === b) return 4;
+      const sa = nluStemWord(a);
+      const sb = nluStemWord(b);
+      if (sa === sb) return 3;
+      if (/\d/.test(a) || /\d/.test(b)) {
+        const digA = a.replace(/\D/g, '');
+        const digB = b.replace(/\D/g, '');
+        if (digA !== digB) return 0;
+        if (a.length >= 4 && b.length >= 4 && damerauLevenshtein(a, b) <= 1) return 2;
+        return 0;
+      }
+      const maxLen = Math.max(a.length, b.length);
+      const minLen = Math.min(a.length, b.length);
+      if (minLen <= 2) return 0;
+      if (minLen >= 4 && (b.startsWith(a) || a.startsWith(b)) && (maxLen - minLen) <= 4) return 3;
+      if (minLen === 3) {
+        if (maxLen <= 4 && a[0] === b[0] && damerauLevenshtein(a, b) === 1) return 2;
+        return 0;
+      }
+      const dist = Math.min(damerauLevenshtein(a, b), damerauLevenshtein(sa, sb));
+      if (maxLen <= 5) return dist <= 1 ? 2 : 0;
+      if (maxLen <= 8) {
+        if (dist <= 1) return 2;
+        if (dist === 2 && (a[0] === b[0] || bigramSimilarity(a, b) >= 0.45)) return 2;
+        return 0;
+      }
+      if (maxLen <= 10) return dist <= 2 ? 2 : 0;
+      return dist <= 3 && bigramSimilarity(a, b) >= 0.45 ? 2 : 0;
+    }
+
+    const NLU_SHORTHAND_MAP = {
+      u: 'you', ur: 'your', r: 'are', pls: 'please', plz: 'please',
+      wat: 'what', wht: 'what', whch: 'which', hw: 'how', abt: 'about',
+      bcoz: 'because', cuz: 'because', info: 'information', amt: 'amount',
+      prce: 'price', prise: 'price', fess: 'fees', feess: 'fees',
+      avail: 'available', avilable: 'available', avlbl: 'available',
+      reg: 'registration', elig: 'eligibility', elgibility: 'eligibility',
+      doc: 'documents', docs: 'documents', req: 'required', dept: 'department',
+      thx: 'thanks', ty: 'thanks', thnks: 'thanks', hv: 'have', shw: 'show',
+      nxt: 'next', prvide: 'provide', dtls: 'details', detals: 'details',
+      wanna: 'want', gonna: 'going', gimme: 'give', tellme: 'tell',
+      rx: 'prescription', cod: 'cash on delivery', qty: 'quantity',
+      med: 'medicine', meds: 'medicines', roms: 'rooms', hotl: 'hotel',
+      helo: 'hello', hlo: 'hello', namste: 'namaste', byee: 'bye', secnd: 'second'
+    };
+
+    const NLU_CONCEPT_VOCAB = [
+      'hello', 'hey', 'hi', 'morning', 'afternoon', 'evening', 'namaste', 'namaskar', 'thanks', 'thank', 'goodbye', 'bye',
+      'yes', 'sure', 'okay', 'more', 'next', 'continue', 'first', 'second', 'third', 'fourth', 'fifth', 'last',
+      'what', 'which', 'where', 'when', 'who', 'how', 'tell', 'show', 'give', 'list', 'all', 'details', 'information',
+      'overview', 'about', 'know', 'want', 'need', 'provide', 'offer', 'have', 'available', 'availability', 'stock',
+      'sell', 'serve', 'teach', 'study', 'learn', 'eat', 'drink', 'browse', 'explore', 'options', 'catalog', 'catalogue', 'inventory',
+      'price', 'prices', 'pricing', 'fee', 'fees', 'cost', 'costs', 'rate', 'rates', 'charge', 'charges', 'structure',
+      'tuition', 'pay', 'payment', 'money', 'budget', 'rent', 'tariff', 'mrp', 'amount', 'discount', 'expensive', 'cheap', 'much',
+      'course', 'courses', 'program', 'programs', 'stream', 'streams', 'class', 'classes', 'subject', 'subjects', 'degree', 'diploma', 'syllabus', 'curriculum', 'college', 'school', 'academy',
+      'product', 'products', 'item', 'items', 'shoes', 'sneakers', 'laptop', 'phone', 'watch', 'clothing',
+      'medicine', 'medicines', 'drug', 'drugs', 'tablet', 'tablets', 'capsule', 'syrup', 'pharmacy', 'clinic', 'hospital', 'doctor',
+      'dish', 'dishes', 'food', 'meal', 'meals', 'menu', 'restaurant', 'pizza', 'burger', 'biryani', 'paneer',
+      'plan', 'plans', 'tier', 'tiers', 'subscription', 'software', 'trial', 'billing', 'invoice', 'feature', 'features',
+      'room', 'rooms', 'suite', 'suites', 'stay', 'hotel', 'resort', 'checkin', 'checkout', 'amenities',
+      'vehicle', 'vehicles', 'car', 'cars', 'bike', 'bikes', 'model', 'models', 'showroom', 'drive', 'test', 'servicing',
+      'property', 'properties', 'flat', 'flats', 'apartment', 'apartments', 'plot', 'plots', 'visit', 'site', 'floor',
+      'service', 'services', 'loan', 'loans', 'tax', 'gst', 'audit', 'consultation', 'account', 'policy', 'policies', 'package', 'packages',
+      'admission', 'admissions', 'apply', 'application', 'join', 'enroll', 'enrollment', 'register', 'registration',
+      'order', 'buy', 'purchase', 'book', 'booking', 'reserve', 'reservation', 'reservations', 'schedule', 'process', 'procedure', 'steps', 'form', 'started',
+      'eligibility', 'eligible', 'criteria', 'qualify', 'qualification', 'requirement', 'requirements', 'marks', 'percentage', 'score', 'cutoff', 'prerequisite', 'pass', 'allowed',
+      'document', 'documents', 'paper', 'papers', 'certificate', 'marksheet', 'leaving', 'bring', 'submit', 'required', 'needed',
+      'prescription', 'dosage', 'note', 'return', 'returns', 'refund', 'exchange', 'replace', 'back', 'send', 'warranty', 'guarantee',
+      'shipping', 'delivery', 'deliver', 'arrive', 'cancel', 'cancellation', 'scholarship', 'emi', 'installment', 'parking', 'wifi', 'dietary', 'vegetarian', 'vegan',
+      'address', 'location', 'located', 'map', 'directions', 'phone', 'call', 'number', 'mobile', 'contact', 'email', 'hours', 'timing', 'timings', 'open', 'close',
+      'science', 'commerce', 'arts', 'engineering', 'medical', 'foundation', 'integrated', 'standard'
+    ];
+
+    const NLU_CONCEPT_GROUPS = {
+      catalog: new Set([
+        'course', 'program', 'programme', 'stream', 'class', 'subject', 'degree', 'diploma', 'teach', 'study', 'learn',
+        'product', 'item', 'good', 'shoe', 'sneaker', 'laptop', 'phone', 'watch', 'clothing', 'sell', 'shop', 'catalog', 'catalogue', 'inventory',
+        'medicine', 'med', 'drug', 'tablet', 'capsule', 'syrup', 'pharmacy',
+        'dish', 'food', 'meal', 'menu', 'eat', 'drink', 'serve', 'pizza', 'burger',
+        'plan', 'tier', 'subscription', 'software', 'feature',
+        'room', 'suite', 'stay', 'villa',
+        'vehicle', 'car', 'bike', 'model',
+        'property', 'flat', 'apartment', 'plot', 'listing',
+        'service', 'offering', 'option', 'package', 'loan', 'treatment', 'test'
+      ]),
+      explore: new Set([
+        'what', 'which', 'list', 'all', 'show', 'give', 'tell', 'know', 'detail', 'info', 'information', 'overview',
+        'available', 'availability', 'provide', 'offer', 'have', 'sell', 'serve', 'teach', 'run', 'see', 'view', 'browse', 'explore', 'study', 'eat'
+      ]),
+      money: new Set([
+        'price', 'pricing', 'fee', 'cost', 'rate', 'charge', 'pay', 'payment', 'money', 'budget', 'tuition',
+        'rent', 'tariff', 'mrp', 'amount', 'expensive', 'cheap', 'structure', 'much', 'discount'
+      ]),
+      procedure: new Set([
+        'apply', 'application', 'join', 'enroll', 'enrollment', 'admission', 'register', 'registration', 'signup',
+        'order', 'buy', 'purchase', 'checkout', 'book', 'booking', 'reserve', 'reservation', 'schedule', 'visit',
+        'start', 'started', 'process', 'procedure', 'step', 'form', 'drive'
+      ]),
+      eligibility: new Set([
+        'eligibility', 'eligible', 'criteria', 'qualify', 'qualification', 'requirement', 'mark', 'percentage',
+        'score', 'cutoff', 'prerequisite', 'allowed', 'pass', 'passing'
+      ]),
+      policyDocs: new Set([
+        'document', 'paper', 'certificate', 'marksheet', 'leaving', 'lc', 'bring', 'submit',
+        'prescription', 'doctor', 'note', 'dosage',
+        'return', 'refund', 'exchange', 'replace', 'back', 'send',
+        'warranty', 'guarantee', 'shipping', 'delivery', 'deliver', 'arrive',
+        'checkin', 'checkout', 'cancel', 'cancellation', 'billing', 'invoice', 'emi', 'installment',
+        'scholarship', 'parking', 'wifi', 'dietary', 'vegetarian', 'vegan', 'amenitie', 'amenity'
+      ]),
+      contact: new Set([
+        'address', 'location', 'located', 'where', 'map', 'direction', 'phone', 'call', 'number', 'mobile', 'contact', 'email', 'mail', 'hour', 'timing', 'open', 'close'
+      ])
+    };
+
+    const NLU_GRAMMAR_STOPWORDS = new Set([
+      'the', 'a', 'an', 'and', 'or', 'for', 'of', 'in', 'on', 'at', 'to', 'from', 'with', 'by', 'is', 'are', 'was', 'were',
+      'be', 'been', 'do', 'does', 'did', 'can', 'could', 'will', 'would', 'should', 'am', 'i', 'me', 'my', 'we', 'us', 'our',
+      'you', 'your', 'they', 'them', 'it', 'its', 'this', 'that', 'these', 'those', 'here', 'there', 'if', 'doesnt', 'dont',
+      'please', 'just', 'some', 'any', 'also', 'very', 'really', 'so', 'too', 'about', 'into', 'like'
+    ]);
+
+    function normalizeUserQuery(rawText, catalogItems = null, kbList = null) {
+      const str = String(rawText || '').trim();
+      if (!str) return '';
+      if (/[\u0900-\u097F]/.test(str)) return str; // Preserve Marathi/Hindi Devanagari intact
+
+      const vocabSet = new Set(NLU_CONCEPT_VOCAB);
+      const addWords = (txt) => {
+        const toks = String(txt || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/);
+        for (const t of toks) {
+          if (t.length >= 3 && !/^\d+$/.test(t)) vocabSet.add(t);
+        }
+      };
+      const items = Array.isArray(catalogItems) ? catalogItems : (typeof getAllCatalogItems === 'function' && typeof agentConfig !== 'undefined' ? getAllCatalogItems(agentConfig) : []);
+      for (const it of items.slice(0, 120)) {
+        addWords(it?.name || it?.title || it?.product || '');
+        addWords(it?.category || '');
+        addWords(it?.dosage || it?.description || '');
+      }
+      const kbs = Array.isArray(kbList) ? kbList : (typeof agentConfig !== 'undefined' && Array.isArray(agentConfig.knowledgeBase) ? agentConfig.knowledgeBase : []);
+      for (const k of kbs.slice(0, 60)) {
+        addWords(k?.q || '');
+      }
+      const vocabList = Array.from(vocabSet);
+
+      const tokens = str
+        .toLowerCase()
+        .replace(/['’]/g, '')
+        .replace(/[^a-z0-9\s-]/g, ' ')
+        .replace(/-/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+
+      const out = tokens.map(rawTok => {
+        const tok = rawTok.replace(/(.)\1{2,}/g, '$1$1');
+        if (NLU_SHORTHAND_MAP[tok]) return NLU_SHORTHAND_MAP[tok];
+        const collapsed = rawTok.replace(/(.)\1+/g, '$1');
+        if (NLU_SHORTHAND_MAP[collapsed]) return NLU_SHORTHAND_MAP[collapsed];
+        if (vocabSet.has(tok) || NLU_GRAMMAR_STOPWORDS.has(tok) || /\d/.test(tok) || tok.length <= 2) return tok;
+        if (vocabSet.has(collapsed)) return collapsed;
+
+        let bestWord = tok;
+        let bestDist = 99;
+        let bestSim = 0;
+        for (const cand of vocabList) {
+          if (Math.abs(cand.length - tok.length) > 2) continue;
+          if (fuzzyTokenMatch(tok, cand) >= 2) {
+            const d = damerauLevenshtein(tok, cand);
+            const sim = bigramSimilarity(tok, cand) + (tok[0] === cand[0] ? 0.15 : 0);
+            if (d < bestDist || (d === bestDist && sim > bestSim)) {
+              bestDist = d;
+              bestSim = sim;
+              bestWord = cand;
+            }
+          }
+        }
+        return bestWord;
+      });
+      return out.join(' ').replace(/\s+/g, ' ').trim();
+    }
+
+    function classifyIntentConcepts(normalizedText) {
+      const lower = String(normalizedText || '').toLowerCase().trim();
+      const rawTokens = lower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+      const stems = rawTokens.map(nluStemWord);
+      const stemSet = new Set(stems);
+      const countHits = (g) => {
+        let c = 0;
+        for (const s of stemSet) if (g.has(s)) c++;
+        return c;
+      };
+
+      const hasPronounRef = /\b(in that|in this|in it|for that|for this|for it|of that|of this|about that|about this|about it)\b/i.test(lower);
+      const catalogHits = countHits(NLU_CONCEPT_GROUPS.catalog);
+      const exploreHits = countHits(NLU_CONCEPT_GROUPS.explore);
+      const moneyHits = countHits(NLU_CONCEPT_GROUPS.money);
+      const procedureHits = countHits(NLU_CONCEPT_GROUPS.procedure);
+      const eligibilityHits = countHits(NLU_CONCEPT_GROUPS.eligibility);
+      const policyDocsHits = countHits(NLU_CONCEPT_GROUPS.policyDocs);
+      const contactHits = countHits(NLU_CONCEPT_GROUPS.contact);
+
+      const isWhoCanJoin = stemSet.has('who') && (stemSet.has('apply') || stemSet.has('join') || stemSet.has('enroll') || stemSet.has('eligible') || stemSet.has('admission'));
+      const isBringNeed = (stemSet.has('bring') || stemSet.has('paper') || stemSet.has('submit')) && (stemSet.has('need') || stemSet.has('required') || stemSet.has('what') || stemSet.has('which'));
+      const isSendBack = stemSet.has('back') && (stemSet.has('send') || stemSet.has('give') || stemSet.has('take') || stemSet.has('money'));
+      const isHowLongShip = (stemSet.has('long') || stemSet.has('day') || stemSet.has('time')) && (stemSet.has('shipping') || stemSet.has('delivery') || stemSet.has('deliver') || stemSet.has('arrive') || stemSet.has('warranty'));
+
+      const isAllConceptWord = (st) => (
+        NLU_CONCEPT_GROUPS.catalog.has(st) ||
+        NLU_CONCEPT_GROUPS.explore.has(st) ||
+        NLU_CONCEPT_GROUPS.money.has(st) ||
+        NLU_CONCEPT_GROUPS.procedure.has(st) ||
+        NLU_CONCEPT_GROUPS.eligibility.has(st) ||
+        NLU_CONCEPT_GROUPS.policyDocs.has(st) ||
+        NLU_CONCEPT_GROUPS.contact.has(st) ||
+        ['want', 'need', 'can', 'could', 'would', 'will', 'please', 'kind', 'type', 'sort', 'store', 'shop', 'college', 'school', 'academy', 'clinic', 'hospital', 'restaurant', 'hotel', 'resort', 'showroom', 'portal', 'website', 'site', 'page', 'today', 'right', 'now', 'currently'].includes(st)
+      );
+      const unknownSpecificTokens = stems.filter(st => st.length >= 4 && !NLU_GRAMMAR_STOPWORDS.has(st) && !isAllConceptWord(st));
+
+      const isEligibility = eligibilityHits > 0 || isWhoCanJoin;
+      const isPolicyDocs = policyDocsHits > 0 || isBringNeed || isSendBack || isHowLongShip;
+      const isPriceOverview = !hasPronounRef && moneyHits > 0 && !isEligibility && !isPolicyDocs && unknownSpecificTokens.length === 0;
+      const isProcedure = procedureHits > 0 && !isEligibility && !isPolicyDocs && !isPriceOverview;
+      const isCatalogList = !hasPronounRef && !isEligibility && !isPolicyDocs && !isPriceOverview && !isProcedure && unknownSpecificTokens.length === 0 && (
+        (catalogHits > 0 && (exploreHits > 0 || rawTokens.length <= 3)) ||
+        (stemSet.has('menu') || stemSet.has('catalog') || stemSet.has('catalogue') || stemSet.has('inventory')) ||
+        (exploreHits >= 2 && (stemSet.has('provide') || stemSet.has('offer') || stemSet.has('sell') || stemSet.has('serve') || stemSet.has('teach') || stemSet.has('available')))
+      );
+      const isContact = contactHits > 0 && !isCatalogList && !isPriceOverview && !isEligibility && !isPolicyDocs;
+
+      return { isCatalogList, isPriceOverview, isProcedure, isEligibility, isPolicyDocs, isContact, hasPronounRef, stems };
+    }
+
     function isCatalogListQuery(text) {
-      const lower = String(text || '')
+      const normalized = (typeof normalizeUserQuery === 'function') ? normalizeUserQuery(text) : String(text || '');
+      const lower = String(normalized || text || '')
         .toLowerCase()
         .replace(/^(hi+|hello+|hey+|howdy|namaste|namaskar)[,!.\s]+/i, '')
         .trim();
@@ -1271,17 +1563,26 @@
       const rxNounDetails = new RegExp(`^(?:(?:give\\s+me|show\\s+me|tell\\s+me|get|need|want|see)\\s+)?(?:the\\s+|your\\s+|all\\s+)?${nouns}\\s+(?:details|info|information|overview|options|list|catalog|catalogue)\\s*[?.!]*$`, 'i');
       const rxAllList = new RegExp(`\\b(all\\s+${nouns}\\s+list|${nouns}\\s+list)\\b`, 'i');
 
-      return rxList.test(lower) ||
-             rxWhatWhichVerb.test(lower) ||
-             rxWhatWhichBare.test(lower) ||
-             rxWhatAre.test(lower) ||
-             rxWhatDoYou.test(lower) ||
-             rxKnowAbout.test(lower) ||
-             rxNounDetails.test(lower) ||
-             rxAllList.test(lower) ||
-             /\b(what is available|show inventory|inventory table|list inventory)\b/i.test(lower) ||
-             /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू|सर्व सेवा|मेन्यू|कोणते कोर्स|कोणते अभ्यासक्रम|अभ्यासक्रमांची माहिती|कोर्सची यादी|कोर्सेस बद्दल)/i.test(text) ||
-             /(सभी दवा|दवाइयों की लिस्ट|सारे प्रोडक्ट्स|कैटलॉग|क्या क्या उपलब्ध|लिस्ट दो|सूची दो|सारे आइटम|मेन्यू दिखाओ|कौन से कोर्स|कोर्स की जानकारी|कोर्स की लिस्ट|सभी कोर्स)/i.test(text);
+      if (rxList.test(lower) ||
+          rxWhatWhichVerb.test(lower) ||
+          rxWhatWhichBare.test(lower) ||
+          rxWhatAre.test(lower) ||
+          rxWhatDoYou.test(lower) ||
+          rxKnowAbout.test(lower) ||
+          rxNounDetails.test(lower) ||
+          rxAllList.test(lower) ||
+          /\b(what is available|show inventory|inventory table|list inventory)\b/i.test(lower) ||
+          /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू|सर्व सेवा|मेन्यू|कोणते कोर्स|कोणते अभ्यासक्रम|अभ्यासक्रमांची माहिती|कोर्सची यादी|कोर्सेस बद्दल)/i.test(text) ||
+          /(सभी दवा|दवाइयों की लिस्ट|सारे प्रोडक्ट्स|कैटलॉग|क्या क्या उपलब्ध|लिस्ट दो|सूची दो|सारे आइटम|मेन्यू दिखाओ|कौन से कोर्स|कोर्स की जानकारी|कोर्स की लिस्ट|सभी कोर्स)/i.test(text)) {
+        return true;
+      }
+
+      // Word-order-independent & paraphrase Bag-of-Concepts fallback ("courses provide which", "what do you teach here?", "what can i eat?")
+      if (typeof classifyIntentConcepts === 'function') {
+        const concepts = classifyIntentConcepts(lower);
+        if (concepts.isCatalogList) return true;
+      }
+      return false;
     }
 
     function isSectionNavigationQuery(text) {
@@ -1311,32 +1612,48 @@
       return false;
     }
 
-    // Detects general pricing / fee structure / rate overview queries (without naming one specific item)
+    // Detects general pricing / fee structure / rate overview queries (typo-tolerant & order-independent!)
     function isGeneralPriceOrOverviewQuery(text) {
-      const lower = String(text || '')
+      const normalized = (typeof normalizeUserQuery === 'function') ? normalizeUserQuery(text) : String(text || '');
+      const lower = String(normalized || text || '')
         .toLowerCase()
         .replace(/^(hi+|hello+|hey+|howdy|namaste|namaskar)[,!.\s]+/i, '')
         .trim();
       if (!lower) return false;
       if (/\b(in that|for that|of that|for this|of this|for it|of it)\b/i.test(lower)) return false;
 
-      return /^(?:what\s+(?:is|are)\s+(?:the|your)\s+|give\s+me\s+(?:the\s+)?|show\s+(?:me\s+)?(?:the\s+)?|tell\s+me\s+(?:about\s+)?(?:the\s+)?)?(?:fee\s*structure|fees?\s*(?:details?|list|chart|overview|info)?|pricing(?:\s*(?:details?|plans?|tiers?|options?|list))?|prices?(?:\s*list)?|rates?(?:\s*list)?|charges?|costs?|tuition\s*fees?|room\s*rates?|menu\s*prices?|plan\s*prices?|subscription\s*(?:cost|price|rates?|fees?))\s*[?.!]*$/i.test(lower) ||
-             /\b(fee\s*structure|price\s*list|rate\s*card|pricing\s*tiers?|pricing\s*plans?|all\s*prices|all\s*fees|how\s+much\s+do\s+(?:your|the)\s+(?:courses|products|plans|rooms|dishes|services)\s+cost)\b/i.test(lower) ||
-             /(फी स्ट्रक्चर|शुल्क रचना|किंमती|सर्व किंमती|दरपत्रक|फीस कितनी है|फीस स्ट्रक्चर|सभी कीमतें)/i.test(text);
+      if (/^(?:what\s+(?:is|are)\s+(?:the|your)\s+|give\s+me\s+(?:the\s+)?|show\s+(?:me\s+)?(?:the\s+)?|tell\s+me\s+(?:about\s+)?(?:the\s+)?)?(?:fee\s*structure|fees?\s*(?:details?|list|chart|overview|info)?|pricing(?:\s*(?:details?|plans?|tiers?|options?|list))?|prices?(?:\s*list)?|rates?(?:\s*list)?|charges?|costs?|tuition\s*fees?|room\s*rates?|menu\s*prices?|plan\s*prices?|subscription\s*(?:cost|price|rates?|fees?))\s*[?.!]*$/i.test(lower) ||
+          /\b(fee\s*structure|price\s*list|rate\s*card|pricing\s*tiers?|pricing\s*plans?|all\s*prices|all\s*fees|how\s+much\s+do\s+(?:your|the)\s+(?:courses|products|plans|rooms|dishes|services)\s+cost)\b/i.test(lower) ||
+          /(फी स्ट्रक्चर|शुल्क रचना|किंमती|सर्व किंमती|दरपत्रक|फीस कितनी है|फीस स्ट्रक्चर|सभी कीमतें)/i.test(text)) {
+        return true;
+      }
+      if (typeof classifyIntentConcepts === 'function') {
+        return classifyIntentConcepts(lower).isPriceOverview;
+      }
+      return false;
     }
 
     // Detects general policy / process / requirement questions so they NEVER falsely trigger ITEM_NOT_FOUND
     function isPolicyOrProcessQuery(text) {
-      const lower = String(text || '').toLowerCase().trim();
-      return /\b(eligibility|criteria|requirements?|qualification|admission\s*(?:process|procedure|steps?|criteria|rules?)|how\s+to\s+(?:apply|order|buy|book|enroll|register|subscribe|cancel|return)|documents?\s*(?:required|needed|list)?|return\s*policy|refund\s*policy|shipping|delivery\s*(?:time|charges?|policy|available)|warranty|guarantee|scholarship|emi|installment|payment\s*(?:options?|methods?)|cash\s*on\s*delivery|cod|free\s*trial|billing|cancellation|check-?in|check-?out|amenities|parking|wifi|table\s*reservations?|reservations?|dietary|vegetarian|vegan|allergen|test\s*drives?|financing|servicing|prescription\s*(?:required|needed|policy)|dosage|side\s*effects|site\s*visits?|floor\s*plans?|consultation|hours|timings|location|address|contact|phone|email)\b/i.test(lower) ||
-             /(पात्रता|प्रवेश प्रक्रिया|कागदपत्रे|अर्ज कसा करावा|रिटर्न पॉलिसी|डिलिव्हरी|वॉरंटी|पात्रता मानदंड|एडमिशन प्रक्रिया|दस्तावेज|कैसे आवेदन|कैसे ऑर्डर|डिलीवरी|वारंटी)/i.test(text);
+      const normalized = (typeof normalizeUserQuery === 'function') ? normalizeUserQuery(text) : String(text || '');
+      const lower = String(normalized || text || '').toLowerCase().trim();
+      if (/\b(eligibility|criteria|requirements?|qualification|admission\s*(?:process|procedure|steps?|criteria|rules?)|how\s+to\s+(?:apply|order|buy|book|enroll|register|subscribe|cancel|return)|documents?\s*(?:required|needed|list)?|return\s*policy|refund\s*policy|shipping|delivery\s*(?:time|charges?|policy|available)|warranty|guarantee|scholarship|emi|installment|payment\s*(?:options?|methods?)|cash\s*on\s*delivery|cod|free\s*trial|billing|cancellation|check-?in|check-?out|amenities|parking|wifi|table\s*reservations?|reservations?|dietary|vegetarian|vegan|allergen|test\s*drives?|financing|servicing|prescription\s*(?:required|needed|policy)|dosage|side\s*effects|site\s*visits?|floor\s*plans?|consultation|hours|timings|location|address|contact|phone|email)\b/i.test(lower) ||
+          /(पात्रता|प्रवेश प्रक्रिया|कागदपत्रे|अर्ज कसा करावा|रिटर्न पॉलिसी|डिलिव्हरी|वॉरंटी|पात्रता मानदंड|एडमिशन प्रक्रिया|दस्तावेज|कैसे आवेदन|कैसे ऑर्डर|डिलीवरी|वारंटी)/i.test(text)) {
+        return true;
+      }
+      if (typeof classifyIntentConcepts === 'function') {
+        const c = classifyIntentConcepts(lower);
+        return c.isEligibility || c.isPolicyDocs || c.isProcedure || c.isContact;
+      }
+      return false;
     }
 
-    // Detects ordinal references ("the first one", "2nd one", "second", "last one", "number 3") against previously displayed catalog items
+    // Detects ordinal references ("the first one", "2nd one", "secnd", "last one", "number 3") against previously displayed catalog items
     function resolveOrdinalFromList(text, itemsList) {
       if (!Array.isArray(itemsList) || itemsList.length === 0) return null;
-      const lower = String(text || '').toLowerCase().trim();
-      if (/\b(first|1st|number\s*1|#1|one)\b/i.test(lower) && /\b(first|1st|number\s*1|#1|first\s*one)\b/i.test(lower)) return itemsList[0] || null;
+      const normalized = (typeof normalizeUserQuery === 'function') ? normalizeUserQuery(text) : String(text || '');
+      const lower = String(normalized || text || '').toLowerCase().trim();
+      if (/\b(first|1st|number\s*1|#1|first\s*one)\b/i.test(lower)) return itemsList[0] || null;
       if (/\b(second|2nd|number\s*2|#2)\b/i.test(lower)) return itemsList[1] || null;
       if (/\b(third|3rd|number\s*3|#3)\b/i.test(lower)) return itemsList[2] || null;
       if (/\b(fourth|4th|number\s*4|#4)\b/i.test(lower)) return itemsList[3] || null;
@@ -1345,9 +1662,10 @@
       return null;
     }
 
-    // Detects short conversational affirmations / pagination / continuation prompts ("yes", "sure", "ok", "tell me more", "show more", "next")
+    // Detects short conversational affirmations / pagination / continuation prompts ("yes", "yess", "sure", "ok", "tell me more", "show more", "next")
     function isAffirmationOrMoreQuery(text) {
-      const t = String(text || '').toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
+      const normalized = (typeof normalizeUserQuery === 'function') ? normalizeUserQuery(text) : String(text || '');
+      const t = String(normalized || text || '').toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
       if (!t) return false;
       return /^(yes|yeah|yep|yup|sure|ok|okay|alright|go\s*ahead|please|yes\s*please|tell\s*me\s*more|more|more\s*details|show\s*more|see\s*more|next|continue|explain|explain\s*more|elaborate|details\s*please|haan|han|ji|ho|हो|होय|हाँ|जी|आणखी\s*सांगा|और\s*बताएं|और\s*दिखाएं)$/i.test(t);
     }
@@ -1963,27 +2281,28 @@
     function stripLeadingGreeting(text) {
       return String(text || '')
         .trim()
-        .replace(/^(hi+|hello+|hey+|hii+|helo+|howdy|greetings|yo|sup|hola|good\s*(?:morning|afternoon|evening|day)|namaste|namaskar|pranam|नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|हेलो)(?:\s+(?:there|everyone|sir|ma'?am|mam|bot|assistant|team))?[,!.\s]+/i, '')
+        .replace(/^(hi+|hello+|hey+|hii+|helo+|hlo|howdy|greetings|yo|sup|hola|good\s*(?:morning|afternoon|evening|day)|namaste|namste|namaskar|pranam|नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|हेलो)(?:\s+(?:there|everyone|sir|ma'?am|mam|bot|assistant|team))?[,!.\s]+/i, '')
         .trim();
     }
 
     // Conversational & Greeting Filter: ONLY returns true for STANDALONE greetings / small-talk / thanks / farewells!
-    // Never swallows messages that begin with "hey" / "hi" / "hello" followed by an actual customer question!
+    // Typo-tolerant ("helo", "thnks", "byee", "namste") while NEVER swallowing greeting-prefixed questions!
     function isGreetingOrConversational(text) {
       const raw = String(text || '').trim();
       if (!raw) return false;
-      const t = raw.toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
+      const norm = (typeof normalizeUserQuery === 'function' && !/[\u0900-\u097F]/.test(raw)) ? normalizeUserQuery(raw) : raw;
+      const t = norm.toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
       if (!t) return false;
 
       // Exact standalone English greetings / small talk / thanks / farewells
-      if (/^(hi+|hello+|hey+|hii+|helo+|howdy|greetings|yo|sup|hola|good\s*(morning|afternoon|evening|day|night))(\s+(there|everyone|all|team|sir|ma'?am|mam|bot|assistant|agent|friend|guys))?$/i.test(t)) {
+      if (/^(hi+|hello+|hey+|hii+|helo+|hlo|howdy|greetings|yo|sup|hola|good\s*(morning|afternoon|evening|day|night))(\s+(there|everyone|all|team|sir|ma'?am|mam|bot|assistant|agent|friend|guys))?$/i.test(t)) {
         return true;
       }
-      if (/^(how\s+are\s+you|how\s+is\s+it\s+going|whats?\s*up|how\s+do\s+you\s+do|thank\s*you|thanks|thx|ty|many\s+thanks|thanks\s+a\s+lot|ok\s+thanks|bye+|goodbye|see\s+you|take\s+care|ok\s*bye)$/i.test(t)) {
+      if (/^(how\s+are\s+you|how\s+is\s+it\s+going|whats?\s*up|how\s+do\s+you\s+do|thank\s*you|thanks|thx|ty|thnks|many\s+thanks|thanks\s+a\s+lot|ok\s+thanks|bye+|goodbye|see\s+you|take\s+care|ok\s*bye)$/i.test(t)) {
         return true;
       }
       // Exact standalone Hinglish / Marathish greetings / thanks / farewells
-      if (/^(namaste|namaskar|pranam|ram\s*ram|kasa\s*ahes|kase\s*ahat|kaise\s*ho|kya\s*haal(\s*hai)?|dhanyavad|dhanyavaad|aabhar|shukriya|alvida)(\s+(sir|ji|mam|bot))?$/i.test(t)) {
+      if (/^(namaste|namste|namaskar|pranam|ram\s*ram|kasa\s*ahes|kase\s*ahat|kaise\s*ho|kya\s*haal(\s*hai)?|dhanyavad|dhanyavaad|aabhar|shukriya|alvida)(\s+(sir|ji|mam|bot))?$/i.test(t)) {
         return true;
       }
       // Exact standalone Devanagari greetings / thanks / farewells
@@ -1996,8 +2315,9 @@
     }
 
     function extractTargetItem(text, history = [], context = null, catalogItems = null) {
-      const strippedInput = isGreetingOrConversational(text) ? '' : (stripLeadingGreeting(text) || String(text || '').trim());
-      if (!strippedInput) return '';
+      const strippedRaw = isGreetingOrConversational(text) ? '' : (stripLeadingGreeting(text) || String(text || '').trim());
+      if (!strippedRaw) return '';
+      const strippedInput = (typeof normalizeUserQuery === 'function') ? (normalizeUserQuery(strippedRaw, catalogItems) || strippedRaw) : strippedRaw;
 
       let cleaned = strippedInput
         .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|i want to know about|i want know about|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number|forget that|instead of that|instead of it|what about|how about)\b/gi, ' ')
@@ -2092,7 +2412,14 @@
 
     function matchInInventory(inventorySource, rawTarget) {
       if (!inventorySource) return null;
-      const target = String(rawTarget || '').toLowerCase().trim();
+      const itemsList = Array.isArray(inventorySource)
+        ? inventorySource
+        : Object.entries(inventorySource).map(([k, v]) => (typeof v === 'object' && v !== null ? { name: v.name || k, ...v } : { name: k, stock: v }));
+
+      const normTarget = (typeof normalizeUserQuery === 'function')
+        ? (normalizeUserQuery(rawTarget, itemsList) || String(rawTarget || ''))
+        : String(rawTarget || '');
+      const target = normTarget.toLowerCase().trim();
       if (!target || isGreetingOrConversational(target)) return null;
 
       const cleanTarget = target.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -2100,82 +2427,113 @@
       const allTokens = cleanTarget.split(' ').filter(w => w.length >= 2);
 
       // Filter out universal stopwords and unit/packaging stopwords
-      const distinctiveTokens = allTokens.filter(tok => !UNIVERSAL_STOPWORDS.has(tok));
+      const distinctiveTokens = allTokens.filter(tok => !UNIVERSAL_STOPWORDS.has(tok) && (typeof NLU_GRAMMAR_STOPWORDS === 'undefined' || !NLU_GRAMMAR_STOPWORDS.has(tok)));
       const searchTokens = distinctiveTokens.length > 0 ? distinctiveTokens : allTokens;
 
-      // Specific entity tokens: tokens that are NOT generic nouns (e.g. "augmentin", "dolo", "margherita", "iphone")
-      const specificTokens = searchTokens.filter(tok => !GENERIC_PRODUCT_NOUNS.has(tok));
+      // Specific entity tokens: tokens that are NOT generic nouns or pure intent verbs
+      const specificTokens = searchTokens.filter(tok => {
+        if (GENERIC_PRODUCT_NOUNS.has(tok)) return false;
+        const st = typeof nluStemWord === 'function' ? nluStemWord(tok) : tok;
+        if (typeof NLU_CONCEPT_GROUPS !== 'undefined') {
+          if (NLU_CONCEPT_GROUPS.explore.has(st) || NLU_CONCEPT_GROUPS.money.has(st) || NLU_CONCEPT_GROUPS.procedure.has(st) || NLU_CONCEPT_GROUPS.eligibility.has(st) || NLU_CONCEPT_GROUPS.policyDocs.has(st) || NLU_CONCEPT_GROUPS.contact.has(st)) {
+            return false;
+          }
+          // Also exclude pure plural/singular category nouns ("courses", "programs", "plans", "rooms", "products", "dishes", "vehicles", "properties", "services")
+          if (['course', 'program', 'programme', 'stream', 'class', 'subject', 'degree', 'diploma', 'product', 'item', 'shoe', 'sneaker', 'medicine', 'med', 'drug', 'dish', 'food', 'meal', 'menu', 'plan', 'tier', 'subscription', 'room', 'suite', 'stay', 'vehicle', 'car', 'bike', 'model', 'property', 'flat', 'apartment', 'service', 'offering', 'option', 'catalog', 'catalogue', 'inventory'].includes(st)) {
+            return false;
+          }
+        }
+        return true;
+      });
 
-      const itemsList = Array.isArray(inventorySource)
-        ? inventorySource
-        : Object.entries(inventorySource).map(([k, v]) => (typeof v === 'object' && v !== null ? { name: v.name || k, ...v } : { name: k, stock: v }));
+      // If the query ONLY has generic category/intent words (e.g. "courses details give me", "plan pricing"), DO NOT match a single item!
+      if (specificTokens.length === 0) {
+        return null;
+      }
 
       // Phase 1: Exact normalized match or safe word-boundary match
       for (const item of itemsList) {
         const name = String(item.name || item.product || item.title || '').toLowerCase().trim();
         const cleanName = name.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
-        // Exact match
         if (name === target || cleanName === cleanTarget) {
           return item;
         }
-
-        // For short target tokens (< 4 chars, e.g. "hi", "it", "on", "in"), strictly require word-boundary regex!
         if (cleanTarget.length < 4) {
           const wordRegex = new RegExp('\\b' + cleanTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
           if (wordRegex.test(cleanName)) {
             return item;
           }
-          continue; // NEVER use .includes() for short tokens!
+          continue;
         }
-
-        // For longer tokens (>= 4 chars), require cleanTarget to be at least 4 chars before substring check
         if (cleanName.includes(cleanTarget) && cleanTarget.length >= 4) {
           return item;
         }
       }
 
-      // Phase 2: Distinctive Token Overlap Match with Entity Verification
+      // Phase 2: Order-Independent, Typo-Tolerant Fuzzy Token Overlap with Strict Entity Verification
       let best = null;
       let maxScore = 0;
 
       for (const item of itemsList) {
         const name = String(item.name || item.product || item.title || '').toLowerCase().trim();
         const cleanName = name.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-        const details = String(item.description || item.dosage || item.composition || item.category || '').toLowerCase().trim();
-        const combined = `${cleanName} ${details}`.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-        const itemTokens = new Set(combined.split(' '));
+        const details = String(item.description || item.dosage || item.composition || item.category || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        const nameTokens = cleanName.split(' ').filter(w => w.length >= 2);
+        const detailTokens = details.split(' ').filter(w => w.length >= 2);
 
-        // If query has specific entity tokens, at least ONE must match in the item name or details
-        // Prevents "Augmentin" from matching "Dolo 650", and "Pepperoni" from matching "Margherita"
-        if (specificTokens.length > 0) {
-          const hasSpecificMatch = specificTokens.some(tok => cleanName.includes(tok) || itemTokens.has(tok));
-          if (!hasSpecificMatch) {
-            continue; // REJECT: Only generic noun matched, specific entity did not match!
+        let specificNameMatches = 0;
+        let specificDetailMatches = 0;
+        let strongDetailMatch = false;
+        let score = 0;
+
+        for (const qTok of specificTokens) {
+          let bestNameQ = 0;
+          for (const nTok of nameTokens) {
+            const q = (typeof fuzzyTokenMatch === 'function')
+              ? fuzzyTokenMatch(qTok, nTok)
+              : (nTok === qTok ? 4 : (nTok.includes(qTok) && qTok.length >= 4 ? 3 : 0));
+            if (q > bestNameQ) bestNameQ = q;
+          }
+          if (bestNameQ > 0) {
+            specificNameMatches++;
+            score += bestNameQ * 3;
+          } else {
+            let bestDetQ = 0;
+            for (const dTok of detailTokens) {
+              const q = (typeof fuzzyTokenMatch === 'function')
+                ? fuzzyTokenMatch(qTok, dTok)
+                : (dTok === qTok ? 4 : (dTok.includes(qTok) && qTok.length >= 4 ? 3 : 0));
+              if (q > bestDetQ) bestDetQ = q;
+            }
+            if (bestDetQ > 0) {
+              specificDetailMatches++;
+              if ((bestDetQ >= 3 && qTok.length >= 5) || (bestDetQ >= 2 && qTok.length >= 6)) strongDetailMatch = true;
+              score += bestDetQ * 2;
+            }
           }
         }
 
-        let matchCount = 0;
-        let nameMatchCount = 0;
+        // Entity Guard: Prevent "Augmentin" from matching "Dolo 650", and "Pepperoni" from matching "Margherita"
+        if (specificNameMatches === 0 && specificDetailMatches < 2 && !strongDetailMatch) {
+          continue;
+        }
 
+        // Bonus for secondary context tokens also matching the item name (e.g. "pro plan")
         for (const tok of searchTokens) {
-          if (cleanName.includes(tok)) {
-            nameMatchCount += 2; // Extra weight for matching the actual name
-            matchCount++;
-          } else if (itemTokens.has(tok) || combined.includes(tok)) {
-            matchCount++;
+          if (specificTokens.includes(tok)) continue;
+          if (nameTokens.some(nTok => (typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(tok, nTok) >= 3 : nTok === tok))) {
+            score += 2;
           }
         }
 
-        const score = nameMatchCount + matchCount;
-        // Require at least one distinctive token to match in the item name
-        if (nameMatchCount > 0 && score > maxScore) {
+        if (score > maxScore) {
           maxScore = score;
           best = item;
         }
       }
 
-      if (best && maxScore >= 2) {
+      if (best && maxScore >= 4) {
         return best;
       }
 
@@ -2289,12 +2647,16 @@
         return null; // NEVER query database for standalone conversational greetings or small talk!
       }
 
-      const effectiveQuery = stripLeadingGreeting(query) || String(query).trim();
+      const strippedQuery = stripLeadingGreeting(query) || String(query).trim();
+      const liveCatalog = getAllCatalogItems(agentConfig);
+      const effectiveQuery = (typeof normalizeUserQuery === 'function')
+        ? (normalizeUserQuery(strippedQuery, liveCatalog, agentConfig?.knowledgeBase) || strippedQuery)
+        : strippedQuery;
       const isList = isCatalogListQuery(effectiveQuery);
       const isNav = isSectionNavigationQuery(effectiveQuery);
       const isPriceOverview = isGeneralPriceOrOverviewQuery(effectiveQuery);
 
-      // 0. Ordinal Reference Selection (e.g. "tell me about the first one", "2nd one", "last one")
+      // 0. Ordinal Reference Selection (e.g. "tell me about the first one", "2nd one", "secnd one", "last one")
       if (context && Array.isArray(context.lastDisplayedItems) && context.lastDisplayedItems.length > 0) {
         const ordItem = resolveOrdinalFromList(effectiveQuery, context.lastDisplayedItems);
         if (ordItem) {
@@ -2308,19 +2670,35 @@
         }
       }
 
-      // 0.5 General Pricing / Fee Structure Overview (e.g. "fee structure", "pricing", "room rates", "menu prices")
+      // 0.25 Specific Item Fuzzy Match FIRST (typo-tolerant & word-order-independent: "fess for scince 11th", "cost pro plan how much", "paracetmol avilable")
+      // Generic-only queries ("courses details give me", "fess structre", "plan details") return null here and flow cleanly to Price Overview / Catalog List!
+      if (liveCatalog.length > 0) {
+        const directFuzzyMatch = matchInInventory(liveCatalog, effectiveQuery);
+        if (directFuzzyMatch) {
+          if (context) {
+            context.activeItem = directFuzzyMatch;
+            context.turnCount = (context.turnCount || 0) + 1;
+          }
+          return {
+            status: 'FOUND_IN_HOST_STATE',
+            item: directFuzzyMatch.name || effectiveQuery,
+            data: directFuzzyMatch
+          };
+        }
+      }
+
+      // 0.5 General Pricing / Fee Structure Overview (e.g. "fess structre", "how much do i have to pay?", "pricing", "room rates", "menu prices")
       if (isPriceOverview) {
-        const allItems = getAllCatalogItems(agentConfig);
         return {
           status: 'FOUND_PRICE_OVERVIEW',
           item: 'pricing',
-          data: allItems
+          data: liveCatalog
         };
       }
 
-      // 1. Handle Catalog List query (e.g. "can you give me details of courses", "course details", "which courses do you provide", "give list of all meds", "show menu", "what products do you sell")
+      // 1. Handle Catalog List query (e.g. "wat cources u prvide", "courses details give me", "what do you teach here?", "show menu", "what products do you sell")
       if (isList) {
-        const allItems = getAllCatalogItems(agentConfig);
+        const allItems = [...liveCatalog];
         const scriptEl = getWidgetScript();
         const dbEndpoint = agentConfig?.databaseHookUrl || (scriptEl && scriptEl.getAttribute('data-database-url')) || (scriptEl && scriptEl.getAttribute('data-api-endpoint')) || agentConfig?.apiEndpoint;
         if (allItems.length === 0 && dbEndpoint && !dbEndpoint.includes('example.com')) {
@@ -2964,7 +3342,11 @@ ${cleanFaqBlock}`;
         }
       }
 
-      const effectiveText = stripLeadingGreeting(text) || text;
+      const strippedForLocal = stripLeadingGreeting(text) || text;
+      const liveItemsForNorm = getAllCatalogItems(agentConfig);
+      const effectiveText = (typeof normalizeUserQuery === 'function')
+        ? (normalizeUserQuery(strippedForLocal, liveItemsForNorm, agentConfig?.knowledgeBase) || strippedForLocal)
+        : strippedForLocal;
       const lower = effectiveText.toLowerCase();
       const cleanWords = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
       const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'which', 'your', 'about', 'can', 'you', 'want', 'know', 'tell', 'give', 'please', 'does', 'will', 'would', 'could', 'there', 'provide', 'offer', 'hey', 'hello', 'just', 'some', 'more', 'here', 'need', 'how']);
@@ -2972,33 +3354,46 @@ ${cleanFaqBlock}`;
       const stemWord = (w) => {
         if (!w || w.length <= 3) return w;
         if (w.endsWith('ies') && w.length > 4) return w.slice(0, -3) + 'y';
-        if (w.endsWith('es') && w.length > 4 && /(ch|sh|x|s|z|o)es$/.test(w)) return w.slice(0, -2);
+        if (w.endsWith('es') && w.length > 4 && /(ch|sh|x|z|o|ss)es$/.test(w)) return w.slice(0, -2);
         if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
         return w;
       };
       const stemmedWords = meaningfulWords.map(stemWord);
       const currentArchetype = detectCurrentArchetype(agentConfig);
       const profile = getArchetypeProfile(currentArchetype);
+      const intentConcepts = (typeof classifyIntentConcepts === 'function') ? classifyIntentConcepts(lower) : {};
 
-      // Helper to search KB + Host Page Snippets for a grounded answer
+      // Helper to search KB + Host Page Snippets for a grounded answer (Typo-Tolerant & Word-Order-Independent)
       const findGroundedKbOrSnippet = (extraTerms = '') => {
         const hostK = extractHostPageKnowledge();
         const combinedKb = [...(agentConfig.knowledgeBase || []), ...hostK.faqs].filter(item => isCustomerSafeFaq(item.q, item.a));
         const queryTokens = [...meaningfulWords, ...extraTerms.toLowerCase().split(/\s+/).filter(w => w.length > 2)];
-        const queryStems = queryTokens.map(stemWord);
 
         let bestKb = null;
         let bestKbScore = 0;
         for (const item of combinedKb) {
           const qL = (item.q || '').toLowerCase();
           const aL = (item.a || '').toLowerCase();
+          const qToks = qL.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+          const aToks = aL.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
           let sc = 0;
           if (lower.length >= 4 && (lower.includes(qL) || qL.includes(lower))) sc += 80;
-          for (let i = 0; i < queryTokens.length; i++) {
-            const w = queryTokens[i];
-            const st = queryStems[i] || w;
-            if (qL.includes(w) || qL.includes(st)) sc += 20;
-            if (aL.includes(w) || aL.includes(st)) sc += 8;
+          for (const w of queryTokens) {
+            let bestQ = 0;
+            for (const kt of qToks) {
+              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, kt) : (kt.includes(w) ? 3 : 0);
+              if (m > bestQ) bestQ = m;
+            }
+            if (bestQ >= 3) sc += 20;
+            else if (bestQ === 2) sc += 14;
+
+            let bestA = 0;
+            for (const at of aToks) {
+              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, at) : (at.includes(w) ? 3 : 0);
+              if (m > bestA) bestA = m;
+            }
+            if (bestA >= 3) sc += 8;
+            else if (bestA === 2) sc += 5;
           }
           if (sc > bestKbScore) {
             bestKbScore = sc;
@@ -3009,19 +3404,28 @@ ${cleanFaqBlock}`;
           return { source: 'kb', topic: bestKb.q, answer: bestKb.a };
         }
 
-        // Check Live Host Page Content Snippets
+        // Check Live Host Page Content Snippets (fuzzy token scoring)
         const snippets = extractHostPageSnippets();
         let bestSnip = null;
         let bestSnipScore = 0;
         for (const snip of snippets) {
-          const hL = (snip.heading || '').toLowerCase();
-          const tL = (snip.text || '').toLowerCase();
+          const hToks = (snip.heading || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+          const tToks = (snip.text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
           let sc = 0;
-          for (let i = 0; i < queryTokens.length; i++) {
-            const w = queryTokens[i];
-            const st = queryStems[i] || w;
-            if (hL.includes(w) || hL.includes(st)) sc += 22;
-            if (tL.includes(w) || tL.includes(st)) sc += 12;
+          for (const w of queryTokens) {
+            let bestH = 0;
+            for (const ht of hToks) {
+              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, ht) : (ht.includes(w) ? 3 : 0);
+              if (m > bestH) bestH = m;
+            }
+            if (bestH >= 2) sc += (bestH >= 3 ? 22 : 15);
+
+            let bestT = 0;
+            for (const tt of tToks) {
+              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, tt) : (tt.includes(w) ? 3 : 0);
+              if (m > bestT) bestT = m;
+            }
+            if (bestT >= 2) sc += (bestT >= 3 ? 12 : 8);
           }
           if (sc > bestSnipScore) {
             bestSnipScore = sc;
@@ -3088,10 +3492,10 @@ ${cleanFaqBlock}`;
 
         if (!switchedItem || switchedItem.name === active.name) {
           const isFollowUpDetails = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|specs?|specifications?|ingredients?|amenities|dosage|what about|in that|for that|of that|in this|for this|of this)\b/i.test(lower) || /(यात काय|त्यात काय|इसमें क्या|उसमें क्या|तपशील|विवरण)/i.test(text);
-          const isFollowUpFee = /\b(price|cost|fee|fees|how much|charges|rate|rent|mrp)\b/i.test(lower) || /(किंमत|भाव|दर|कीमत|दाम|फी|शुल्क)/i.test(text);
-          const isFollowUpEligibility = /\b(eligibility|criteria|requirements?|qualification|percentage|marks|prerequisites?)\b/i.test(lower);
-          const isFollowUpApply = /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission process|admission procedure|procedure|steps|apply online|order online|registration|enroll|reserve|test drive)\b/i.test(lower);
-          const isFollowUpDocs = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return policy|refund|shipping|delivery)\b/i.test(lower);
+          const isFollowUpFee = Boolean(intentConcepts.isPriceOverview) || /\b(price|cost|fee|fees|how much|charges|rate|rent|mrp)\b/i.test(lower) || /(किंमत|भाव|दर|कीमत|दाम|फी|शुल्क)/i.test(text);
+          const isFollowUpEligibility = Boolean(intentConcepts.isEligibility) || /\b(eligibility|criteria|requirements?|qualification|percentage|marks|prerequisites?)\b/i.test(lower);
+          const isFollowUpApply = Boolean(intentConcepts.isProcedure) || /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission process|admission procedure|procedure|steps|apply online|order online|registration|enroll|reserve|test drive)\b/i.test(lower);
+          const isFollowUpDocs = Boolean(intentConcepts.isPolicyDocs) || /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return policy|refund|shipping|delivery)\b/i.test(lower);
 
           // First check if the agent's own Knowledge Base or Live Page has a specific policy/answer for this follow-up
           if (isFollowUpDocs || isFollowUpEligibility || isFollowUpApply) {
@@ -3157,8 +3561,20 @@ ${cleanFaqBlock}`;
               if (queryLang === 'hi-IN') return `${active.name} के एडमिशन के लिए आवश्यक दस्तावेज: पिछली कक्षा की मार्कशीट, मूल स्कूल छोड़ने का प्रमाण पत्र (LC), आधार कार्ड और पासपोर्ट फोटो।`;
               return `Required documents for ${active.name}: previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs.`;
             }
+            if (currentArchetype === 'ecommerce') {
+              return `For ${active.name}, we provide standard shipping, manufacturer warranty, and hassle-free returns as listed in our store policy.`;
+            }
             if (currentArchetype === 'healthcare') {
               return `For ${active.name}, please keep a valid doctor prescription and patient ID ready if required.`;
+            }
+            if (currentArchetype === 'hospitality') {
+              return `For ${active.name}, a valid government photo ID is required at check-in; full check-in and cancellation terms are shown in our reservation section.`;
+            }
+            if (currentArchetype === 'saas') {
+              return `For ${active.name}, flexible monthly and annual billing with instant activation and invoice support are included.`;
+            }
+            if (currentArchetype === 'automotive') {
+              return `For ${active.name}, manufacturer warranty, servicing support, and financing options are included—carry a valid driving license for test drives.`;
             }
             if (currentArchetype === 'financial') {
               return `For ${active.name}, typically PAN card, identity proof, and relevant financial statements are required.`;
@@ -3294,7 +3710,7 @@ ${cleanFaqBlock}`;
 
       // 3. Exact Database Item Found in Host State / Live API
       if (bridge && (bridge.status === 'FOUND_IN_HOST_STATE' || bridge.status === 'FOUND_IN_LIVE_API')) {
-        const formatted = formatRealtimeStockResponse(bridge.data, queryLang, text);
+        const formatted = formatRealtimeStockResponse(bridge.data, queryLang, effectiveText || text);
         const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
         const cleanBtnName = cleanScrapedItemTitle(bridge.data.name || 'Item').name.substring(0, 30);
@@ -3444,11 +3860,10 @@ ${cleanFaqBlock}`;
         return groundedHit.answer;
       }
 
-      // 6.8 Universal Archetype Intent Handlers (Works EVEN WHEN activeItem is null across ALL 10 website types!)
-      // Guarantees the bot ALWAYS directly answers its own suggested topics (fees, eligibility, admission/order/booking procedure, documents, warranty, shipping, reservations, test drive, etc.) instead of looping!
-      const isGeneralEligibility = /\b(eligibility|criteria|requirements?|qualification|percentage|marks|prerequisites?)\b/i.test(lower) || /(पात्रता|पात्रता मानदंड)/i.test(text);
-      const isGeneralProcedure = /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission\s*(?:process|procedure|steps?)|booking\s*(?:process|procedure)|order\s*(?:process|procedure)|getting\s*started|steps|apply online|order online|registration|enroll|table\s*reservations?|reservations?|reserve|test\s*drives?|site\s*visits?|book\s*(?:a\s*)?consultation)\b/i.test(lower) || /(प्रवेश प्रक्रिया|अर्ज कसा करावा|एडमिशन प्रक्रिया|कैसे आवेदन|कैसे ऑर्डर|बुकिंग)/i.test(text);
-      const isGeneralDocsOrPolicy = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return\s*policy|refund|shipping|delivery|cancellation|check-?in|check-?out|billing|dietary|amenities)\b/i.test(lower) || /(कागदपत्रे|रिटर्न पॉलिसी|डिलिव्हरी|वॉरंटी|दस्तावेज|डिलीवरी|वारंटी)/i.test(text);
+      // 6.8 Universal Archetype Intent Handlers (Order-Independent, Typo-Tolerant & Works EVEN WHEN activeItem is null across ALL 10 website types!)
+      const isGeneralEligibility = Boolean(intentConcepts.isEligibility) || /\b(eligibility|criteria|requirements?|qualification|percentage|marks|prerequisites?)\b/i.test(lower) || /(पात्रता|पात्रता मानदंड)/i.test(text);
+      const isGeneralProcedure = Boolean(intentConcepts.isProcedure) || /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission\s*(?:process|procedure|steps?)|booking\s*(?:process|procedure)|order\s*(?:process|procedure)|getting\s*started|steps|apply online|order online|registration|enroll|table\s*reservations?|reservations?|reserve|test\s*drives?|site\s*visits?|book\s*(?:a\s*)?consultation)\b/i.test(lower) || /(प्रवेश प्रक्रिया|अर्ज कसा करावा|एडमिशन प्रक्रिया|कैसे आवेदन|कैसे ऑर्डर|बुकिंग)/i.test(text);
+      const isGeneralDocsOrPolicy = Boolean(intentConcepts.isPolicyDocs) || /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return\s*policy|refund|shipping|delivery|cancellation|check-?in|check-?out|billing|dietary|amenities)\b/i.test(lower) || /(कागदपत्रे|रिटर्न पॉलिसी|डिलिव्हरी|वॉरंटी|दस्तावेज|डिलीवरी|वारंटी)/i.test(text);
 
       if (isGeneralProcedure) {
         if (context) {
