@@ -479,6 +479,14 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
 3. Dual-Channel Excellence: Keep answers crisp, polite, and helpful so they sound natural when spoken aloud and look neat and readable in chat.
 4. STRICT CUSTOMER-ONLY INTERACTIONS: You are talking directly to customers, shoppers, and site visitors—NOT developers or database engineers. Only answer customer questions (products, pricing, availability, store services, ordering). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline and offer to help with store products and services.`;
 
+  // Multi-Turn Conversational Memory & History Formatting (for ALL agents & websites)
+  const rawHistory = options?.conversationHistory || options?.history || userMessage?.conversationHistory || userMessage?.history || [];
+  const validHistory = (Array.isArray(rawHistory) ? rawHistory : []).slice(-8).map(m => {
+    const role = (m.role === 'agent' || m.role === 'assistant' || m.sender === 'assistant') ? 'assistant' : 'user';
+    const textContent = String(m.content || m.text || '').trim();
+    return { role, content: textContent };
+  }).filter(m => m.content && m.content !== cleanMessage);
+
   // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms with llama-3.1-8b-instant)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
     try {
@@ -502,6 +510,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
               role: 'system',
               content: systemInstructions
             },
+            ...validHistory,
             {
               role: 'user',
               content: cleanMessage
@@ -528,6 +537,17 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
     try {
       const geminiModel = options?.geminiModel || 'gemini-2.5-flash';
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${effectiveGeminiKey}`;
+      const geminiContents = [
+        ...validHistory.map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }]
+        })),
+        {
+          role: 'user',
+          parts: [{ text: cleanMessage }]
+        }
+      ];
+
       const geminiRes = await fetch(geminiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -535,11 +555,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           system_instruction: {
             parts: [{ text: systemInstructions }]
           },
-          contents: [{
-            parts: [{
-              text: cleanMessage
-            }]
-          }],
+          contents: geminiContents,
           generationConfig: {
             maxOutputTokens: 800,
             temperature: 0.5
@@ -572,6 +588,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: systemInstructions },
+            ...validHistory,
             { role: 'user', content: cleanMessage }
           ],
           max_tokens: 800,

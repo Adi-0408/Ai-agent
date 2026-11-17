@@ -61,26 +61,207 @@
     ]
   };
 
-  // Domain archetype detector: ensures strict contextual isolation (academic vs pharmacy vs food vs saas)
+  // Universal Archetype Profiles: adapts conversational memory, phrasing, and domain isolation to ANY website type
+  const ARCHETYPE_PROFILES = {
+    academic: {
+      nounEn: 'courses and admissions', nounHi: 'कोर्स और एडमिशन', nounMr: 'अभ्यासक्रम आणि प्रवेश',
+      itemNounEn: 'courses / programs', itemNounHi: 'कोर्स / कार्यक्रम', itemNounMr: 'अभ्यासक्रम / कोर्सेस',
+      itemUnit: 'seats', priceLabelEn: 'annual fee', priceLabelHi: 'वार्षिक फीस', priceLabelMr: 'वार्षिक फी',
+      defaultDesc: 'comprehensive curriculum, experienced faculty, laboratory facilities, and student guidance',
+      actionEn: 'complete the online admission form on this portal and submit your required documents',
+      actionHi: 'इस पोर्टल पर ऑनलाइन एडमिशन फॉर्म भरें और आवश्यक दस्तावेज जमा करें',
+      actionMr: 'या पोर्टलवर ऑनलाइन प्रवेश अर्ज भरा आणि आवश्यक कागदपत्रे सादर करा',
+      followUpEn: 'course details, fee structure, eligibility criteria, or admission procedure',
+      followUpHi: 'कोर्स विवरण, फीस, पात्रता या एडमिशन प्रक्रिया',
+      followUpMr: 'अभ्यासक्रम, फी, पात्रता किंवा प्रवेश प्रक्रिया',
+      roleDesc: 'the official academic admissions & student support assistant',
+      audience: 'students, parents, and applicants exploring courses, admissions, eligibility, and fees',
+      topicsList: 'courses, admissions, fees, eligibility, syllabus, campus guidelines',
+      catalogLabel: '[VERIFIED_COURSES_AND_PROGRAMS_DATABASE]'
+    },
+    healthcare: {
+      nounEn: 'medicines and healthcare services', nounHi: 'दवाइयां और स्वास्थ्य सेवाएं', nounMr: 'औषधे आणि आरोग्य सेवा',
+      itemNounEn: 'medicines', itemNounHi: 'दवाइयां', itemNounMr: 'औषधे',
+      itemUnit: 'packs', priceLabelEn: 'price', priceLabelHi: 'कीमत', priceLabelMr: 'किंमत',
+      defaultDesc: 'certified pharmaceutical quality with clear dosage guidance and pharmacist support',
+      actionEn: 'add it to your order or upload your prescription on our website for doorstep delivery or counter pickup',
+      actionHi: 'इसे अपने ऑर्डर में जोड़ें या होम डिलीवरी के लिए वेबसाइट पर अपना पर्चा अपलोड करें',
+      actionMr: 'हे आपल्या ऑर्डरमध्ये जोडा किंवा होम डिलिव्हरीसाठी वेबसाइटवर प्रिस्क्रिप्शन अपलोड करा',
+      followUpEn: 'dosage details, pricing, stock availability, or prescription requirements',
+      followUpHi: 'खुराक, कीमत, स्टॉक उपलब्धता या प्रिस्क्रिप्शन आवश्यकताओं',
+      followUpMr: 'डोस, किंमत, स्टॉक उपलब्धता किंवा प्रिस्क्रिप्शन नियमां',
+      roleDesc: 'the official pharmacy & healthcare customer assistant',
+      audience: 'patients and healthcare customers inquiring about medicines, prescriptions, and clinic services',
+      topicsList: 'medicines, dosage, stock availability, prescription requirements, prices, clinic timings',
+      catalogLabel: '[VERIFIED_MEDICINES_AND_HEALTHCARE_CATALOG]'
+    },
+    ecommerce: {
+      nounEn: 'products, orders, and shopping', nounHi: 'उत्पाद और ऑर्डर', nounMr: 'उत्पादने आणि ऑर्डर्स',
+      itemNounEn: 'products', itemNounHi: 'उत्पाद', itemNounMr: 'उत्पादने',
+      itemUnit: 'units', priceLabelEn: 'price', priceLabelHi: 'कीमत', priceLabelMr: 'किंमत',
+      defaultDesc: 'authentic quality, manufacturer warranty, fast shipping, and hassle-free returns',
+      actionEn: 'add it to your cart and complete checkout directly on this website',
+      actionHi: 'इसे अपने कार्ट में जोड़ें और सीधे इस वेबसाइट पर चेकआउट पूरा करें',
+      actionMr: 'हे आपल्या कार्टमध्ये जोडा आणि थेट या वेबसाइटवर चेकआउट पूर्ण करा',
+      followUpEn: 'product specifications, pricing, stock availability, shipping, or return policy',
+      followUpHi: 'उत्पाद विवरण, कीमत, स्टॉक, डिलीवरी या रिटर्न पॉलिसी',
+      followUpMr: 'उत्पादन तपशील, किंमत, स्टॉक, डिलिव्हरी किंवा रिटर्न पॉलिसी',
+      roleDesc: 'the official online store & customer care assistant',
+      audience: 'online shoppers and customers browsing products, pricing, shipping, and orders',
+      topicsList: 'products, specifications, pricing, stock availability, shipping, delivery, returns',
+      catalogLabel: '[VERIFIED_PRODUCTS_AND_INVENTORY_DATABASE]'
+    },
+    food: {
+      nounEn: 'our menu and dining services', nounHi: 'हमारे मेनू और डाइनिंग सेवाओं', nounMr: 'आमच्या मेनू आणि जेवण सेवां',
+      itemNounEn: 'dishes', itemNounHi: 'व्यंजन', itemNounMr: 'पदार्थ',
+      itemUnit: 'portions', priceLabelEn: 'price', priceLabelHi: 'कीमत', priceLabelMr: 'किंमत',
+      defaultDesc: 'freshly prepared ingredients, authentic recipe, and prompt dine-in or delivery service',
+      actionEn: 'place your order directly through our menu section or reserve a table with us',
+      actionHi: 'सीधे हमारे मेनू से ऑर्डर करें या हमारे साथ टेबल रिजर्व करें',
+      actionMr: 'थेट आमच्या मेनूमधून ऑर्डर करा किंवा आमच्याकडे टेबल बुक करा',
+      followUpEn: 'ingredients, pricing, dietary options, combos, or table reservations',
+      followUpHi: 'सामग्री, कीमत, डाइटरी विकल्प, कॉम्बो या टेबल बुकिंग',
+      followUpMr: 'घटक, किंमत, आहार पर्याय, कॉम्बो किंवा टेबल बुकिंग',
+      roleDesc: 'the official dining & food ordering concierge',
+      audience: 'diners and guests exploring dishes, ingredients, combos, prices, and reservations',
+      topicsList: 'menu dishes, ingredients, prices, dietary options, reservations, delivery',
+      catalogLabel: '[VERIFIED_MENU_AND_DISHES_DATABASE]'
+    },
+    saas: {
+      nounEn: 'plans and platform features', nounHi: 'प्लान और प्लेटफॉर्म सुविधाओं', nounMr: 'प्लॅन्स आणि सॉफ्टवेअर वैशिष्ट्यां',
+      itemNounEn: 'plans', itemNounHi: 'प्लान्स', itemNounMr: 'प्लॅन्स',
+      itemUnit: 'licenses', priceLabelEn: 'subscription rate', priceLabelHi: 'सब्सक्रिप्शन शुल्क', priceLabelMr: 'सबस्क्रिप्शन दर',
+      defaultDesc: 'cloud-hosted reliability, priority technical support, analytics, and seamless integrations',
+      actionEn: 'select the plan from our pricing section to start your subscription or free trial',
+      actionHi: 'सब्सक्रिप्शन या फ्री ट्रायल शुरू करने के लिए प्राइसिंग सेक्शन से प्लान चुनें',
+      actionMr: 'सबस्क्रिप्शन किंवा फ्री ट्रायल सुरू करण्यासाठी किंमत विभागातून प्लॅन निवडा',
+      followUpEn: 'plan features, pricing tiers, billing options, or getting started',
+      followUpHi: 'प्लान की सुविधाएं, प्राइसिंग, बिलिंग या शुरुआत करने',
+      followUpMr: 'प्लॅन वैशिष्ट्ये, किंमत, बिलिंग किंवा सुरुवात करण्या',
+      roleDesc: 'the official software product & customer support specialist',
+      audience: 'users, teams, and subscribers exploring plans, features, and billing',
+      topicsList: 'plans, features, pricing tiers, billing, trials, customer support',
+      catalogLabel: '[VERIFIED_PLANS_AND_FEATURES_DATABASE]'
+    },
+    hospitality: {
+      nounEn: 'rooms, packages, and stays', nounHi: 'कमरे, पैकेज और बुकिंग', nounMr: 'रूम्स, पॅकेजेस आणि बुकिंग',
+      itemNounEn: 'rooms', itemNounHi: 'कमरे', itemNounMr: 'रूम्स',
+      itemUnit: 'rooms', priceLabelEn: 'nightly rate', priceLabelHi: 'प्रति रात किराया', priceLabelMr: 'प्रति रात्र दर',
+      defaultDesc: 'comfortable accommodations, complimentary Wi-Fi, room service, and modern guest amenities',
+      actionEn: 'select your check-in and check-out dates on our reservation section to confirm your stay',
+      actionHi: 'बुकिंग कन्फर्म करने के लिए रिजर्वेशन सेक्शन में अपनी तारीखें चुनें',
+      actionMr: 'बुकिंग निश्चित करण्यासाठी आरक्षण विभागात आपल्या तारखा निवडा',
+      followUpEn: 'room amenities, rates, availability, check-in timings, or booking',
+      followUpHi: 'रूम की सुविधाएं, किराया, उपलब्धता, चेक-इन समय या बुकिंग',
+      followUpMr: 'रूम सुविधा, दर, उपलब्धता, चेक-इन वेळ किंवा बुकिंग',
+      roleDesc: 'the official hospitality & guest reservation concierge',
+      audience: 'guests and travelers booking rooms, stays, amenities, and packages',
+      topicsList: 'rooms, rates, amenities, check-in/out timings, dining, reservations',
+      catalogLabel: '[VERIFIED_ROOMS_AND_PACKAGES_DATABASE]'
+    },
+    automotive: {
+      nounEn: 'vehicles and showroom services', nounHi: 'वाहन और शोरूम सेवाओं', nounMr: 'वाहने आणि शोरूम सेवां',
+      itemNounEn: 'vehicles', itemNounHi: 'वाहन', itemNounMr: 'वाहने',
+      itemUnit: 'vehicles', priceLabelEn: 'price', priceLabelHi: 'कीमत', priceLabelMr: 'किंमत',
+      defaultDesc: 'advanced engineering, manufacturer warranty, safety features, and flexible financing',
+      actionEn: 'schedule a showroom visit or test drive through our booking form',
+      actionHi: 'हमारे बुकिंग फॉर्म के माध्यम से शोरूम विजिट या टेस्ट ड्राइव शेड्यूल करें',
+      actionMr: 'आमच्या बुकिंग फॉर्मद्वारे शोरूम भेट किंवा टेस्ट ड्राइव्ह बुक करा',
+      followUpEn: 'vehicle specifications, pricing, availability, warranty, or test drives',
+      followUpHi: 'वाहन विनिर्देश, कीमत, उपलब्धता, वारंटी या टेस्ट ड्राइव बुकिंग',
+      followUpMr: 'वाहन वैशिष्ट्ये, किंमत, उपलब्धता, वॉरंटी किंवा टेस्ट ड्राइव्ह बुकिंग',
+      roleDesc: 'the official automotive sales & service concierge',
+      audience: 'vehicle buyers and drivers exploring models, specs, test drives, and service',
+      topicsList: 'vehicle models, specifications, pricing, test drives, warranty, service appointments',
+      catalogLabel: '[VERIFIED_VEHICLES_AND_SERVICES_DATABASE]'
+    },
+    financial: {
+      nounEn: 'financial and advisory services', nounHi: 'वित्तीय और सलाहकार सेवाओं', nounMr: 'आर्थिक आणि सल्लागार सेवां',
+      itemNounEn: 'services', itemNounHi: 'सेवाएं', itemNounMr: 'सेवा',
+      itemUnit: 'slots', priceLabelEn: 'consultation fee', priceLabelHi: 'परामर्श शुल्क', priceLabelMr: 'सल्लामसलत शुल्क',
+      defaultDesc: 'personalized advisory by certified specialists, compliance accuracy, and confidential handling',
+      actionEn: 'book a consultation session through our contact form and share your basic details',
+      actionHi: 'हमारे कॉन्टैक्ट फॉर्म के माध्यम से परामर्श सत्र बुक करें',
+      actionMr: 'आमच्या संपर्क फॉर्मद्वारे सल्लामसलत सत्र बुक करा',
+      followUpEn: 'service details, fees, required documents, or booking a consultation',
+      followUpHi: 'सेवा विवरण, शुल्क, आवश्यक दस्तावेज या परामर्श बुकिंग',
+      followUpMr: 'सेवा तपशील, शुल्क, आवश्यक कागदपत्रे किंवा सल्लामसलत बुकिंग',
+      roleDesc: 'the official financial & tax advisory assistant',
+      audience: 'clients and business owners seeking tax filing, loans, wealth advisory, and compliance',
+      topicsList: 'tax filing, GST, loans, investments, wealth advisory, consultation booking',
+      catalogLabel: '[VERIFIED_FINANCIAL_SERVICES_DATABASE]'
+    },
+    realestate: {
+      nounEn: 'properties and listings', nounHi: 'प्रॉपर्टी और लिस्टिंग', nounMr: 'प्रॉपर्टी आणि लिस्टिंग',
+      itemNounEn: 'properties', itemNounHi: 'प्रॉपर्टी', itemNounMr: 'प्रॉपर्टी',
+      itemUnit: 'units', priceLabelEn: 'price', priceLabelHi: 'कीमत', priceLabelMr: 'किंमत',
+      defaultDesc: 'prime location, verified documentation, modern amenities, and guided site visits',
+      actionEn: 'request a guided site visit or callback through our inquiry section',
+      actionHi: 'हमारे इन्क्वायरी सेक्शन से साइट विजिट या कॉलबैक का अनुरोध करें',
+      actionMr: 'आमच्या चौकशी विभागातून साइट व्हिजिट किंवा कॉलबॅकची विनंती करा',
+      followUpEn: 'property specifications, pricing, amenities, floor plans, or site visits',
+      followUpHi: 'प्रॉपर्टी विवरण, कीमत, सुविधाएं या साइट विजिट बुकिंग',
+      followUpMr: 'प्रॉपर्टी तपशील, किंमत, सुविधा किंवा साइट व्हिजिट बुकिंग',
+      roleDesc: 'the official real estate & property concierge',
+      audience: 'homebuyers, tenants, and investors exploring properties and listings',
+      topicsList: 'properties, pricing, floor plans, amenities, site visits, purchase/rent terms',
+      catalogLabel: '[VERIFIED_PROPERTIES_LISTINGS_DATABASE]'
+    },
+    general: {
+      nounEn: 'our products and services', nounHi: 'हमारे उत्पाद और सेवाओं', nounMr: 'आमची उत्पादने आणि सेवां',
+      itemNounEn: 'items', itemNounHi: 'उत्पाद', itemNounMr: 'उत्पादने',
+      itemUnit: 'units', priceLabelEn: 'price', priceLabelHi: 'कीमत', priceLabelMr: 'किंमत',
+      defaultDesc: 'high quality offerings, transparent pricing, and dedicated customer support',
+      actionEn: 'submit an inquiry or use the order/booking section directly on this website',
+      actionHi: 'सीधे इस वेबसाइट पर ऑर्डर/बुकिंग सेक्शन का उपयोग करें या इन्क्वायरी भेजें',
+      actionMr: 'थेट या वेबसाइटवरील ऑर्डर/बुकिंग विभाग वापरा किंवा चौकशी पाठवा',
+      followUpEn: 'details, pricing, availability, or how to get started',
+      followUpHi: 'विवरण, कीमत, उपलब्धता या शुरुआत करने',
+      followUpMr: 'तपशील, किंमत, उपलब्धता किंवा सुरुवात करण्या',
+      roleDesc: 'the official live customer support assistant',
+      audience: 'customers and website visitors',
+      topicsList: 'products, services, pricing, availability, timings, location, ordering',
+      catalogLabel: '[VERIFIED_DATABASE_RECORDS]'
+    }
+  };
+
+  function getArchetypeProfile(arch) {
+    return ARCHETYPE_PROFILES[arch] || ARCHETYPE_PROFILES.general;
+  }
+
+  // Domain archetype detector: universally detects ANY website type for strict isolation & tailored phrasing
   function detectCurrentArchetype(cfg = agentConfig) {
     const pageTitle = (typeof document !== 'undefined' && document.title) ? document.title : '';
     const bodySnippet = (typeof document !== 'undefined' && document.body) ? (document.body.innerText || '').slice(0, 1500) : '';
-    const text = `${cfg?.archetype || ''} ${cfg?.name || ''} ${cfg?.role || ''} ${cfg?.prompt || ''} ${pageTitle} ${bodySnippet}`.toLowerCase();
+    const dbNames = Array.isArray(cfg?.databaseRecords) ? cfg.databaseRecords.slice(0, 10).map(r => `${r.name || ''} ${r.category || ''}`).join(' ') : '';
+    const text = `${cfg?.archetype || ''} ${cfg?.name || ''} ${cfg?.role || ''} ${cfg?.prompt || ''} ${dbNames} ${pageTitle} ${bodySnippet}`.toLowerCase();
 
-    if (/\b(admission|admissions|school|college|university|academy|academic|student|students|course|courses|degree|diploma|syllabus|faculty|tuition|shikshan|sanstha|vidyalaya|curriculum|exam|campus)\b/i.test(text)) {
+    if (/\b(admission|admissions|school|college|university|academy|academic|student|students|course|courses|degree|diploma|syllabus|faculty|tuition|shikshan|sanstha|vidyalaya|curriculum|exam|campus|std\s*11|std\s*12)\b/i.test(text)) {
       return 'academic';
     }
     if (/\b(pharmacy|medicine|medicines|drug|drugs|pill|pills|tablet|tablets|prescription|capsule|syrup|dosage|clinic|hospital|patient|doctor|pharma)\b/i.test(text)) {
       return 'healthcare';
     }
-    if (/\b(restaurant|cafe|dining|food|dish|dishes|menu|bakery|pizza|burger|meal|kitchen|cuisine|dessert)\b/i.test(text)) {
+    if (/\b(restaurant|cafe|dining|food|dish|dishes|menu|bakery|pizza|burger|meal|kitchen|cuisine|dessert|biryani|pasta)\b/i.test(text)) {
       return 'food';
     }
-    if (/\b(hotel|resort|room|rooms|stay|suite|check-in|check-out|booking|villa|hostel)\b/i.test(text)) {
+    if (/\b(hotel|resort|room|rooms|stay|suite|check-in|check-out|villa|hostel|banquet|lodge)\b/i.test(text)) {
       return 'hospitality';
     }
-    if (/\b(software|saas|api|subscription|pricing\s*tier|starter\s*plan|pro\s*plan|cloud)\b/i.test(text)) {
+    if (/\b(software|saas|subscription|pricing\s*tier|starter\s*plan|pro\s*plan|enterprise\s*plan|cloud\s*platform|workspace|api\s*limit)\b/i.test(text)) {
       return 'saas';
+    }
+    if (/\b(car|cars|vehicle|vehicles|automotive|dealership|showroom|test\s*drive|suv|sedan|hatchback|motorcycle|bike|servicing)\b/i.test(text)) {
+      return 'automotive';
+    }
+    if (/\b(finance|financial|tax\s*filing|itr|gst|wealth\s*management|accounting|audit|loan|loans|investment|mutual\s*fund|chartered|consultancy)\b/i.test(text)) {
+      return 'financial';
+    }
+    if (/\b(real\s*estate|property|properties|apartment|apartments|flat|flats|2bhk|3bhk|plot|plots|lease|rent\s*home|commercial\s*space|site\s*visit)\b/i.test(text)) {
+      return 'realestate';
+    }
+    if (/\b(shop|store|e-commerce|ecommerce|sneaker|shoe|shoes|clothing|apparel|fashion|electronics|gadget|watch|cart|checkout|shipping|return\s*policy|add\s*to\s*cart)\b/i.test(text)) {
+      return 'ecommerce';
     }
     return 'general';
   }
@@ -1642,9 +1823,9 @@
              /^(नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|शुभ प्रभात|शुभ दुपार|शुभ संध्याकाळ|धन्यवाद|आभार|बाय|अलविदा)(?:\s|$|[.,!?])/i.test(t);
     }
 
-    function extractTargetItem(text, history = [], context = null) {
+    function extractTargetItem(text, history = [], context = null, catalogItems = null) {
       let cleaned = String(text || '').trim()
-        .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+        .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number|forget that|instead of that|instead of it|what about|how about)\b/gi, ' ')
         .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
         .replace(/[?!.,;]/g, '')
         .trim();
@@ -1655,8 +1836,26 @@
         return '';
       }
 
-      // 1. Follow-up pronoun & reference phrase resolution (e.g. "what do you provide in that", "fees for this", "details of it")
-      const isReferenceQuery = /\b(in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|in it|this|that|it|these|those|the course|the program|the item|the medicine|the product|the school|the college)\b/i.test(cleaned);
+      // 0. Context-Switch First: If user explicitly names a DIFFERENT item from the catalog (e.g. "forget that, what about Commerce?" or "instead of it, Adidas Ultraboost"), switch immediately!
+      const liveCatalog = Array.isArray(catalogItems) && catalogItems.length > 0 ? catalogItems : getAllCatalogItems(agentConfig);
+      if (liveCatalog.length > 0 && cleaned.length >= 3) {
+        const cleanedNoPronouns = cleaned
+          .replace(/\b(in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|in it|this|that|it|these|those|the|and|or|but|with|also|please)\b/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (cleanedNoPronouns.length >= 3) {
+          const directSwitchMatch = matchInInventory(liveCatalog, cleanedNoPronouns);
+          if (directSwitchMatch) {
+            return directSwitchMatch.name || directSwitchMatch.title || cleanedNoPronouns;
+          }
+        }
+      }
+
+      // 1. Universal Follow-up Pronoun & Reference Resolution (English, Hindi, Marathi across ALL website types)
+      const isReferenceQuery =
+        /\b(in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|in it|on this|on that|on it|this|that|it|these|those|the course|the program|the item|the medicine|the product|the dish|the meal|the plan|the tier|the room|the suite|the car|the vehicle|the service|the property|the flat|the package|the school|the college|what do you provide|what is included|tell me more)\b/i.test(cleaned) ||
+        /(यात|त्यात|याबद्दल|त्याबद्दल|याचे|त्याचे|याची|त्याची|यामध्ये|त्यामध्ये|इसमें|उसमें|इसके बारे में|उसके बारे में|इसका|उसका|इसकी|उसकी)/i.test(text);
+
       if (isReferenceQuery) {
         if (context && context.activeItem) {
           return context.activeItem.name || context.activeItem.title || '';
@@ -1812,71 +2011,97 @@
       const cleanTitle = name.split(/[\(\n,]/)[0].trim() || name;
       const stock = itemData.stock !== undefined ? itemData.stock : (itemData.quantity !== undefined ? itemData.quantity : null);
       const price = itemData.price ? (typeof itemData.price === 'number' ? `₹${itemData.price}` : String(itemData.price).trim()) : '';
-      const unit = itemData.unit || 'units';
+      const currentArchetype = detectCurrentArchetype(agentConfig);
+      const profile = getArchetypeProfile(currentArchetype);
+      const unit = itemData.unit || profile.itemUnit || 'units';
       const rx = itemData.rx || itemData.prescriptionRequired;
 
       const lowerQ = String(queryText || '').toLowerCase();
       const isPriceQuery = /\b(price|cost|rate|rates|how much|fee|fees|mrp|charges)\b/i.test(lowerQ) || /(किंमत|भाव|दर|कीमत|दाम)/i.test(lowerQ);
-      const isStockQuery = /\b(stock|available|quantity|how many|count|units|seats)\b/i.test(lowerQ) || /(साठा|शिल्लक|स्टॉक|जागा|उपलब्ध)/i.test(lowerQ);
-      const isDetailsQuery = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|what about|in that|for that)\b/i.test(lowerQ);
+      const isStockQuery = /\b(stock|available|quantity|how many|count|units|seats|rooms|portions|slots)\b/i.test(lowerQ) || /(साठा|शिल्लक|स्टॉक|जागा|उपलब्ध)/i.test(lowerQ);
+      const isDetailsQuery = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|what about|in that|for that|specs|specifications|ingredients)\b/i.test(lowerQ);
 
-      // 0. Specific Course / Product Details Intent
+      // 0. Specific Details Intent (Adapts to ANY Archetype)
       if (isDetailsQuery) {
-        const desc = itemData.description || itemData.dosage || itemData.details || 'comprehensive facilities, laboratory equipment, study materials, and experienced faculty mentorship';
-        const feeSuffix = price ? ` The annual fee is ${price}.` : '';
+        const desc = itemData.description || itemData.dosage || itemData.details || profile.defaultDesc;
+        const priceSuffix = price ? ` The ${profile.priceLabelEn} is ${price}.` : '';
         const stockSuffix = (stock !== null && stock > 0) ? ` Currently ${stock} ${unit} are available.` : '';
         if (queryLang === 'mr-IN') {
-          return `${cleanTitle} मध्ये आम्ही प्रदान करतो: ${desc}.${feeSuffix}${stockSuffix}`;
+          return `${cleanTitle} मध्ये आम्ही प्रदान करतो: ${desc}.${price ? ` ${profile.priceLabelMr}: ${price}.` : ''}${stockSuffix ? ` सध्या ${stock} ${unit} उपलब्ध.` : ''}`;
         }
         if (queryLang === 'hi-IN') {
-          return `${cleanTitle} में हम प्रदान करते हैं: ${desc}।${feeSuffix}${stockSuffix}`;
+          return `${cleanTitle} में हम प्रदान करते हैं: ${desc}।${price ? ` ${profile.priceLabelHi}: ${price}।` : ''}${stockSuffix ? ` वर्तमान में ${stock} ${unit} उपलब्ध हैं।` : ''}`;
         }
-        return `In ${cleanTitle}, we provide: ${desc}.${feeSuffix}${stockSuffix}`;
+        return `In ${cleanTitle}, we provide: ${desc}.${priceSuffix}${stockSuffix}`;
       }
 
       // 1. Specific Price Intent
       if (isPriceQuery) {
         if (queryLang === 'mr-IN') {
           return price 
-            ? `${cleanTitle} ची किंमत ${price}${unit ? ` प्रति ${unit}` : ''} आहे.${stock !== null && stock > 0 ? ` (सध्या ${stock} ${unit} साठ्यामध्ये उपलब्ध).` : ''}`
-            : `${cleanTitle} आमच्या डेटाबेसमध्ये उपलब्ध आहे. ताज्या किंमतीसाठी कृपया काउंटरशी संपर्क साधा.`;
+            ? `${cleanTitle} ची ${profile.priceLabelMr} ${price}${unit ? ` प्रति ${unit}` : ''} आहे.${stock !== null && stock > 0 ? ` (सध्या ${stock} ${unit} उपलब्ध).` : ''}`
+            : `${cleanTitle} आमच्या डेटाबेसमध्ये उपलब्ध आहे. ताज्या किंमतीसाठी कृपया आमच्याशी संपर्क साधा.`;
         }
         if (queryLang === 'hi-IN') {
           return price 
-            ? `${cleanTitle} की कीमत ${price}${unit ? ` प्रति ${unit}` : ''} है।${stock !== null && stock > 0 ? ` (वर्तमान में ${stock} ${unit} स्टॉक में उपलब्ध)।` : ''}`
+            ? `${cleanTitle} की ${profile.priceLabelHi} ${price}${unit ? ` प्रति ${unit}` : ''} है।${stock !== null && stock > 0 ? ` (वर्तमान में ${stock} ${unit} उपलब्ध)।` : ''}`
             : `${cleanTitle} हमारे डेटाबेस में उपलब्ध है। नवीनतम कीमत के लिए कृपया संपर्क करें।`;
         }
         return price
-          ? `The price of ${cleanTitle} is ${price}${unit ? ` per ${unit}` : ''}.${stock !== null && stock > 0 ? ` (Currently in stock: ${stock} ${unit}).` : ''}`
-          : `${cleanTitle} is listed in our database${stock !== null ? ` with ${stock} ${unit} in stock` : ''}. Please check with support for live rates.`;
+          ? `The ${profile.priceLabelEn} for ${cleanTitle} is ${price}${unit ? ` per ${unit}` : ''}.${stock !== null && stock > 0 ? ` (Currently available: ${stock} ${unit}).` : ''}`
+          : `${cleanTitle} is listed in our database${stock !== null ? ` with ${stock} ${unit} available` : ''}. Please check with support for live rates.`;
       }
 
-      // 2. Specific Stock Intent / Default Stock Response
+      // 2. Specific Stock / Availability Intent
       if (queryLang === 'mr-IN') {
         if (stock !== null && stock > 0) {
-          return `${cleanTitle} सध्या उपलब्ध आहे! आमच्याकडे ${stock} ${unit} शिल्लक साठा आहे${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
+          if (currentArchetype === 'academic') {
+            return `${cleanTitle} साठी सध्या प्रवेश सुरू आहेत! आमच्याकडे ${price ? `${price} शुल्कावर ` : ''}${stock} ${unit} उपलब्ध आहेत.`;
+          }
+          return `${cleanTitle} सध्या उपलब्ध आहे! आमच्याकडे ${stock} ${unit} उपलब्ध आहेत${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
         } else if (stock === 0) {
-          return `क्षमस्व, ${cleanTitle} चा साठा सध्या संपला आहे. नवीन स्टॉक लवकरच उपलब्ध होईल!`;
+          return `क्षमस्व, ${cleanTitle} सध्या उपलब्ध नाही. नवीन पर्याय लवकरच उपलब्ध होतील!`;
         }
       }
 
       if (queryLang === 'hi-IN') {
         if (stock !== null && stock > 0) {
-          return `${cleanTitle} वर्तमान में उपलब्ध है! हमारे पास ${stock} ${unit} का स्टॉक है${price ? ` (कीमत: ${price})` : ''}।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
+          if (currentArchetype === 'academic') {
+            return `${cleanTitle} में वर्तमान में एडमिशन खुले हैं! हमारे पास ${price ? `${price} की फीस पर ` : ''}${stock} ${unit} उपलब्ध हैं।`;
+          }
+          return `${cleanTitle} वर्तमान में उपलब्ध है! हमारे पास ${stock} ${unit} उपलब्ध हैं${price ? ` (कीमत: ${price})` : ''}।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
         } else if (stock === 0) {
-          return `क्षमा करें, ${cleanTitle} अभी आउट ऑफ स्टॉक है। जल्द ही नया स्टॉक उपलब्ध होगा!`;
+          return `क्षमा करें, ${cleanTitle} अभी उपलब्ध नहीं है। जल्द ही नया स्टॉक उपलब्ध होगा!`;
         }
       }
 
-      // English default
+      // English default (Archetype-Tailored Availability)
       if (stock !== null && stock > 0) {
-        return `${cleanTitle} is currently in stock! We have ${stock} ${unit} available${price ? ` at ${price} each` : ''}.${rx ? ' Please note a valid doctor prescription is required.' : ''}`;
+        if (currentArchetype === 'academic') {
+          return `${cleanTitle} admissions are currently open! We have ${stock} ${unit} available${price ? ` at ${price}` : ''}.`;
+        }
+        if (currentArchetype === 'food') {
+          return `${cleanTitle} is freshly available on our menu${price ? ` at ${price}` : ''}!`;
+        }
+        if (currentArchetype === 'hospitality') {
+          return `${cleanTitle} is available for booking at ${price || 'standard rates'}! We have ${stock} ${unit} open.`;
+        }
+        if (currentArchetype === 'saas') {
+          return `${cleanTitle} is active and available${price ? ` starting from ${price}` : ''}.`;
+        }
+        if (currentArchetype === 'automotive') {
+          return `${cleanTitle} is available in our showroom starting from ${price}! We have ${stock} ${unit} ready for immediate booking or test drive.`;
+        }
+        return `${cleanTitle} is currently available in stock! We have ${stock} ${unit} available${price ? ` at ${price} each` : ''}.${rx ? ' Please note a valid doctor prescription is required.' : ''}`;
       } else if (stock === 0) {
+        if (currentArchetype === 'academic') {
+          return `We are sorry, but seats for ${cleanTitle} are currently filled for this session.`;
+        }
         return `I'm sorry, ${cleanTitle} is currently out of stock. We can notify you once new inventory arrives!`;
       }
 
       if (itemData.message) return itemData.message;
-      return `${cleanTitle} is available in our store.${price ? ` Price: ${price}.` : ''}`;
+      return `${cleanTitle} is available on our website.${price ? ` Price: ${price}.` : ''}`;
     }
 
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
@@ -2283,30 +2508,22 @@ NOTE: If the customer asks "what do you provide in that", "fees for this", "deta
         : '';
 
       const currentArch = detectCurrentArchetype(agentConfig);
-      const isAcademic = currentArch === 'academic';
-      const roleDescription = isAcademic
-        ? `the official academic admissions & student support assistant for ${businessName}`
-        : `the official live customer support voice & chat assistant embedded on ${businessName}'s website`;
-      const audienceDescription = isAcademic
-        ? `students, parents, and applicants exploring courses, admissions, eligibility, and fees`
-        : `customers and website shoppers`;
-      const consumerDeclineText = isAcademic
-        ? `"I can help you with our courses, admissions, eligibility, and academic guidance. How can I assist your application today?"`
-        : `"I can help you with our products, prices, stock availability, and store services. What item would you like to know about?"`;
-      const catalogSectionLabel = isAcademic
-        ? `[VERIFIED_COURSES_AND_PROGRAMS_DATABASE]`
-        : `[VERIFIED_DATABASE_RECORDS]`;
+      const profile = getArchetypeProfile(currentArch);
+      const roleDescription = `${profile.roleDesc} for ${businessName}`;
+      const audienceDescription = profile.audience;
+      const consumerDeclineText = `"I can help you with our ${profile.nounEn}. How can I assist you with our catalog today?"`;
+      const catalogSectionLabel = profile.catalogLabel;
 
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
-- AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${isAcademic ? 'courses, admissions, fees, eligibility, syllabus, campus guidelines' : 'products, pricing, stock availability, store hours, location, ordering'}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
+- AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${profile.topicsList}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
 - STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
-- CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that course/item without asking what they mean.
+- CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
 - Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [ACTIVE_CONVERSATION_CONTEXT], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
-- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items/programs concisely in 1-2 sentences and confirm you have opened them.
-- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item/program is not currently listed, mention available options if present, and offer guidance.
+- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items concisely in 1-2 sentences and confirm you have opened them.
+- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item is not currently listed, mention available options if present, and offer guidance.
 - Keep responses plain-text, conversational, professional, and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
 - LANGUAGE: ${langDirective}
 
@@ -2493,78 +2710,128 @@ ${cleanFaqBlock}`;
       // 0. Immediate Greeting & Small Talk Handler (English, Hindi, Marathi)
       if (isGreetingOrConversational(text)) {
         const currentArchetype = detectCurrentArchetype(agentConfig);
-        const isAcademic = currentArchetype === 'academic' ||
-                           /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university|curriculum|exam|shikshan|sanstha)\b/i.test(agentConfig?.role || agentConfig?.name || (typeof document !== 'undefined' ? document.title : ''));
-        const noun = isAcademic ? 'admissions and courses' : 'our products and services';
+        const profile = getArchetypeProfile(currentArchetype);
 
         if (queryLang === 'mr-IN') {
-          return `नमस्कार! मी ${agentConfig.name} आहे. मी आज आपल्याला कशी मदत करू शकतो?`;
+          return `नमस्कार! मी ${agentConfig.name} आहे. मी आज आपल्याला ${profile.nounMr}बद्दल कशी मदत करू शकतो?`;
         } else if (queryLang === 'hi-IN') {
-          return `नमस्ते! मैं ${agentConfig.name} हूँ। मैं आज आपकी क्या सहायता कर सकता हूँ?`;
+          return `नमस्ते! मैं ${agentConfig.name} हूँ। मैं आज आपकी ${profile.nounHi} में क्या सहायता कर सकता हूँ?`;
         } else {
-          return `Hello! Welcome to ${agentConfig.name}. How can I assist you with ${noun} today?`;
+          return `Hello! Welcome to ${agentConfig.name}. How can I assist you with ${profile.nounEn} today?`;
         }
       }
 
-      // 0.1 Context-Aware Follow-Up Query Handler (e.g. "what do you provide in that", "fees for this", "details")
+      // 0.1 Universal Context-Aware Follow-Up Query Handler (Works across ALL website types & agents)
       if (context && context.activeItem) {
         const active = context.activeItem;
-        const isFollowUpDetails = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|what about|in that|for that|of that|in this|for this|of this)\b/i.test(lower);
-        const isFollowUpFee = /\b(price|cost|fee|fees|how much|charges|rate)\b/i.test(lower);
-        const isFollowUpEligibility = /\b(eligibility|criteria|requirements?|qualification|percentage|marks)\b/i.test(lower);
-        const isFollowUpApply = /\b(how to apply|admission process|steps|apply online|registration|enroll)\b/i.test(lower);
-        const isFollowUpDocs = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate)\b/i.test(lower);
+        const currentArchetype = detectCurrentArchetype(agentConfig);
+        const profile = getArchetypeProfile(currentArchetype);
+        const unit = active.unit || profile.itemUnit || 'units';
 
-        if (isFollowUpDetails && !isFollowUpFee && !isFollowUpEligibility && !isFollowUpApply && !isFollowUpDocs) {
-          const desc = active.description || active.details || 'comprehensive facilities, laboratory equipment, study materials, and experienced faculty mentorship';
-          const pricePart = active.price ? ` The annual fee is ${active.price}.` : '';
-          const stockPart = active.stock !== null && active.stock !== undefined ? ` We have ${active.stock} ${active.unit || 'seats'} available.` : '';
-          if (queryLang === 'mr-IN') {
-            return `${active.name} मध्ये आम्ही प्रदान करतो: ${desc}.${pricePart}${stockPart}`;
-          } else if (queryLang === 'hi-IN') {
-            return `${active.name} में हम प्रदान करते हैं: ${desc}।${pricePart}${stockPart}`;
-          } else {
-            return `In ${active.name}, we provide: ${desc}.${pricePart}${stockPart}`;
+        // Check if user is switching to a DIFFERENT item first
+        const allCatItems = getAllCatalogItems(agentConfig);
+        const cleanedNoPronouns = lower
+          .replace(/\b(what do you provide|what is provided|what is included|in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|in it|this|that|it|what about|how about|and|or|the|tell me more|details|fees|price|cost|documents|eligibility|how to apply|how to buy|how to order|how to book)\b/gi, ' ')
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const switchedItem = cleanedNoPronouns.length >= 3 ? matchInInventory(allCatItems, cleanedNoPronouns) : null;
+
+        if (!switchedItem || switchedItem.name === active.name) {
+          const isFollowUpDetails = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|specs?|specifications?|ingredients?|amenities|dosage|what about|in that|for that|of that|in this|for this|of this)\b/i.test(lower) || /(यात काय|त्यात काय|इसमें क्या|उसमें क्या|तपशील|विवरण)/i.test(text);
+          const isFollowUpFee = /\b(price|cost|fee|fees|how much|charges|rate|rent|mrp)\b/i.test(lower) || /(किंमत|भाव|दर|कीमत|दाम|फी|शुल्क)/i.test(text);
+          const isFollowUpEligibility = /\b(eligibility|criteria|requirements?|qualification|percentage|marks|prerequisites?)\b/i.test(lower);
+          const isFollowUpApply = /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission process|steps|apply online|order online|registration|enroll|reserve|test drive)\b/i.test(lower);
+          const isFollowUpDocs = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return policy|shipping)\b/i.test(lower);
+
+          // First check if the agent's own Knowledge Base has a specific policy/answer for this follow-up (e.g. warranty, documents, return policy, dosage)
+          if (isFollowUpDocs || isFollowUpEligibility || isFollowUpApply) {
+            const kbList = (agentConfig.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a));
+            let bestKb = null;
+            let bestKbScore = 0;
+            const searchQuery = `${active.name} ${lower}`;
+            for (const kbItem of kbList) {
+              const qL = (kbItem.q || '').toLowerCase();
+              const aL = (kbItem.a || '').toLowerCase();
+              let sc = 0;
+              for (const w of meaningfulWords) {
+                if (qL.includes(w)) sc += 20;
+                if (aL.includes(w)) sc += 8;
+              }
+              if (qL.includes(active.name.toLowerCase()) || aL.includes(active.name.toLowerCase())) sc += 15;
+              if (sc > bestKbScore) {
+                bestKbScore = sc;
+                bestKb = kbItem;
+              }
+            }
+            if (bestKb && bestKbScore >= 20) {
+              context.activeTopic = bestKb.q;
+              return bestKb.a;
+            }
           }
-        }
 
-        if (isFollowUpFee) {
-          if (queryLang === 'mr-IN') {
-            return `${active.name} ची वार्षिक फी ${active.price || 'उपलब्ध'} आहे.${active.stock ? ` (सध्या ${active.stock} जागा शिल्लक).` : ''}`;
-          } else if (queryLang === 'hi-IN') {
-            return `${active.name} की वार्षिक फीस ${active.price || 'उपलब्ध'} है।${active.stock ? ` (वर्तमान में ${active.stock} सीटें उपलब्ध)।` : ''}`;
-          } else {
-            return `The annual fee for ${active.name} is ${active.price || 'available on request'}.${active.stock ? ` Currently ${active.stock} ${active.unit || 'seats'} are available.` : ''}`;
+          if (isFollowUpDetails && !isFollowUpFee && !isFollowUpEligibility && !isFollowUpApply && !isFollowUpDocs) {
+            const desc = active.description || active.dosage || active.details || profile.defaultDesc;
+            const pricePartEn = active.price ? ` The ${profile.priceLabelEn} is ${active.price}.` : '';
+            const pricePartHi = active.price ? ` ${profile.priceLabelHi} ${active.price} है।` : '';
+            const pricePartMr = active.price ? ` ${profile.priceLabelMr} ${active.price} आहे.` : '';
+            const stockPartEn = active.stock !== null && active.stock !== undefined ? ` Currently ${active.stock} ${unit} are available.` : '';
+            const stockPartHi = active.stock !== null && active.stock !== undefined ? ` वर्तमान में ${active.stock} ${unit} उपलब्ध हैं।` : '';
+            const stockPartMr = active.stock !== null && active.stock !== undefined ? ` सध्या ${active.stock} ${unit} उपलब्ध आहेत.` : '';
+            if (queryLang === 'mr-IN') {
+              return `${active.name} मध्ये आम्ही प्रदान करतो: ${desc}.${pricePartMr}${stockPartMr}`;
+            } else if (queryLang === 'hi-IN') {
+              return `${active.name} में हम प्रदान करते हैं: ${desc}।${pricePartHi}${stockPartHi}`;
+            } else {
+              return `In ${active.name}, we provide: ${desc}.${pricePartEn}${stockPartEn}`;
+            }
           }
-        }
 
-        if (isFollowUpEligibility) {
-          if (queryLang === 'mr-IN') {
-            return `${active.name} च्या प्रवेशासाठी १० वी परीक्षेत किमान ६०% गुण आवश्यक आहेत.`;
-          } else if (queryLang === 'hi-IN') {
-            return `${active.name} के एडमिशन के लिए 10वीं बोर्ड में न्यूनतम 60% अंक आवश्यक हैं।`;
-          } else {
-            return `For ${active.name} admission, candidates must have passed 10th Standard / SSC Board with minimum 60% marks including Science and Mathematics.`;
+          if (isFollowUpFee) {
+            if (queryLang === 'mr-IN') {
+              return `${active.name} ची ${profile.priceLabelMr} ${active.price || 'उपलब्ध'} आहे.${active.stock ? ` (सध्या ${active.stock} ${unit} उपलब्ध).` : ''}`;
+            } else if (queryLang === 'hi-IN') {
+              return `${active.name} की ${profile.priceLabelHi} ${active.price || 'उपलब्ध'} है।${active.stock ? ` (वर्तमान में ${active.stock} ${unit} उपलब्ध)।` : ''}`;
+            } else {
+              return `The ${profile.priceLabelEn} for ${active.name} is ${active.price || 'available on request'}.${active.stock ? ` Currently ${active.stock} ${unit} are available.` : ''}`;
+            }
           }
-        }
 
-        if (isFollowUpDocs) {
-          if (queryLang === 'mr-IN') {
-            return `${active.name} च्या प्रवेशासाठी लागणारी कागदपत्रे: १० वी मार्कशीट, मूळ शाळा सोडल्याचा दाखला (LC), आधार कार्ड, जातीचा दाखला आणि ३ फोटो.`;
-          } else if (queryLang === 'hi-IN') {
-            return `${active.name} के एडमिशन के लिए आवश्यक दस्तावेज: 10वीं की मार्कशीट, मूल स्कूल छोड़ने का प्रमाण पत्र (LC), आधार कार्ड और 3 पासपोर्ट साइज फोटो।`;
-          } else {
-            return `Required documents for ${active.name}: 10th Standard Marksheet, original School Leaving Certificate (LC), Aadhaar card copy, caste certificate (if applicable), and 3 passport photos.`;
+          if (isFollowUpApply) {
+            if (queryLang === 'mr-IN') {
+              return `${active.name} साठी: ${profile.actionMr}.`;
+            } else if (queryLang === 'hi-IN') {
+              return `${active.name} के लिए: ${profile.actionHi}।`;
+            } else {
+              return `To proceed with ${active.name}: ${profile.actionEn}.`;
+            }
           }
-        }
 
-        if (isFollowUpApply) {
-          if (queryLang === 'mr-IN') {
-            return `${active.name} साठी अर्ज करण्यासाठी: आमच्या ऑनलाइन पोर्टलवर फॉर्म भरा, कागदपत्रे अपलोड करा आणि नोंदणी फी भरा.`;
-          } else if (queryLang === 'hi-IN') {
-            return `${active.name} के लिए आवेदन करने हेतु: पोर्टल पर ऑनलाइन फॉर्म भरें, दस्तावेज अपलोड करें और पंजीकरण शुल्क जमा करें।`;
-          } else {
-            return `To apply for ${active.name}: complete the online registration form on this portal, upload the required marksheets and certificates, and submit the application.`;
+          if (isFollowUpEligibility) {
+            if (currentArchetype === 'academic') {
+              if (queryLang === 'mr-IN') return `${active.name} च्या प्रवेशासाठी पात्रता परीक्षेत आवश्यक गुण असणे गरजेचे आहे.`;
+              if (queryLang === 'hi-IN') return `${active.name} के एडमिशन के लिए पात्रता परीक्षा में न्यूनतम आवश्यक अंक होना जरूरी है।`;
+              return `For ${active.name}, candidates must have passed the qualifying board examination with the required merit percentage.`;
+            }
+            if (currentArchetype === 'healthcare') {
+              return `${active.name} may require a valid doctor prescription or consultation before dispensing.`;
+            }
+            return `${active.name} is available for all eligible customers with quick confirmation on our website.`;
+          }
+
+          if (isFollowUpDocs) {
+            if (currentArchetype === 'academic') {
+              if (queryLang === 'mr-IN') return `${active.name} च्या प्रवेशासाठी लागणारी कागदपत्रे: मागील इयत्तेची मार्कशीट, मूळ शाळा सोडल्याचा दाखला (LC), आधार कार्ड आणि पासपोर्ट फोटो.`;
+              if (queryLang === 'hi-IN') return `${active.name} के एडमिशन के लिए आवश्यक दस्तावेज: पिछली कक्षा की मार्कशीट, मूल स्कूल छोड़ने का प्रमाण पत्र (LC), आधार कार्ड और पासपोर्ट फोटो।`;
+              return `Required documents for ${active.name}: previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs.`;
+            }
+            if (currentArchetype === 'healthcare') {
+              return `For ${active.name}, please keep a valid doctor prescription and patient ID ready if required.`;
+            }
+            if (currentArchetype === 'financial') {
+              return `For ${active.name}, typically PAN card, identity proof, and relevant financial statements are required.`;
+            }
+            return `For ${active.name}, please check our website policy section or reach out to support for exact details.`;
           }
         }
       }
@@ -2577,20 +2844,10 @@ ${cleanFaqBlock}`;
         if (sec) scrollToHostSection(sec);
 
         const currentArchetype = detectCurrentArchetype(agentConfig);
-        const isAcademic = currentArchetype === 'academic' ||
-                           /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university|curriculum|exam)\b/i.test(text) ||
-                           /\b(admission|admissions|academy|academic|school|college|university|tuition|shikshan|sanstha)\b/i.test(agentConfig?.role || agentConfig?.name || (typeof document !== 'undefined' ? document.title : ''));
-        const isMed = !isAcademic && (/\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
-                      (currentArchetype === 'healthcare' && allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || '')))) ||
-                      /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || ''));
-        const isFood = /\b(menu|dish|food|pizza|burger|eat|drink|restaurant|cafe)\b/i.test(text) ||
-                       /\b(restaurant|cafe|food|dining|bakery)\b/i.test(agentConfig?.description || agentConfig?.name || '');
-        const isPlan = /\b(plan|tier|subscription|pricing)\b/i.test(text);
-        const isService = /\b(service|services|consultation)\b/i.test(text);
-
-        const nounEn = isAcademic ? 'courses / programs' : (isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'items');
-        const nounHi = isAcademic ? 'कोर्स / कार्यक्रम' : (isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद');
-        const nounMr = isAcademic ? 'अभ्यासक्रम / कोर्सेस' : (isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने');
+        const profile = getArchetypeProfile(currentArchetype);
+        const nounEn = profile.itemNounEn;
+        const nounHi = profile.itemNounHi;
+        const nounMr = profile.itemNounMr;
 
         let replyText = '';
         if (allItems.length > 0) {
@@ -2677,20 +2934,10 @@ ${cleanFaqBlock}`;
         if (sec) scrollToHostSection(sec);
 
         const currentArchetype = detectCurrentArchetype(agentConfig);
-        const isAcademic = currentArchetype === 'academic' ||
-                           /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university|curriculum|exam)\b/i.test(text) ||
-                           /\b(admission|admissions|academy|academic|school|college|university|tuition|shikshan|sanstha)\b/i.test(agentConfig?.role || agentConfig?.name || (typeof document !== 'undefined' ? document.title : ''));
-        const isMed = !isAcademic && (/\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
-                      (currentArchetype === 'healthcare' && allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || '')))) ||
-                      /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || ''));
-        const isFood = /\b(menu|dish|food|pizza|burger|eat|drink|restaurant|cafe)\b/i.test(text) ||
-                       /\b(restaurant|cafe|food|dining|bakery)\b/i.test(agentConfig?.description || agentConfig?.name || '');
-        const isPlan = /\b(plan|tier|subscription|pricing)\b/i.test(text);
-        const isService = /\b(service|services|consultation)\b/i.test(text);
-
-        const nounEn = isAcademic ? 'courses / programs' : (isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'items');
-        const nounHi = isAcademic ? 'कोर्स / कार्यक्रम' : (isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद');
-        const nounMr = isAcademic ? 'अभ्यासक्रम / कोर्सेस' : (isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने');
+        const profile = getArchetypeProfile(currentArchetype);
+        const nounEn = profile.itemNounEn;
+        const nounHi = profile.itemNounHi;
+        const nounMr = profile.itemNounMr;
 
         let replyText = '';
         if (queryLang === 'mr-IN') {
@@ -2887,14 +3134,16 @@ ${cleanFaqBlock}`;
       }
 
       if (history && history.length > 0) {
+        const currentArchetype = detectCurrentArchetype(agentConfig);
+        const profile = getArchetypeProfile(currentArchetype);
         const itemContextName = context?.activeItem?.name ? ` regarding ${context.activeItem.name}` : '';
         if (queryLang === 'mr-IN') {
-          return `मी आपल्या सेवेसाठी तत्पर आहे${itemContextName}. आपल्याला अभ्यासक्रम, फी किंवा प्रवेश प्रक्रियेबद्दल अधिक माहिती हवी आहे का?`;
+          return `मी आपल्या सेवेसाठी तत्पर आहे${itemContextName}. आपल्याला ${profile.followUpMr}बद्दल अधिक माहिती हवी आहे का?`;
         }
         if (queryLang === 'hi-IN') {
-          return `मैं आपकी सहायता के लिए उपस्थित हूँ${itemContextName}। क्या आप फीस, पात्रता या एडमिशन प्रक्रिया के बारे में और जानना चाहते हैं?`;
+          return `मैं आपकी सहायता के लिए उपस्थित हूँ${itemContextName}। क्या आप ${profile.followUpHi} के बारे में और जानना चाहते हैं?`;
         }
-        return `I am here to assist you${itemContextName}. Would you like to know more about the course details, fee structure, eligibility criteria, or admission procedure?`;
+        return `I am here to assist you${itemContextName}. Would you like to know more about our ${profile.followUpEn}?`;
       }
 
       if (queryLang === 'mr-IN') {

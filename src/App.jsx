@@ -1462,6 +1462,7 @@ export default function App() {
       const defaultSupportPrompt = "You are a friendly, helpful AI voice assistant for customer support. Answer visitor questions politely and concisely in 1-2 spoken sentences.";
       const activeKey = currentAssistant?.apiKey || getUserApiKeys().activeKey || '';
       const currentAgentName = currentAssistant?.name || 'Krushna AI Voice Agent';
+      const currentThread = threads.find((t) => t.id === currentThreadId);
       const aiReply = await generateAIResponse(
         text.trim(),
         currentAssistant?.prompt || defaultSupportPrompt,
@@ -1469,7 +1470,8 @@ export default function App() {
         activeKey,
         {
           agentName: currentAgentName,
-          databaseRecords: currentAssistant?.databaseRecords || []
+          databaseRecords: currentAssistant?.databaseRecords || [],
+          conversationHistory: (currentThread?.messages || []).slice(-8)
         }
       );
 

@@ -404,7 +404,8 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         {
           agentName: assistantName,
           databaseRecords: assistant?.databaseRecords || [],
-          databaseConfig: assistant?.databaseConfig || null
+          databaseConfig: assistant?.databaseConfig || null,
+          conversationHistory: messages
         }
       );
 
