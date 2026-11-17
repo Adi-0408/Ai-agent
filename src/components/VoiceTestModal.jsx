@@ -648,20 +648,37 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           <div ref={chatBottomRef} />
         </div>
 
-        {/* Text Input Fallback Bar */}
+        {/* Text Input Bar with Voice Button on Left of Enter */}
         <div className="p-3 bg-white border-t border-slate-200 flex items-center gap-2">
           <input
             type="text"
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
-            placeholder="Or type a test question here..."
+            placeholder="Type a test question or tap mic to speak..."
             className="flex-1 h-9 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white"
           />
+          {/* Voice Button on Left of Enter Button */}
+          <button
+            type="button"
+            onClick={handleToggleListen}
+            className={`h-9 w-9 rounded-xl border flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              isRecording
+                ? 'bg-rose-50 border-rose-300 text-rose-600 animate-pulse ring-2 ring-rose-400/20'
+                : isSpeaking
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-600'
+                : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+            }`}
+            title={isRecording ? 'Click to stop speaking' : 'Click to speak (English | हिंदी | मराठी)'}
+          >
+            <Mic size={15} className={isRecording ? 'animate-pulse text-rose-600' : ''} />
+          </button>
+          {/* Enter / Send Button */}
           <button
             type="button"
             onClick={handleSendText}
-            className="h-9 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+            className="h-9 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-2xs shrink-0"
+            title="Send message"
           >
             <span>Send</span>
             <Send size={12} />

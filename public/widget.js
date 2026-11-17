@@ -497,6 +497,35 @@
       .vhd-input:focus {
         border-color: var(--accent);
       }
+      .vhd-voice-btn {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 10px;
+        padding: 8px 10px;
+        color: #38bdf8;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+      }
+      .vhd-voice-btn:hover {
+        background: rgba(56, 189, 248, 0.15);
+        border-color: #38bdf8;
+        color: #ffffff;
+      }
+      .vhd-voice-btn.listening {
+        background: rgba(239, 68, 68, 0.25);
+        border-color: #ef4444;
+        color: #ef4444;
+        animation: vhd-pulse-red 1.2s infinite;
+      }
+      .vhd-voice-btn.speaking {
+        background: rgba(16, 185, 129, 0.2);
+        border-color: #10b981;
+        color: #10b981;
+      }
       .vhd-send-btn {
         background: var(--primary);
         border: none;
@@ -507,6 +536,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        flex-shrink: 0;
       }
       .vhd-lang-bar {
         display: flex;
@@ -587,8 +617,13 @@
           <div class="vhd-voice-label" id="vhd-voice-label">Tap to Speak (Auto-Detect)</div>
         </div>
         <div class="vhd-footer">
-          <input type="text" class="vhd-input" id="vhd-input" placeholder="Speak in English, हिंदी, or मराठी..." />
-          <button class="vhd-send-btn" id="vhd-send">➤</button>
+          <input type="text" class="vhd-input" id="vhd-input" placeholder="Type or tap mic to speak..." />
+          <button class="vhd-voice-btn" id="vhd-voice-btn" title="Tap to Speak (English | हिंदी | मराठी)">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
+            </svg>
+          </button>
+          <button class="vhd-send-btn" id="vhd-send" title="Send message">➤</button>
         </div>
       </div>
     `;
@@ -601,6 +636,7 @@
     const panel = shadow.getElementById('vhd-panel');
     const closeBtn = shadow.getElementById('vhd-close');
     const orb = shadow.getElementById('vhd-orb');
+    const voiceBtn = shadow.getElementById('vhd-voice-btn');
     const voiceLabel = shadow.getElementById('vhd-voice-label');
     const body = shadow.getElementById('vhd-body');
     const input = shadow.getElementById('vhd-input');
@@ -608,6 +644,19 @@
 
     // Multilingual State: Auto-Detect (default), English, Hindi (हिंदी), and Marathi (मराठी)
     let currentSpeechLang = 'auto';
+
+    function updateVoiceState(state) {
+      if (state === 'listening') {
+        orb.className = 'vhd-orb-btn listening';
+        if (voiceBtn) voiceBtn.className = 'vhd-voice-btn listening';
+      } else if (state === 'speaking') {
+        orb.className = 'vhd-orb-btn speaking';
+        if (voiceBtn) voiceBtn.className = 'vhd-voice-btn speaking';
+      } else {
+        orb.className = 'vhd-orb-btn';
+        if (voiceBtn) voiceBtn.className = 'vhd-voice-btn';
+      }
+    }
     const langBtns = shadow.querySelectorAll('.vhd-lang-btn');
     langBtns.forEach(btn => {
       btn.addEventListener('click', () => {
@@ -655,7 +704,7 @@
         isListening = true;
         finalRecordedTranscript = '';
         lastCapturedSpokenText = '';
-        orb.className = 'vhd-orb-btn listening';
+        updateVoiceState('listening');
         voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Listening to your voice...' :
                                  currentSpeechLang.startsWith('hi') ? 'आपकी आवाज़ सुन रहे हैं...' :
                                  currentSpeechLang.startsWith('mr') ? 'तुमचा आवाज ऐकत आहोत...' :
@@ -681,7 +730,7 @@
       recognition.onerror = (event) => {
         console.warn('[Voice Help Desk] Speech recognition error:', event?.error);
         isListening = false;
-        orb.className = 'vhd-orb-btn';
+        updateVoiceState('');
         if (activeStream) {
           try { activeStream.getTracks().forEach(track => track.stop()); } catch (_) {}
           activeStream = null;
@@ -784,7 +833,7 @@
         }
 
         if (orb.className !== 'vhd-orb-btn speaking') {
-          orb.className = 'vhd-orb-btn';
+          updateVoiceState('');
           voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Tap to Speak (Auto-Detect)' : 'Tap to Speak';
         }
       };
@@ -813,8 +862,8 @@
       }, 300);
     }
 
-    // Voice Orb Click (Supports Instant Barge-in)
-    orb.addEventListener('click', async () => {
+    // Unified Voice Recording Handler (Supports Instant Barge-in)
+    const toggleVoiceRecording = async () => {
       // Re-verify if agent has been deleted before opening mic
       const stillActive = await fetchAgentConfig();
       if (!stillActive) {
@@ -834,7 +883,7 @@
         if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
         if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
         window.__vhdActiveUtterance = null;
-        orb.className = 'vhd-orb-btn';
+        updateVoiceState('');
       }
 
       if (isListening) {
@@ -880,7 +929,10 @@
           } catch (e2) {}
         }
       }
-    });
+    };
+
+    orb.addEventListener('click', toggleVoiceRecording);
+    if (voiceBtn) voiceBtn.addEventListener('click', toggleVoiceRecording);
 
     // Send text message
     function submitText() {
@@ -1275,7 +1327,12 @@
       return { name: cleanName, desc: secondary };
     }
 
-    function getAllCatalogItems(agentConfig) {
+    let _catalogCache = { timestamp: 0, items: [] };
+    function getAllCatalogItems(agentConfig, forceRefresh = false) {
+      const now = Date.now();
+      if (!forceRefresh && _catalogCache.items.length > 0 && (now - _catalogCache.timestamp < 4000)) {
+        return _catalogCache.items;
+      }
       const items = [];
       const seen = new Set();
 
@@ -1534,6 +1591,7 @@
       }
 
       // STRICT ACCURACY: Never fabricate fake catalog items from FAQs or general text.
+      _catalogCache = { timestamp: now, items };
       return items;
     }
 
@@ -1938,16 +1996,30 @@
         : 'General customer support assistance.';
 
       let bridgeBlock = '';
-      if (bridgeResult && bridgeResult.status === 'FOUND_IN_HOST_STATE') {
-        bridgeBlock = `STATUS: FOUND_IN_HOST_STATE\nDATA: ${JSON.stringify(bridgeResult.data)}`;
-      } else if (bridgeResult && bridgeResult.status === 'FOUND_IN_LIVE_API') {
-        bridgeBlock = `STATUS: FOUND_IN_LIVE_API\nDATA: ${JSON.stringify(bridgeResult.data)}`;
+      if (bridgeResult && (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API')) {
+        const item = bridgeResult.data;
+        bridgeBlock = `STATUS: FOUND_IN_DATABASE
+ITEM_NAME: ${item.name || 'Unknown'}
+PRICE: ${item.price || 'Not listed'}
+STOCK: ${item.stock !== undefined && item.stock !== null ? item.stock : 'Available'} ${item.unit || 'units'}
+DETAILS: ${item.composition || item.details || item.dosage || 'Standard item'}
+PRESCRIPTION_REQUIRED: ${item.rx ? 'Yes' : 'No'}`;
       } else if (bridgeResult && bridgeResult.status === 'FOUND_CATALOG_LIST') {
-        bridgeBlock = `STATUS: FOUND_CATALOG_LIST\nDATA: ${JSON.stringify(bridgeResult.data)}`;
+        bridgeBlock = `STATUS: FOUND_CATALOG_LIST
+ITEMS_COUNT: ${Array.isArray(bridgeResult.data) ? bridgeResult.data.length : 0}
+SAMPLE_ITEMS: ${JSON.stringify((bridgeResult.data || []).slice(0, 8))}`;
+      } else if (bridgeResult && bridgeResult.status === 'NAVIGATE_SECTION') {
+        bridgeBlock = `STATUS: NAVIGATE_SECTION
+SECTION: ${bridgeResult.data?.label || 'Target section'}`;
+      } else if (bridgeResult && bridgeResult.topic) {
+        bridgeBlock = `STATUS: HOST_KNOWLEDGE_QUERY
+TOPIC: ${bridgeResult.topic}
+DETAILS: ${JSON.stringify(bridgeResult.data)}`;
       } else if (bridgeResult && bridgeResult.status === 'ITEM_NOT_FOUND') {
-        bridgeBlock = `STATUS: ITEM_NOT_FOUND\nTARGET_ITEM: "${bridgeResult.item || 'The requested item'}"`;
+        bridgeBlock = `STATUS: ITEM_NOT_FOUND
+REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
       } else {
-        bridgeBlock = `STATUS: NO_DYNAMIC_DATA_REQUESTED`;
+        bridgeBlock = `STATUS: NO_SPECIFIC_ITEM_FILTER`;
       }
 
       let langDirective = 'Speak in clear, natural English.';
@@ -1973,14 +2045,14 @@
         : getAllCatalogItems(agentConfig);
       const catalogSummary = allDbRecords.slice(0, 30).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}${r.stock !== null && r.stock !== undefined ? ` [${r.stock} ${r.unit || 'units'} in stock]` : ''}`).join('; ');
 
-      return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website. You are speaking directly to a customer browsing the website.
+      return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website, trained with the accuracy, deep database grounding, and professionalism of Flipkart and Amazon customer support specialists. You are speaking directly to a customer browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
-- Answer strictly using the injected [LIVE_BRIDGE_DATA], [VERIFIED_DATABASE_RECORDS], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below.
-- If [LIVE_BRIDGE_DATA] contains exact stock, price, order status, or availability (e.g., '42 strips available at ₹185.50'), state the exact numbers naturally and concisely in 1-2 spoken-friendly sentences.
-- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize the available catalog products/medicines with prices concisely in 1-2 sentences and confirm you have opened them.
-- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the customer that the requested item is not currently listed in our live catalog, mention available alternatives if present, and offer to show the catalog. NEVER say "verify with our counter/support team" or give generic error text.
-- Keep responses plain-text, conversational, and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
+- Answer strictly using the injected [LIVE_BRIDGE_DATA], [VERIFIED_DATABASE_RECORDS], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
+- If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability (e.g., '42 strips available at ₹185.50'), state the exact numbers directly, naturally, and concisely in 1-2 spoken-friendly sentences.
+- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize the available catalog products/items with prices concisely in 1-2 sentences and confirm you have opened them.
+- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the customer that the requested item is not currently listed in our live catalog, mention available alternatives if present, and offer to show the catalog.
+- Keep responses plain-text, conversational, professional (like Flipkart/Amazon support), and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
 - LANGUAGE: ${langDirective}
 
 [LIVE_BRIDGE_DATA]
@@ -2021,7 +2093,7 @@ ${cleanFaqBlock}`;
       }
 
       try {
-        // 1. Groq Provider (gsk_...)
+        // 1. Groq Provider (gsk_...) - High-speed enterprise inference (<200ms)
         if (trimmedKey.startsWith('gsk_')) {
           const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -2030,7 +2102,7 @@ ${cleanFaqBlock}`;
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              model: model || 'llama-3.3-70b-versatile',
+              model: model || 'llama-3.1-8b-instant',
               messages: [
                 { role: 'system', content: systemPrompt },
                 ...conversationHistory.slice(-6).map(m => ({
@@ -2039,10 +2111,10 @@ ${cleanFaqBlock}`;
                 })),
                 { role: 'user', content: cleanUser }
               ],
-              temperature: 0.3,
+              temperature: 0.2,
               max_tokens: 150
             }),
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(3500)
           });
 
           if (groqRes.ok) {
@@ -2597,28 +2669,39 @@ ${cleanFaqBlock}`;
 
       // 1. Deterministically resolve Live Real-Time Website Database Bridge first
       const bridgeResult = await resolveDatabaseBridge(userText, agentConfig);
-      if (bridgeResult && (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API' || bridgeResult.status === 'FOUND_CATALOG_LIST' || bridgeResult.status === 'NAVIGATE_SECTION' || bridgeResult.status === 'ITEM_NOT_FOUND')) {
-        const localRes = await inferLocalAgentResponse(userText, bridgeResult);
-        if (typeof localRes === 'object' && localRes !== null) {
-          reply = localRes.reply || '';
-          navAction = localRes.navAction || null;
-        } else {
-          reply = localRes;
+
+      // Determine interactive navigation or highlight action
+      if (bridgeResult) {
+        if (bridgeResult.status === 'NAVIGATE_SECTION') {
+          const sec = bridgeResult.data || findHostSection(userText);
+          if (sec) {
+            scrollToHostSection(sec);
+            navAction = { label: `Jump to ${sec.label}`, sectionInfo: sec };
+          }
+        } else if (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API') {
+          const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
+          if (sec) scrollToHostSection(sec);
+          const cleanBtnName = cleanScrapedItemTitle(bridgeResult.data?.name || 'Item').name.substring(0, 25);
+          navAction = sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec } : null;
+        } else if (bridgeResult.status === 'FOUND_CATALOG_LIST') {
+          const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
+          if (sec) scrollToHostSection(sec);
+          navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null;
         }
       }
 
-      // 2. Call BYOK LLM if API Key is configured and bridge hasn't resolved it
-      if (!reply && apiKey) {
+      // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database & website context
+      if (apiKey) {
         const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang);
         reply = await callLLMWithBYOK(userText, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
       }
 
-      // 3. Fallback to Local Semantic Knowledge Reasoner if API key is not present or BYOK failed
+      // 3. Fallback to Local Semantic Knowledge Reasoner ONLY if BYOK failed or API key missing
       if (!reply) {
         const localRes = await inferLocalAgentResponse(userText, bridgeResult);
         if (typeof localRes === 'object' && localRes !== null) {
           reply = localRes.reply || '';
-          navAction = localRes.navAction || null;
+          if (!navAction) navAction = localRes.navAction || null;
         } else {
           reply = localRes;
         }

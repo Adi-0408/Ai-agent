@@ -12,7 +12,7 @@ import { getUserApiKeys } from './aiCompletionService.js';
  * @returns {Promise<object>} Synthesized agent blueprint
  */
 export async function synthesizeAgentFromFilesAndPrompt(userPrompt, analysisResult, userApiConfig = {}) {
-  const { frontend, backend, database, tools, combinedKnowledge } = analysisResult;
+  const { frontend, backend, database, tools, combinedKnowledge, databaseRecords } = analysisResult;
 
   // Resolve user's BYOK keys (never fallback to developer keys)
   const storedKeys = getUserApiKeys();
@@ -55,6 +55,10 @@ ${d.knowledgeBase.slice(0, 10).map(k => ` - Q: ${k.q} -> A: ${k.a.substring(0, 1
 
   const topFacts = combinedKnowledge.slice(0, 15).map(k => `- Q: "${k.q}" -> A: "${k.a.substring(0, 120)}"`).join('\n');
 
+  const dbRecordsSummary = (databaseRecords || []).slice(0, 30).map(r => 
+    `- ${r.name}: ${r.price ? (typeof r.price === 'number' ? `₹${r.price}` : r.price) : 'Price on request'}${r.stock !== null && r.stock !== undefined ? ` [Stock: ${r.stock} ${r.unit || 'units'}]` : ''}${r.dosage ? ` (${r.dosage})` : ''}`
+  ).join('\n');
+
   const metaPrompt = `You are an elite AI Agent Architect.
 A user has uploaded full-stack files (Frontend, Backend, and Database) and given a prompt instructing how to build an AI Voice Help Desk Agent.
 
@@ -66,6 +70,9 @@ ${frontendExcerpts || 'General website interface and navigation'}
 
 DISCOVERED PRODUCTS & CATALOG:
 ${discoveredProducts.length > 0 ? discoveredProducts.join(', ') : 'None explicitly tagged, extract from headings/facts below'}
+
+VERIFIED STORE DATABASE CATALOG & RECORDS:
+${dbRecordsSummary || 'None explicitly provided in upload; live bridge active'}
 
 VERIFIED KNOWLEDGE BASE FACTS EXTRACTED FROM FILES:
 ${topFacts || 'General website information'}
@@ -81,6 +88,7 @@ CRITICAL ARCHITECTURAL RULES:
    - What products or services are offered (listing the actual products found)
    - Detailed answers for each specific product, model, or technical subsystem
    - Support, consultation, or contact information.
+4. Train the systemPrompt with Flipkart/Amazon-grade helpdesk accuracy and professionalism: deeply grounded in the verified store database catalog, answering directly with real product names, exact prices, stock, and clear guidance with zero hallucination.
 
 Respond ONLY with a valid JSON object matching this structure (no markdown formatting, no backticks, just raw JSON):
 {

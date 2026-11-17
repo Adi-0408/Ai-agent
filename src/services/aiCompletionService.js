@@ -474,9 +474,10 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
 2. NEVER Output JSON Or Config Schemas: You are in DIRECT CHAT / VOICE MODE. You MUST NEVER output JSON configurations, code schemas, or objects like {"agent_config": ...}.
 3. Dual-Channel Excellence: Keep answers crisp, polite, and helpful so they sound natural when spoken aloud and look neat and readable in chat.`;
 
-  // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms)
+  // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms with llama-3.1-8b-instant)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
     try {
+      const groqModel = options?.model || 'llama-3.1-8b-instant';
       const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -484,7 +485,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: groqModel,
           messages: [
             {
               role: 'system',
@@ -495,8 +496,8 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
               content: cleanMessage
             }
           ],
-          max_tokens: 800,
-          temperature: 0.5
+          max_tokens: 300,
+          temperature: 0.4
         })
       });
 

@@ -126,20 +126,30 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
             { q: "What products or services do you offer?", a: `Comprehensive solutions and customer guidance for ${detectedSite}.` }
           ];
 
+      const topProductsSummary = (fullStack.databaseRecords || []).slice(0, 25).map(r => 
+        `- ${r.name}: ${r.price ? (typeof r.price === 'number' ? `₹${r.price}` : r.price) : 'Price on request'}${r.stock !== null && r.stock !== undefined ? ` (Stock: ${r.stock} ${r.unit || 'units'})` : ''}${r.dosage || r.description ? ` | ${r.dosage || r.description}` : ''}`
+      ).join('\n');
+
+      const trainedPrompt = `# ${astName} - Enterprise AI Customer Support & Help Desk
+
+## Identity & Assignment
+You are ${astName}, the dedicated AI Customer Support Assistant for ${detectedSite}, trained to provide intelligent, helpful, and highly accurate guidance like the customer help desks at Flipkart and Amazon.
+${fullStack.summary}
+
+## Verified Store Catalog & Database
+${topProductsSummary ? `${topProductsSummary}\n(Additional records available via live database bridge)` : 'Live catalog connected via website database bridge.'}
+
+## Guidelines & Etiquette
+- Accuracy First: State exact prices, stock availability, and specifications directly from verified database records. Never invent or hallucinate prices.
+- Natural Voice Pacing: Respond in 1-2 concise, conversational spoken sentences suitable for speech audio (< 30 words).
+- Multilingual Fluency: Understand and fluently reply in English, Hindi (हिंदी), and Marathi (मराठी) matching the customer's language.
+- Proactive Help: If a customer asks about a symptom or category, recommend matching in-stock items. If an item is out of stock, suggest available alternatives politely.`;
+
       setExtractedData({
         knowledgeBase: kbList,
         databaseRecords: fullStack.databaseRecords || [],
-        systemPrompt: `# ${astName} - ${firstFile.type === 'backend' ? 'API Action Assistant' : 'Website & Product Advisor'}
-
-## Identity & Purpose
-You are ${astName}, the official AI conversational guide for ${detectedSite}.
-${fullStack.summary}
-
-## Guidelines
-- Respond in 1-2 concise, natural spoken sentences suitable for voice.
-- Explain products, specifications, and website features with accuracy.
-- Be polite, helpful, and direct.`,
-        greeting: `Hello! Welcome to ${detectedSite}. I am ${astName}. How can I assist you with our products or inquiries today?`,
+        systemPrompt: trainedPrompt,
+        greeting: `Hello! Welcome to ${detectedSite}. I am ${astName}, your live customer support assistant. How can I assist you with our catalog, services, or inquiries today?`,
         tools: fullStack.tools,
         itemsExtracted: kbList.length
       });
