@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExtractor';
 import { detectFileType, analyzeDatabaseFile } from '../utils/codebaseAnalyzer';
+import { extractDatabaseCredentials, fetchExternalDatabaseRecords } from '../utils/databaseKeyExtractor';
 import { isZipFile, expandFileList } from '../utils/zipHandler';
 import {
   saveFileToLocalStore,
@@ -159,6 +160,9 @@ export default function LiveFilesView({
     const currentFiles = getAssistantFiles(targetAssistant);
     const newRecords = [];
     const newExtractedKb = [];
+    let detectedDbConfig = null;
+    let detectedDbProvider = null;
+    let newDbRecords = [];
 
     const hasZip = rawFileList.some(isZipFile);
     if (hasZip) {
@@ -243,6 +247,18 @@ export default function LiveFilesView({
           if (dbAnalysis?.knowledgeBase && dbAnalysis.knowledgeBase.length > 0) {
             newExtractedKb.push(...dbAnalysis.knowledgeBase);
           }
+          if (dbAnalysis?.databaseRecords && dbAnalysis.databaseRecords.length > 0) {
+            newDbRecords.push(...dbAnalysis.databaseRecords);
+          }
+        }
+
+        // Check for database credentials (Firebase, Supabase, Airtable, REST)
+        if (isText) {
+          const dbCreds = extractDatabaseCredentials(file.name, content);
+          if (dbCreds.detected && dbCreds.config) {
+            detectedDbConfig = dbCreds.config;
+            detectedDbProvider = dbCreds.providerName;
+          }
         }
 
         newRecords.push({
@@ -269,6 +285,24 @@ export default function LiveFilesView({
       showNotice('success', `Unpacked & indexed ${newRecords.length} files from archive into Knowledge Base!`);
     }
 
+    // If database credentials were discovered, probe live database to pull real-time records
+    if (detectedDbConfig) {
+      try {
+        const liveResult = await fetchExternalDatabaseRecords(detectedDbConfig);
+        if (liveResult && liveResult.success && liveResult.records.length > 0) {
+          newDbRecords.push(...liveResult.records);
+          if (liveResult.knowledgeBase && liveResult.knowledgeBase.length > 0) {
+            newExtractedKb.push(...liveResult.knowledgeBase);
+          }
+          showNotice('success', `🔥 Live Database Connected: ${detectedDbProvider} (${liveResult.records.length} records fetched from ${liveResult.source})!`);
+        } else {
+          showNotice('info', `🔥 Live Database Configured: ${detectedDbProvider} (Direct real-time access enabled)`);
+        }
+      } catch (liveErr) {
+        console.warn('Live DB probe error:', liveErr);
+      }
+    }
+
     const updatedFileList = [...newRecords, ...currentFiles];
 
     if (targetAssistant && onUpdateAssistantFiles) {
@@ -277,7 +311,19 @@ export default function LiveFilesView({
         const existingKb = Array.isArray(targetAssistant.knowledgeBase) ? targetAssistant.knowledgeBase : [];
         updatedKb = [...existingKb, ...newExtractedKb];
       }
-      onUpdateAssistantFiles(targetId, updatedFileList, updatedKb);
+      let updatedDbRecords = null;
+      if (newDbRecords.length > 0) {
+        const existingRecords = Array.isArray(targetAssistant.databaseRecords) ? targetAssistant.databaseRecords : [];
+        const seen = new Set(existingRecords.map(r => r.name.toLowerCase()));
+        updatedDbRecords = [...existingRecords];
+        for (const rec of newDbRecords) {
+          if (!seen.has(rec.name.toLowerCase())) {
+            seen.add(rec.name.toLowerCase());
+            updatedDbRecords.push(rec);
+          }
+        }
+      }
+      onUpdateAssistantFiles(targetId, updatedFileList, updatedKb, updatedDbRecords, detectedDbConfig);
     } else {
       setSharedFallbackFiles(updatedFileList);
       try {
@@ -424,6 +470,12 @@ export default function LiveFilesView({
                 <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-[11px] font-medium flex items-center gap-1">
                   📁 <strong>{astFiles.length}</strong> Files Stored
                 </span>
+                {ast?.databaseConfig && (
+                  <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[11px] font-semibold flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    🔥 Live DB: {ast.databaseConfig.type === 'firebase' ? 'Firebase' : 'Supabase'} ({ast.databaseConfig.projectId || 'Connected'})
+                  </span>
+                )}
               </div>
             </div>
           </div>

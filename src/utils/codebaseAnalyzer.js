@@ -6,6 +6,8 @@
  * 3. Database & Knowledge Documents (.json, .sql, .csv, .txt, .md, .pdf, .docx, .xml, .yaml, tables, collections)
  */
 
+import { extractDatabaseCredentials } from './databaseKeyExtractor.js';
+
 export function detectFileType(fileName, content) {
   const lowerName = (fileName || '').toLowerCase();
   const lowerContent = (content || '').toLowerCase();
@@ -428,6 +430,14 @@ export function analyzeDatabaseFile(fileName, content) {
   const databaseRecords = [];
   let recordsCount = 0;
   let schema = [];
+  let databaseConfig = null;
+  let databaseProvider = null;
+
+  const dbCreds = extractDatabaseCredentials(fileName, content);
+  if (dbCreds && dbCreds.detected) {
+    databaseConfig = dbCreds.config;
+    databaseProvider = dbCreds.providerName;
+  }
 
   function addDatabaseRecord(rec) {
     if (!rec) return;
@@ -807,6 +817,8 @@ export function analyzeDatabaseFile(fileName, content) {
     schema,
     knowledgeBase: sanitizedKnowledgeBase,
     databaseRecords,
+    databaseConfig,
+    databaseProvider,
     summary,
     rawExcerpt: content.substring(0, 1500)
   };
@@ -825,10 +837,19 @@ export function analyzeFullStackFiles(fileList = []) {
     tools: [],
     combinedKnowledge: [],
     databaseRecords: [],
+    databaseConfig: null,
+    databaseProvider: null,
     summary: ''
   };
 
   for (const file of fileList) {
+    // Detect database credentials in any uploaded file (Firebase, Supabase, etc.)
+    const creds = extractDatabaseCredentials(file.name, file.content);
+    if (creds && creds.detected && creds.config) {
+      result.databaseConfig = creds.config;
+      result.databaseProvider = creds.providerName;
+    }
+
     const detectedType = detectFileType(file.name, file.content);
     if (detectedType === 'frontend') {
       const analysis = analyzeFrontendFile(file.name, file.content);

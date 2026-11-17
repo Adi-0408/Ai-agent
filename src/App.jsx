@@ -432,7 +432,7 @@ export default function App() {
   };
 
   // Persist updated uploaded files list specifically on the targeted assistant
-  const handleUpdateAssistantFiles = async (assistantId, nextFiles, nextKnowledgeBase = null) => {
+  const handleUpdateAssistantFiles = async (assistantId, nextFiles, nextKnowledgeBase = null, nextDbRecords = null, nextDbConfig = null) => {
     const cleanFiles = sanitizeFilesForFirestore(nextFiles);
     const target = assistantsList.find((a) => a.id === assistantId || a.name === assistantId);
     if (!target) return;
@@ -441,6 +441,8 @@ export default function App() {
       ...target,
       uploadedFiles: cleanFiles,
       ...(nextKnowledgeBase ? { knowledgeBase: nextKnowledgeBase } : {}),
+      ...(nextDbRecords ? { databaseRecords: nextDbRecords } : {}),
+      ...(nextDbConfig ? { databaseConfig: nextDbConfig } : {}),
       updatedAt: new Date().toISOString()
     };
 

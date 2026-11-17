@@ -403,7 +403,8 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         activeKey,
         {
           agentName: assistantName,
-          databaseRecords: assistant?.databaseRecords || []
+          databaseRecords: assistant?.databaseRecords || [],
+          databaseConfig: assistant?.databaseConfig || null
         }
       );
 
@@ -465,6 +466,12 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
                   Voice: {assistantVoice}
                 </span>
+                {assistant?.databaseConfig && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    🔥 Live DB: {assistant.databaseConfig.type === 'firebase' ? 'Firebase' : 'Supabase'} ({assistant.databaseConfig.projectId || 'Connected'})
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Live Microphone Tester &amp; Voice Interaction Sandbox

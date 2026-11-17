@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExtractor';
 import { detectFileType, analyzeFullStackFiles } from '../utils/codebaseAnalyzer';
+import { fetchExternalDatabaseRecords } from '../utils/databaseKeyExtractor';
 import { saveAgent } from '../firebase';
 import { saveFileToLocalStore } from '../utils/localFileStore';
 import { isDriveConnected, uploadFileToDrive } from '../services/googleDriveService';
@@ -119,16 +120,48 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
       if (!name.trim()) setName(astName);
       if (!websiteName.trim() && detectedSite !== 'our website') setWebsiteName(detectedSite);
 
-      const kbList = fullStack.combinedKnowledge && fullStack.combinedKnowledge.length > 0
-        ? fullStack.combinedKnowledge
+      let liveRecords = [...(fullStack.databaseRecords || [])];
+      let liveKb = fullStack.combinedKnowledge && fullStack.combinedKnowledge.length > 0
+        ? [...fullStack.combinedKnowledge]
         : [
             { q: "What is this website about?", a: `Official assistant for ${detectedSite}.` },
             { q: "What products or services do you offer?", a: `Comprehensive solutions and customer guidance for ${detectedSite}.` }
           ];
+      let dbConnectedMsg = '';
 
-      const topProductsSummary = (fullStack.databaseRecords || []).slice(0, 25).map(r => 
+      // If user uploaded database keys (Firebase, Supabase, etc.), probe and fetch live records
+      if (fullStack.databaseConfig) {
+        try {
+          setUnpackProgress(`Connecting to ${fullStack.databaseProvider || 'live database'} using uploaded keys...`);
+          const liveResult = await fetchExternalDatabaseRecords(fullStack.databaseConfig);
+          if (liveResult && liveResult.success && liveResult.records.length > 0) {
+            const seen = new Set(liveRecords.map(r => r.name.toLowerCase()));
+            for (const rec of liveResult.records) {
+              if (!seen.has(rec.name.toLowerCase())) {
+                seen.add(rec.name.toLowerCase());
+                liveRecords.push(rec);
+              }
+            }
+            if (liveResult.knowledgeBase && liveResult.knowledgeBase.length > 0) {
+              liveKb.push(...liveResult.knowledgeBase);
+            }
+            dbConnectedMsg = `Connected to ${fullStack.databaseProvider || 'Database'} (${liveResult.records.length} records fetched from ${liveResult.source})`;
+          } else {
+            dbConnectedMsg = `Live Database Configured: ${fullStack.databaseProvider || 'Database'} (Direct real-time access enabled)`;
+          }
+        } catch (e) {
+          console.warn('Live DB probe error, keeping credentials for runtime access:', e);
+          dbConnectedMsg = `Live Database Configured: ${fullStack.databaseProvider || 'Database'}`;
+        }
+      }
+
+      const topProductsSummary = liveRecords.slice(0, 30).map(r => 
         `- ${r.name}: ${r.price ? (typeof r.price === 'number' ? `₹${r.price}` : r.price) : 'Price on request'}${r.stock !== null && r.stock !== undefined ? ` (Stock: ${r.stock} ${r.unit || 'units'})` : ''}${r.dosage || r.description ? ` | ${r.dosage || r.description}` : ''}`
       ).join('\n');
+
+      const liveDbSection = fullStack.databaseConfig
+        ? `\n\n## Live External Database Grounding\n- Provider: ${fullStack.databaseProvider || 'External Database'}\n- Project / Target: ${fullStack.databaseConfig.projectId || fullStack.databaseConfig.supabaseUrl || 'Connected'}\n- Live querying enabled: You have direct real-time access to query this database using the user's uploaded keys.`
+        : '';
 
       const trainedPrompt = `# ${astName} - Enterprise AI Customer Support & Help Desk
 
@@ -137,7 +170,7 @@ You are ${astName}, the dedicated AI Customer Support Assistant for ${detectedSi
 ${fullStack.summary}
 
 ## Verified Store Catalog & Database
-${topProductsSummary ? `${topProductsSummary}\n(Additional records available via live database bridge)` : 'Live catalog connected via website database bridge.'}
+${topProductsSummary ? `${topProductsSummary}\n(Additional records available via live database bridge)` : 'Live catalog connected via website database bridge.'}${liveDbSection}
 
 ## Guidelines & Etiquette
 - Accuracy First: State exact prices, stock availability, and specifications directly from verified database records. Never invent or hallucinate prices.
@@ -146,12 +179,15 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
 - Proactive Help: If a customer asks about a symptom or category, recommend matching in-stock items. If an item is out of stock, suggest available alternatives politely.`;
 
       setExtractedData({
-        knowledgeBase: kbList,
-        databaseRecords: fullStack.databaseRecords || [],
+        knowledgeBase: liveKb,
+        databaseRecords: liveRecords,
+        databaseConfig: fullStack.databaseConfig || null,
+        databaseProvider: fullStack.databaseProvider || null,
+        databaseStatusMessage: dbConnectedMsg,
         systemPrompt: trainedPrompt,
         greeting: `Hello! Welcome to ${detectedSite}. I am ${astName}, your live customer support assistant. How can I assist you with our catalog, services, or inquiries today?`,
         tools: fullStack.tools,
-        itemsExtracted: kbList.length
+        itemsExtracted: liveKb.length + liveRecords.length
       });
     } catch (err) {
       console.error('File reading error:', err);
@@ -257,6 +293,8 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         apiKey: effectiveApiKey,
         knowledgeBase: Array.isArray(extractedData?.knowledgeBase) ? extractedData.knowledgeBase : [],
         databaseRecords: Array.isArray(extractedData?.databaseRecords) ? extractedData.databaseRecords : [],
+        databaseConfig: extractedData?.databaseConfig || null,
+        databaseProvider: extractedData?.databaseProvider || null,
         tools: Array.isArray(extractedData?.tools) ? extractedData.tools : [],
         uploadedFiles: storedUploadedFiles,
         sourceFile: uploadedFileName || null,
@@ -541,6 +579,14 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
                   Auto-Trained
                 </span>
               </div>
+
+              {extractedData.databaseConfig && (
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium">
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  <span className="font-semibold">🔥 Live Database Connected:</span>
+                  <span className="truncate">{extractedData.databaseStatusMessage || `${extractedData.databaseProvider || 'Database'} (Direct access enabled)`}</span>
+                </div>
+              )}
 
               <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
                 {extractedData.knowledgeBase.map((item, idx) => (

@@ -1894,6 +1894,84 @@
         }
       }
 
+      // Helper to parse Firestore REST documents
+      function parseFirestoreFields(fields) {
+        if (!fields || typeof fields !== 'object') return {};
+        const res = {};
+        for (const [key, val] of Object.entries(fields)) {
+          if (!val || typeof val !== 'object') {
+            res[key] = val;
+            continue;
+          }
+          if ('stringValue' in val) res[key] = val.stringValue;
+          else if ('integerValue' in val) res[key] = parseInt(val.integerValue, 10);
+          else if ('doubleValue' in val) res[key] = parseFloat(val.doubleValue);
+          else if ('booleanValue' in val) res[key] = val.booleanValue;
+          else if ('timestampValue' in val) res[key] = val.timestampValue;
+          else if ('nullValue' in val) res[key] = null;
+          else if ('mapValue' in val) res[key] = parseFirestoreFields(val.mapValue.fields);
+          else res[key] = Object.values(val)[0];
+        }
+        return res;
+      }
+
+      // Tier 3.5: Live External Database Bridge (Firebase / Supabase via uploaded user keys)
+      if (agentConfig && agentConfig.databaseConfig) {
+        const dbConf = agentConfig.databaseConfig;
+        if (dbConf.type === 'firebase' && dbConf.projectId && targetItem) {
+          try {
+            const probeCollections = ['products', 'inventory', 'medicines', 'items', 'catalog', 'services', 'menu', 'store', 'shop'];
+            for (const col of probeCollections) {
+              const url = `https://firestore.googleapis.com/v1/projects/${dbConf.projectId}/databases/(default)/documents/${col}${dbConf.apiKey ? `?key=${dbConf.apiKey}` : ''}`;
+              const res = await fetch(url, { signal: AbortSignal.timeout(2500) });
+              if (res.ok) {
+                const data = await res.json();
+                if (data && Array.isArray(data.documents)) {
+                  for (const doc of data.documents) {
+                    const flat = parseFirestoreFields(doc.fields);
+                    if (flat.name && (flat.name.toLowerCase().includes(targetItem.toLowerCase()) || targetItem.toLowerCase().includes(flat.name.toLowerCase()))) {
+                      return {
+                        status: 'FOUND_IN_LIVE_API',
+                        item: targetItem,
+                        data: flat
+                      };
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore live Firestore probe error
+          }
+        } else if (dbConf.type === 'supabase' && dbConf.supabaseUrl && dbConf.supabaseKey && targetItem) {
+          try {
+            const probeTables = ['products', 'inventory', 'medicines', 'items', 'catalog', 'services', 'menu'];
+            for (const tbl of probeTables) {
+              const url = `${dbConf.supabaseUrl}/rest/v1/${tbl}?name=ilike.*${encodeURIComponent(targetItem)}*&limit=1`;
+              const res = await fetch(url, {
+                headers: {
+                  'apikey': dbConf.supabaseKey,
+                  'Authorization': `Bearer ${dbConf.supabaseKey}`
+                },
+                signal: AbortSignal.timeout(2500)
+              });
+              if (res.ok) {
+                const rows = await res.json();
+                if (Array.isArray(rows) && rows[0]) {
+                  return {
+                    status: 'FOUND_IN_LIVE_API',
+                    item: targetItem,
+                    data: rows[0]
+                  };
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore live Supabase probe error
+          }
+        }
+      }
+
       // Tier 4: Live API / Webhook (data-database-url / databaseHookUrl)
       const scriptEl = getWidgetScript();
       const apiEndpoint = (scriptEl && (scriptEl.getAttribute('data-database-url') || scriptEl.getAttribute('data-api-endpoint'))) ||
@@ -2045,6 +2123,10 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         : getAllCatalogItems(agentConfig);
       const catalogSummary = allDbRecords.slice(0, 30).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}${r.stock !== null && r.stock !== undefined ? ` [${r.stock} ${r.unit || 'units'} in stock]` : ''}`).join('; ');
 
+      const liveDbBlock = (agentConfig && agentConfig.databaseConfig)
+        ? `[LIVE_DATABASE_INTEGRATION]\nCONNECTED_PROVIDER: ${agentConfig.databaseProvider || agentConfig.databaseConfig.type || 'Cloud Database'}\nPROJECT: ${agentConfig.databaseConfig.projectId || agentConfig.databaseConfig.supabaseUrl || 'Connected'}\nAUTHORITY: You have direct real-time database access using the store's verified database credentials.\n\n`
+        : '';
+
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website, trained with the accuracy, deep database grounding, and professionalism of Flipkart and Amazon customer support specialists. You are speaking directly to a customer browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
@@ -2055,7 +2137,7 @@ CRITICAL RULES:
 - Keep responses plain-text, conversational, professional (like Flipkart/Amazon support), and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
 - LANGUAGE: ${langDirective}
 
-[LIVE_BRIDGE_DATA]
+${liveDbBlock}[LIVE_BRIDGE_DATA]
 ${bridgeBlock}
 
 [VERIFIED_DATABASE_RECORDS]
