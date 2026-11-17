@@ -89,6 +89,7 @@ CRITICAL ARCHITECTURAL RULES:
    - Detailed answers for each specific product, model, or technical subsystem
    - Support, consultation, or contact information.
 4. Train the systemPrompt with Flipkart/Amazon-grade helpdesk accuracy and professionalism: deeply grounded in the verified store database catalog, answering directly with real product names, exact prices, stock, and clear guidance with zero hallucination.
+5. STRICT CUSTOMER-ONLY AUDIENCE: The assistant is used solely by ordinary website visitors, customers, and shoppers, NOT by developers or database engineers. All questions and answers in "knowledgeBase" must be 100% customer-facing (product pricing, stock availability, specifications, services, contact, policies). NEVER include internal database schema queries, table names, SQL queries, database architecture, or developer notes in "knowledgeBase" or "systemPrompt".
 
 Respond ONLY with a valid JSON object matching this structure (no markdown formatting, no backticks, just raw JSON):
 {

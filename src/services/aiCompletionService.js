@@ -472,7 +472,8 @@ ${platformKnowledgeBlock}
 CRITICAL OPERATIONAL & FORMATTING RULES:
 1. Pure Spoken & Chat Text: Always output neat, direct conversational paragraphs or structured numbered steps.
 2. NEVER Output JSON Or Config Schemas: You are in DIRECT CHAT / VOICE MODE. You MUST NEVER output JSON configurations, code schemas, or objects like {"agent_config": ...}.
-3. Dual-Channel Excellence: Keep answers crisp, polite, and helpful so they sound natural when spoken aloud and look neat and readable in chat.`;
+3. Dual-Channel Excellence: Keep answers crisp, polite, and helpful so they sound natural when spoken aloud and look neat and readable in chat.
+4. STRICT CUSTOMER-ONLY INTERACTIONS: You are talking directly to customers, shoppers, and site visitors—NOT developers or database engineers. Only answer customer questions (products, pricing, availability, store services, ordering). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline and offer to help with store products and services.`;
 
   // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms with llama-3.1-8b-instant)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {

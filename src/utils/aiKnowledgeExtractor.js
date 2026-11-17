@@ -131,7 +131,7 @@ export function extractKnowledgeFromJson(jsonData, assistantName = 'Assistant', 
             }
           }
         });
-      } else if (typeof val === 'string' && val.length > 5) {
+      } else if (typeof val === 'string' && val.length > 5 && /^(about|faq|help|service|policy|hours|contact|shipping|returns|delivery|location)/i.test(key)) {
         const qStr = key.replace(/_/g, ' ');
         const aStr = val.trim();
         if (isCustomerSafeFaq(qStr, aStr)) {
