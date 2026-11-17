@@ -50,8 +50,13 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
   const interimTranscriptRef = useRef('');
   const lastDetectedLangRef = useRef('en-IN');
   const speechHandledRef = useRef(false);
+  const messagesRef = useRef([]);
   const synthRef = useRef(typeof window !== 'undefined' ? window.speechSynthesis : null);
   const chatBottomRef = useRef(null);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const assistantName = assistant?.name || 'Voice Assistant';
   const assistantVoice = assistant?.voice || 'Adam';
@@ -405,7 +410,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           agentName: assistantName,
           databaseRecords: assistant?.databaseRecords || [],
           databaseConfig: assistant?.databaseConfig || null,
-          conversationHistory: messages
+          conversationHistory: messagesRef.current
         }
       );
 
@@ -434,6 +439,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
       speakText(fallback);
     } finally {
       setIsThinking(false);
+      speechHandledRef.current = false;
     }
   };
 
@@ -441,6 +447,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
     const trimmed = textInput.trim();
     if (!trimmed) return;
     setTextInput('');
+    speechHandledRef.current = false;
     handleUserSpeech(trimmed);
   };
 

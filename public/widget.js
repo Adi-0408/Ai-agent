@@ -266,8 +266,15 @@
     return 'general';
   }
 
-  // Fetch Agent Config from Firestore REST API (with strict deletion check & verification)
-  async function fetchAgentConfig() {
+  let lastConfigFetchAt = 0;
+  let hasLoadedRemoteConfig = false;
+
+  // Fetch Agent Config from Firestore REST API (with strict deletion check, 30s throttle & safe fallback)
+  async function fetchAgentConfig(forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh && lastConfigFetchAt > 0 && (now - lastConfigFetchAt < 30000)) {
+      return true;
+    }
     try {
       // 0. Check deletion tombstone collection in Firestore
       try {
@@ -330,6 +337,11 @@
 
       // If agent was not found in Firestore (e.g. 404 or CORS on external site), operate in Autonomous On-Page Mode!
       if (!res || !res.ok) {
+        lastConfigFetchAt = Date.now();
+        // Never wipe already-loaded verified databaseRecords on a transient mid-chat hiccup
+        if (hasLoadedRemoteConfig) {
+          return true;
+        }
         console.info(`[Voice Help Desk] Operating in Autonomous On-Page Mode for "${cleanInitialName}".`);
         const scriptEl = getWidgetScript();
         const customName = scriptEl?.getAttribute('data-agent-id') || scriptEl?.getAttribute('data-agent') || cleanInitialName;
@@ -337,7 +349,9 @@
         const finalName = customName && customName !== 'Help Desk' ? customName : (pageTitle || 'AI Assistant');
         
         agentConfig.name = finalName;
-        agentConfig.databaseRecords = []; // Strictly ensure clean empty array: no cross-agent pollution!
+        if (!Array.isArray(agentConfig.databaseRecords)) {
+          agentConfig.databaseRecords = [];
+        }
         const autoArchetype = detectCurrentArchetype(agentConfig);
         agentConfig.archetype = autoArchetype;
         if (autoArchetype === 'academic') {
@@ -351,8 +365,11 @@
 
       const json = await res.json();
       if (!json || !json.fields) {
+        lastConfigFetchAt = Date.now();
         return true;
       }
+      hasLoadedRemoteConfig = true;
+      lastConfigFetchAt = Date.now();
 
       const fields = json.fields;
       // If agent document is marked as deleted or inactive
@@ -1251,6 +1268,7 @@
       const rxWhatAre = new RegExp(`\\b(what|which)\\s+are\\s+(the|your|all)\\s+${pluralOrCategoryNouns}\\b`, 'i');
       const rxWhatDoYou = /\b(what|which)\s+(all\s+)?do\s+you\s+(sell|have|offer|provide|serve|teach|run)\b/i;
       const rxKnowAbout = new RegExp(`\\b(want\\s+(to\\s+)?know|know|tell\\s+me|info|information|details|learn|ask|inquire|enquire)\\s+(more\\s+)?(about|on|of|regarding)\\s+(the\\s+|your\\s+|all\\s+|available\\s+)?${pluralOrCategoryNouns}\\s*[?.!]*$`, 'i');
+      const rxNounDetails = new RegExp(`^(?:(?:give\\s+me|show\\s+me|tell\\s+me|get|need|want|see)\\s+)?(?:the\\s+|your\\s+|all\\s+)?${nouns}\\s+(?:details|info|information|overview|options|list|catalog|catalogue)\\s*[?.!]*$`, 'i');
       const rxAllList = new RegExp(`\\b(all\\s+${nouns}\\s+list|${nouns}\\s+list)\\b`, 'i');
 
       return rxList.test(lower) ||
@@ -1259,6 +1277,7 @@
              rxWhatAre.test(lower) ||
              rxWhatDoYou.test(lower) ||
              rxKnowAbout.test(lower) ||
+             rxNounDetails.test(lower) ||
              rxAllList.test(lower) ||
              /\b(what is available|show inventory|inventory table|list inventory)\b/i.test(lower) ||
              /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू|सर्व सेवा|मेन्यू|कोणते कोर्स|कोणते अभ्यासक्रम|अभ्यासक्रमांची माहिती|कोर्सची यादी|कोर्सेस बद्दल)/i.test(text) ||
@@ -1290,6 +1309,47 @@
         }
       }
       return false;
+    }
+
+    // Detects general pricing / fee structure / rate overview queries (without naming one specific item)
+    function isGeneralPriceOrOverviewQuery(text) {
+      const lower = String(text || '')
+        .toLowerCase()
+        .replace(/^(hi+|hello+|hey+|howdy|namaste|namaskar)[,!.\s]+/i, '')
+        .trim();
+      if (!lower) return false;
+      if (/\b(in that|for that|of that|for this|of this|for it|of it)\b/i.test(lower)) return false;
+
+      return /^(?:what\s+(?:is|are)\s+(?:the|your)\s+|give\s+me\s+(?:the\s+)?|show\s+(?:me\s+)?(?:the\s+)?|tell\s+me\s+(?:about\s+)?(?:the\s+)?)?(?:fee\s*structure|fees?\s*(?:details?|list|chart|overview|info)?|pricing(?:\s*(?:details?|plans?|tiers?|options?|list))?|prices?(?:\s*list)?|rates?(?:\s*list)?|charges?|costs?|tuition\s*fees?|room\s*rates?|menu\s*prices?|plan\s*prices?|subscription\s*(?:cost|price|rates?|fees?))\s*[?.!]*$/i.test(lower) ||
+             /\b(fee\s*structure|price\s*list|rate\s*card|pricing\s*tiers?|pricing\s*plans?|all\s*prices|all\s*fees|how\s+much\s+do\s+(?:your|the)\s+(?:courses|products|plans|rooms|dishes|services)\s+cost)\b/i.test(lower) ||
+             /(फी स्ट्रक्चर|शुल्क रचना|किंमती|सर्व किंमती|दरपत्रक|फीस कितनी है|फीस स्ट्रक्चर|सभी कीमतें)/i.test(text);
+    }
+
+    // Detects general policy / process / requirement questions so they NEVER falsely trigger ITEM_NOT_FOUND
+    function isPolicyOrProcessQuery(text) {
+      const lower = String(text || '').toLowerCase().trim();
+      return /\b(eligibility|criteria|requirements?|qualification|admission\s*(?:process|procedure|steps?|criteria|rules?)|how\s+to\s+(?:apply|order|buy|book|enroll|register|subscribe|cancel|return)|documents?\s*(?:required|needed|list)?|return\s*policy|refund\s*policy|shipping|delivery\s*(?:time|charges?|policy|available)|warranty|guarantee|scholarship|emi|installment|payment\s*(?:options?|methods?)|cash\s*on\s*delivery|cod|free\s*trial|billing|cancellation|check-?in|check-?out|amenities|parking|wifi|table\s*reservations?|reservations?|dietary|vegetarian|vegan|allergen|test\s*drives?|financing|servicing|prescription\s*(?:required|needed|policy)|dosage|side\s*effects|site\s*visits?|floor\s*plans?|consultation|hours|timings|location|address|contact|phone|email)\b/i.test(lower) ||
+             /(पात्रता|प्रवेश प्रक्रिया|कागदपत्रे|अर्ज कसा करावा|रिटर्न पॉलिसी|डिलिव्हरी|वॉरंटी|पात्रता मानदंड|एडमिशन प्रक्रिया|दस्तावेज|कैसे आवेदन|कैसे ऑर्डर|डिलीवरी|वारंटी)/i.test(text);
+    }
+
+    // Detects ordinal references ("the first one", "2nd one", "second", "last one", "number 3") against previously displayed catalog items
+    function resolveOrdinalFromList(text, itemsList) {
+      if (!Array.isArray(itemsList) || itemsList.length === 0) return null;
+      const lower = String(text || '').toLowerCase().trim();
+      if (/\b(first|1st|number\s*1|#1|one)\b/i.test(lower) && /\b(first|1st|number\s*1|#1|first\s*one)\b/i.test(lower)) return itemsList[0] || null;
+      if (/\b(second|2nd|number\s*2|#2)\b/i.test(lower)) return itemsList[1] || null;
+      if (/\b(third|3rd|number\s*3|#3)\b/i.test(lower)) return itemsList[2] || null;
+      if (/\b(fourth|4th|number\s*4|#4)\b/i.test(lower)) return itemsList[3] || null;
+      if (/\b(fifth|5th|number\s*5|#5)\b/i.test(lower)) return itemsList[4] || null;
+      if (/\b(last\s*one|the\s*last)\b/i.test(lower)) return itemsList[itemsList.length - 1] || null;
+      return null;
+    }
+
+    // Detects short conversational affirmations / pagination / continuation prompts ("yes", "sure", "ok", "tell me more", "show more", "next")
+    function isAffirmationOrMoreQuery(text) {
+      const t = String(text || '').toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
+      if (!t) return false;
+      return /^(yes|yeah|yep|yup|sure|ok|okay|alright|go\s*ahead|please|yes\s*please|tell\s*me\s*more|more|more\s*details|show\s*more|see\s*more|next|continue|explain|explain\s*more|elaborate|details\s*please|haan|han|ji|ho|हो|होय|हाँ|जी|आणखी\s*सांगा|और\s*बताएं|और\s*दिखाएं)$/i.test(t);
     }
 
     function findHostSection(topic) {
@@ -1505,6 +1565,38 @@
       }
 
       return knowledge;
+    }
+
+    // Live Host Page Content Snippet Indexer: harvests clean visible heading/paragraph/list blocks on ANY website
+    // so customer questions about policies, eligibility, shipping, warranty, timings, etc. are grounded directly on the live page!
+    let _pageSnippetCache = { timestamp: 0, snippets: [] };
+    function extractHostPageSnippets() {
+      if (typeof document === 'undefined' || !document.body) return [];
+      const now = Date.now();
+      if (_pageSnippetCache.snippets.length > 0 && (now - _pageSnippetCache.timestamp < 8000)) {
+        return _pageSnippetCache.snippets;
+      }
+      const snippets = [];
+      const seen = new Set();
+      try {
+        const blocks = document.querySelectorAll('main p, main li, section p, section li, article p, article li, .card p, .card li, [class*="info"] p, [class*="detail"] p, [class*="policy"] p, [class*="eligibility"] p, [class*="faq"] p');
+        blocks.forEach(el => {
+          if (el.closest('#voice-helpdesk-root, script, style, noscript, nav, footer, header')) return;
+          const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (txt.length < 25 || txt.length > 400) return;
+          if (/^(copyright|©|all rights reserved|privacy policy|terms of use)/i.test(txt)) return;
+          if (/\{[\s\S]*\}|function\s*\(|const\s+\w+\s*=|import\s+\w+/i.test(txt)) return;
+          const parentSec = el.closest('section, article, .card, div[id], div[class*="section"]');
+          const hEl = parentSec ? parentSec.querySelector('h1, h2, h3, h4') : null;
+          const heading = hEl ? (hEl.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+          const key = txt.slice(0, 80).toLowerCase();
+          if (seen.has(key)) return;
+          seen.add(key);
+          snippets.push({ heading, text: txt });
+        });
+      } catch (_) {}
+      _pageSnippetCache = { timestamp: now, snippets: snippets.slice(0, 60) };
+      return _pageSnippetCache.snippets;
     }
 
     const UNIVERSAL_STOPWORDS = new Set([
@@ -2200,8 +2292,33 @@
       const effectiveQuery = stripLeadingGreeting(query) || String(query).trim();
       const isList = isCatalogListQuery(effectiveQuery);
       const isNav = isSectionNavigationQuery(effectiveQuery);
+      const isPriceOverview = isGeneralPriceOrOverviewQuery(effectiveQuery);
 
-      // 1. Handle Catalog List query (e.g. "hey i want know about the courses", "which courses do you provide", "give list of all meds", "show menu", "what products do you sell")
+      // 0. Ordinal Reference Selection (e.g. "tell me about the first one", "2nd one", "last one")
+      if (context && Array.isArray(context.lastDisplayedItems) && context.lastDisplayedItems.length > 0) {
+        const ordItem = resolveOrdinalFromList(effectiveQuery, context.lastDisplayedItems);
+        if (ordItem) {
+          context.activeItem = ordItem;
+          context.turnCount = (context.turnCount || 0) + 1;
+          return {
+            status: 'FOUND_IN_HOST_STATE',
+            item: ordItem.name || ordItem.title || effectiveQuery,
+            data: ordItem
+          };
+        }
+      }
+
+      // 0.5 General Pricing / Fee Structure Overview (e.g. "fee structure", "pricing", "room rates", "menu prices")
+      if (isPriceOverview) {
+        const allItems = getAllCatalogItems(agentConfig);
+        return {
+          status: 'FOUND_PRICE_OVERVIEW',
+          item: 'pricing',
+          data: allItems
+        };
+      }
+
+      // 1. Handle Catalog List query (e.g. "can you give me details of courses", "course details", "which courses do you provide", "give list of all meds", "show menu", "what products do you sell")
       if (isList) {
         const allItems = getAllCatalogItems(agentConfig);
         const scriptEl = getWidgetScript();
@@ -2475,16 +2592,22 @@
         }
       }
 
-      // 4. Check if query is looking for an item that is genuinely NOT in the database
-      const lower = query.toLowerCase();
-      const isDynamic = isDynamicDataQuery(query) ||
+      // 4. Check if query is looking for a specific item that is genuinely NOT in the database
+      // NEVER trigger ITEM_NOT_FOUND for general policy/process questions ("eligibility", "return policy", "delivery", "scholarship") or affirmations ("yes", "more")
+      const lower = effectiveQuery.toLowerCase();
+      const isDynamic = isDynamicDataQuery(effectiveQuery) ||
                         /\b(do you have|is there any|price of|cost of|stock of|available|check)\b/i.test(lower) ||
-                        /(साठा|स्टॉक|उपलब्ध|शिल्लक|किंमत|भाव|दर|कीमत|दाम)/i.test(query);
+                        /(साठा|स्टॉक|उपलब्ध|शिल्लक|किंमत|भाव|दर|कीमत|दाम)/i.test(effectiveQuery);
 
-      if (isDynamic) {
+      const cleanTargetCheck = String(targetItem || '').toLowerCase()
+        .replace(/\b(the|a|an|is|are|for|of|in|on|at|to|your|our|any|some|price|cost|fee|fees|structure|rate|rates|stock|available|availability|details|info|information|check|status|list|all|more)\b/gi, '')
+        .replace(/[^a-z0-9\s]/g, '')
+        .trim();
+
+      if (isDynamic && !isPolicyOrProcessQuery(effectiveQuery) && !isAffirmationOrMoreQuery(effectiveQuery) && cleanTargetCheck.length >= 2) {
         return {
           status: 'ITEM_NOT_FOUND',
-          item: targetItem || query,
+          item: targetItem || effectiveQuery,
           data: null
         };
       }
@@ -2542,6 +2665,9 @@ PRESCRIPTION_REQUIRED: ${item.rx ? 'Yes' : 'No'}`;
         bridgeBlock = `STATUS: FOUND_CATALOG_LIST
 ITEMS_COUNT: ${Array.isArray(bridgeResult.data) ? bridgeResult.data.length : 0}
 SAMPLE_ITEMS: ${JSON.stringify((bridgeResult.data || []).slice(0, 8))}`;
+      } else if (bridgeResult && bridgeResult.status === 'FOUND_PRICE_OVERVIEW') {
+        bridgeBlock = `STATUS: FOUND_PRICE_OVERVIEW
+ITEMS_WITH_PRICES: ${JSON.stringify((bridgeResult.data || []).slice(0, 10).map(i => ({ name: i.name, price: i.price || 'On request', stock: i.stock })))}`;
       } else if (bridgeResult && bridgeResult.status === 'NAVIGATE_SECTION') {
         bridgeBlock = `STATUS: NAVIGATE_SECTION
 SECTION: ${bridgeResult.data?.label || 'Target section'}`;
@@ -2556,17 +2682,24 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         bridgeBlock = `STATUS: NO_SPECIFIC_ITEM_FILTER`;
       }
 
-      // Active Multi-Turn Conversation Context
-      let activeContextBlock = '';
+      // Active Multi-Turn Conversation Context (Active Item + Last Displayed List + Active Topic)
+      const activeContextLines = [];
       if (context && context.activeItem) {
         const it = context.activeItem;
-        activeContextBlock = `\n[ACTIVE_CONVERSATION_CONTEXT]
-CURRENTLY_DISCUSSED_ITEM: "${it.name || 'Current Item'}"
-PRICE: "${it.price || 'Available on request'}"
-SEATS_OR_STOCK: "${it.stock !== undefined && it.stock !== null ? it.stock : 'Available'} ${it.unit || 'units'}"
-DESCRIPTION_AND_SUBJECTS: "${it.description || it.dosage || it.details || 'Standard program'}"
-NOTE: If the customer asks "what do you provide in that", "fees for this", "details", or uses pronouns like "that/this/it", they are referring specifically to CURRENTLY_DISCUSSED_ITEM. Answer directly about this item!\n`;
+        activeContextLines.push(`CURRENTLY_DISCUSSED_ITEM: "${it.name || 'Current Item'}"`);
+        activeContextLines.push(`PRICE: "${it.price || 'Available on request'}"`);
+        activeContextLines.push(`SEATS_OR_STOCK: "${it.stock !== undefined && it.stock !== null ? it.stock : 'Available'} ${it.unit || 'units'}"`);
+        activeContextLines.push(`DESCRIPTION_AND_DETAILS: "${it.description || it.dosage || it.details || 'Standard offering'}"`);
       }
+      if (context && Array.isArray(context.lastDisplayedItems) && context.lastDisplayedItems.length > 0) {
+        activeContextLines.push(`LAST_DISPLAYED_LIST: ${context.lastDisplayedItems.slice(0, 6).map((x, idx) => `${idx + 1}. ${x.name}${x.price ? ` (${x.price})` : ''}`).join(', ')}`);
+      }
+      if (context && context.activeTopic) {
+        activeContextLines.push(`ACTIVE_TOPIC: "${context.activeTopic}"`);
+      }
+      const activeContextBlock = activeContextLines.length > 0
+        ? `\n[ACTIVE_CONVERSATION_CONTEXT]\n${activeContextLines.join('\n')}\nNOTE: If the customer asks a follow-up ("what do you provide in that", "the first one", "fees", "yes", "tell me more", "how to apply/order"), resolve it directly from this context and NEVER ask a generic welcome prompt!\n`
+        : '';
 
       let langDirective = 'Speak in clear, natural English.';
       if (queryLang === 'mr-IN') {
@@ -2644,16 +2777,18 @@ ${cleanFaqBlock}`;
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Enforce under 35 words so Web Speech API TTS reads smoothly
+        // Keep responses concise (up to 75 words) and trim cleanly at a sentence boundary
         const words = cleaned.split(' ');
-        if (words.length > 35) {
-          cleaned = words.slice(0, 35).join(' ') + '.';
+        if (words.length > 75) {
+          const sliced = words.slice(0, 75).join(' ');
+          const lastEnd = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'), sliced.lastIndexOf('।'));
+          cleaned = lastEnd > 40 ? sliced.slice(0, lastEnd + 1) : (sliced + '.');
         }
         return cleaned;
       }
 
       try {
-        // 1. Groq Provider (gsk_...) - High-speed enterprise inference (<200ms)
+        // 1. Groq Provider (gsk_...) - High-speed enterprise inference (<200ms) with automatic fallback
         if (trimmedKey.startsWith('gsk_')) {
           let targetModel = 'llama-3.1-8b-instant';
           if (model) {
@@ -2675,30 +2810,37 @@ ${cleanFaqBlock}`;
             messagesPayload.push({ role: 'user', content: cleanUser });
           }
 
-          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${trimmedKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: targetModel,
-              messages: messagesPayload,
-              temperature: 0.2,
-              max_tokens: 150
-            }),
-            signal: AbortSignal.timeout(8000)
-          });
+          const groqCandidates = targetModel === 'llama-3.1-8b-instant'
+            ? ['llama-3.1-8b-instant']
+            : [targetModel, 'llama-3.1-8b-instant'];
 
-          if (groqRes.ok) {
-            const data = await groqRes.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (content) return sanitizeSpokenOutput(content);
+          for (const gModel of groqCandidates) {
+            const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${trimmedKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: gModel,
+                messages: messagesPayload,
+                temperature: 0.2,
+                max_tokens: 220
+              }),
+              signal: AbortSignal.timeout(8000)
+            });
+
+            if (groqRes.ok) {
+              const data = await groqRes.json();
+              const content = data.choices?.[0]?.message?.content;
+              if (content) return sanitizeSpokenOutput(content);
+            } else if (![400, 404, 429].includes(groqRes.status)) {
+              break;
+            }
           }
         }
 
-        // 2. Google Gemini Provider (AIza...)
-        // Valid system_instruction schema preventing HTTP 400 errors
+        // 2. Google Gemini Provider (AIza...) with automatic model fallback
         if (trimmedKey.startsWith('AIza')) {
           let geminiModel = 'gemini-2.5-flash';
           if (model) {
@@ -2706,7 +2848,6 @@ ${cleanFaqBlock}`;
             if (m.includes('1.5')) geminiModel = 'gemini-1.5-flash';
             else if (m.startsWith('gemini-')) geminiModel = model;
           }
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${trimmedKey}`;
 
           const geminiHistory = conversationHistory.slice(-8);
           const contents = geminiHistory.map(m => ({
@@ -2718,28 +2859,33 @@ ${cleanFaqBlock}`;
             contents.push({ role: 'user', parts: [{ text: cleanUser }] });
           }
 
-          const geminiRes = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: {
-                parts: [{ text: systemPrompt }]
-              },
-              contents,
-              generationConfig: {
-                temperature: 0.3,
-                maxOutputTokens: 150
-              }
-            }),
-            signal: AbortSignal.timeout(8000)
-          });
+          const geminiCandidates = Array.from(new Set([geminiModel, 'gemini-2.0-flash', 'gemini-1.5-flash']));
+          for (const gModel of geminiCandidates) {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${trimmedKey}`;
+            const geminiRes = await fetch(geminiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                system_instruction: {
+                  parts: [{ text: systemPrompt }]
+                },
+                contents,
+                generationConfig: {
+                  temperature: 0.3,
+                  maxOutputTokens: 220
+                }
+              }),
+              signal: AbortSignal.timeout(8000)
+            });
 
-          if (geminiRes.ok) {
-            const data = await geminiRes.json();
-            const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (candidateText) return sanitizeSpokenOutput(candidateText);
-          } else {
-            console.warn('[Echo AI BYOK] Gemini API error status:', geminiRes.status);
+            if (geminiRes.ok) {
+              const data = await geminiRes.json();
+              const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (candidateText) return sanitizeSpokenOutput(candidateText);
+            } else {
+              console.warn('[Echo AI BYOK] Gemini API error status:', geminiRes.status, 'for model:', gModel);
+              if (![400, 404, 429].includes(geminiRes.status)) break;
+            }
           }
         }
 
@@ -2831,53 +2977,128 @@ ${cleanFaqBlock}`;
         return w;
       };
       const stemmedWords = meaningfulWords.map(stemWord);
+      const currentArchetype = detectCurrentArchetype(agentConfig);
+      const profile = getArchetypeProfile(currentArchetype);
 
-      // 0.1 Universal Context-Aware Follow-Up Query Handler (Works across ALL website types & agents)
-      if (context && context.activeItem) {
+      // Helper to search KB + Host Page Snippets for a grounded answer
+      const findGroundedKbOrSnippet = (extraTerms = '') => {
+        const hostK = extractHostPageKnowledge();
+        const combinedKb = [...(agentConfig.knowledgeBase || []), ...hostK.faqs].filter(item => isCustomerSafeFaq(item.q, item.a));
+        const queryTokens = [...meaningfulWords, ...extraTerms.toLowerCase().split(/\s+/).filter(w => w.length > 2)];
+        const queryStems = queryTokens.map(stemWord);
+
+        let bestKb = null;
+        let bestKbScore = 0;
+        for (const item of combinedKb) {
+          const qL = (item.q || '').toLowerCase();
+          const aL = (item.a || '').toLowerCase();
+          let sc = 0;
+          if (lower.length >= 4 && (lower.includes(qL) || qL.includes(lower))) sc += 80;
+          for (let i = 0; i < queryTokens.length; i++) {
+            const w = queryTokens[i];
+            const st = queryStems[i] || w;
+            if (qL.includes(w) || qL.includes(st)) sc += 20;
+            if (aL.includes(w) || aL.includes(st)) sc += 8;
+          }
+          if (sc > bestKbScore) {
+            bestKbScore = sc;
+            bestKb = item;
+          }
+        }
+        if (bestKb && bestKbScore >= 20) {
+          return { source: 'kb', topic: bestKb.q, answer: bestKb.a };
+        }
+
+        // Check Live Host Page Content Snippets
+        const snippets = extractHostPageSnippets();
+        let bestSnip = null;
+        let bestSnipScore = 0;
+        for (const snip of snippets) {
+          const hL = (snip.heading || '').toLowerCase();
+          const tL = (snip.text || '').toLowerCase();
+          let sc = 0;
+          for (let i = 0; i < queryTokens.length; i++) {
+            const w = queryTokens[i];
+            const st = queryStems[i] || w;
+            if (hL.includes(w) || hL.includes(st)) sc += 22;
+            if (tL.includes(w) || tL.includes(st)) sc += 12;
+          }
+          if (sc > bestSnipScore) {
+            bestSnipScore = sc;
+            bestSnip = snip;
+          }
+        }
+        if (bestSnip && bestSnipScore >= 24) {
+          return { source: 'page', topic: bestSnip.heading || effectiveText, answer: bestSnip.text };
+        }
+        return null;
+      };
+
+      // 0.05 Conversational Affirmation & Pagination Handler ("yes", "sure", "ok", "tell me more", "show more", "next")
+      if (isAffirmationOrMoreQuery(effectiveText)) {
+        if (context && context.activeItem) {
+          const act = context.activeItem;
+          const desc = act.description || act.dosage || act.details || profile.defaultDesc;
+          const unit = act.unit || profile.itemUnit || 'units';
+          const priceStr = act.price ? ` The ${profile.priceLabelEn} is ${act.price}.` : '';
+          const stockStr = (act.stock !== null && act.stock !== undefined && act.stock > 0) ? ` Currently ${act.stock} ${unit} are available.` : '';
+          if (queryLang === 'mr-IN') return `${act.name} बद्दल अधिक माहिती: ${desc}.${act.price ? ` ${profile.priceLabelMr}: ${act.price}.` : ''} ${profile.actionMr}.`;
+          if (queryLang === 'hi-IN') return `${act.name} के बारे में और जानकारी: ${desc}।${act.price ? ` ${profile.priceLabelHi}: ${act.price}।` : ''} ${profile.actionHi}।`;
+          return `Here is more about ${act.name}: ${desc}.${priceStr}${stockStr} To proceed: ${profile.actionEn}.`;
+        }
+        if (context && Array.isArray(context.lastDisplayedItems) && context.lastDisplayedItems.length > 0) {
+          const offset = context.catalogOffset || 0;
+          if (offset < context.lastDisplayedItems.length) {
+            const nextBatch = context.lastDisplayedItems.slice(offset, offset + 5);
+            context.catalogOffset = offset + nextBatch.length;
+            const summary = nextBatch.map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+            const rem = context.lastDisplayedItems.length - context.catalogOffset;
+            if (queryLang === 'mr-IN') return `पुढील उपलब्ध ${profile.itemNounMr}: ${summary}${rem > 0 ? ` (अजून ${rem} पर्याय उपलब्ध)` : ''}. कोणत्या पर्यायाबद्दल अधिक माहिती हवी आहे?`;
+            if (queryLang === 'hi-IN') return `अगले उपलब्ध ${profile.itemNounHi}: ${summary}${rem > 0 ? ` (और ${rem} विकल्प उपलब्ध)` : ''}। आप किसके बारे में विस्तार से जानना चाहेंगे?`;
+            return `Here are more available ${profile.itemNounEn}: ${summary}${rem > 0 ? `, plus ${rem} more` : ''}. Which one would you like details on?`;
+          }
+          const topDetails = context.lastDisplayedItems.slice(0, 3).map(i => `${i.name}${i.price ? ` at ${i.price}` : ''}${i.description ? ` (${i.description.slice(0, 60)})` : ''}`).join('; ');
+          return `Here is a quick breakdown of our top ${profile.itemNounEn}: ${topDetails}. Just name any one or say "the first one" for full details!`;
+        }
+        const allAvailable = getAllCatalogItems(agentConfig);
+        if (allAvailable.length > 0) {
+          if (context) {
+            context.lastDisplayedItems = allAvailable;
+            context.catalogOffset = Math.min(5, allAvailable.length);
+          }
+          const sum = allAvailable.slice(0, 5).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+          return `Here are our available ${profile.itemNounEn}: ${sum}. Which one would you like to explore in detail?`;
+        }
+      }
+
+      // 0.1 Universal Context-Aware Follow-Up Query Handler (When a specific activeItem is locked in memory)
+      if (context && context.activeItem && !isCatalogListQuery(effectiveText) && !isGeneralPriceOrOverviewQuery(effectiveText)) {
         const active = context.activeItem;
-        const currentArchetype = detectCurrentArchetype(agentConfig);
-        const profile = getArchetypeProfile(currentArchetype);
         const unit = active.unit || profile.itemUnit || 'units';
 
         // Check if user is switching to a DIFFERENT item first
         const allCatItems = getAllCatalogItems(agentConfig);
+        const ordSwitch = resolveOrdinalFromList(effectiveText, context.lastDisplayedItems || allCatItems);
         const cleanedNoPronouns = lower
           .replace(/\b(what do you provide|what is provided|what is included|in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|in it|this|that|it|what about|how about|and|or|the|tell me more|details|fees|price|cost|documents|eligibility|how to apply|how to buy|how to order|how to book)\b/gi, ' ')
           .replace(/[^a-z0-9\s]/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
-        const switchedItem = cleanedNoPronouns.length >= 3 ? matchInInventory(allCatItems, cleanedNoPronouns) : null;
+        const switchedItem = ordSwitch || (cleanedNoPronouns.length >= 3 ? matchInInventory(allCatItems, cleanedNoPronouns) : null);
 
         if (!switchedItem || switchedItem.name === active.name) {
           const isFollowUpDetails = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|specs?|specifications?|ingredients?|amenities|dosage|what about|in that|for that|of that|in this|for this|of this)\b/i.test(lower) || /(यात काय|त्यात काय|इसमें क्या|उसमें क्या|तपशील|विवरण)/i.test(text);
           const isFollowUpFee = /\b(price|cost|fee|fees|how much|charges|rate|rent|mrp)\b/i.test(lower) || /(किंमत|भाव|दर|कीमत|दाम|फी|शुल्क)/i.test(text);
           const isFollowUpEligibility = /\b(eligibility|criteria|requirements?|qualification|percentage|marks|prerequisites?)\b/i.test(lower);
-          const isFollowUpApply = /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission process|steps|apply online|order online|registration|enroll|reserve|test drive)\b/i.test(lower);
-          const isFollowUpDocs = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return policy|shipping)\b/i.test(lower);
+          const isFollowUpApply = /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission process|admission procedure|procedure|steps|apply online|order online|registration|enroll|reserve|test drive)\b/i.test(lower);
+          const isFollowUpDocs = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return policy|refund|shipping|delivery)\b/i.test(lower);
 
-          // First check if the agent's own Knowledge Base has a specific policy/answer for this follow-up (e.g. warranty, documents, return policy, dosage)
+          // First check if the agent's own Knowledge Base or Live Page has a specific policy/answer for this follow-up
           if (isFollowUpDocs || isFollowUpEligibility || isFollowUpApply) {
-            const kbList = (agentConfig.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a));
-            let bestKb = null;
-            let bestKbScore = 0;
-            const searchQuery = `${active.name} ${lower}`;
-            for (const kbItem of kbList) {
-              const qL = (kbItem.q || '').toLowerCase();
-              const aL = (kbItem.a || '').toLowerCase();
-              let sc = 0;
-              for (const w of meaningfulWords) {
-                if (qL.includes(w)) sc += 20;
-                if (aL.includes(w)) sc += 8;
-              }
-              if (qL.includes(active.name.toLowerCase()) || aL.includes(active.name.toLowerCase())) sc += 15;
-              if (sc > bestKbScore) {
-                bestKbScore = sc;
-                bestKb = kbItem;
-              }
-            }
-            if (bestKb && bestKbScore >= 20) {
-              context.activeTopic = bestKb.q;
-              return bestKb.a;
+            const grounded = findGroundedKbOrSnippet(active.name || '');
+            if (grounded) {
+              context.activeTopic = grounded.topic;
+              return grounded.answer;
             }
           }
 
@@ -2947,22 +3168,25 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // 1. Direct Catalog List Query Handler (e.g. "hey i want know about the courses", "which courses do you provide", "give list of all meds", "show all products", "show menu")
+      // 1. Direct Catalog List Query Handler (e.g. "can you give me details of courses", "course details", "which courses do you provide", "give list of all meds", "show all products", "show menu")
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig, context);
       if (bridge && bridge.status === 'FOUND_CATALOG_LIST') {
         const allItems = Array.isArray(bridge.data) && bridge.data.length > 0 ? bridge.data : getAllCatalogItems(agentConfig);
         const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
 
-        const currentArchetype = detectCurrentArchetype(agentConfig);
-        const profile = getArchetypeProfile(currentArchetype);
         const nounEn = profile.itemNounEn;
         const nounHi = profile.itemNounHi;
         const nounMr = profile.itemNounMr;
 
         let replyText = '';
         if (allItems.length > 0) {
-          if (context) context.activeTopic = 'catalog_list';
+          if (context) {
+            context.activeTopic = 'catalog_list';
+            context.lastDisplayedItems = allItems;
+            context.catalogOffset = Math.min(5, allItems.length);
+            context.fallbackCount = 0;
+          }
           const displayedItems = allItems.slice(0, 5);
           const itemSummary = displayedItems.map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
           const moreSuffixEn = allItems.length > 5 ? `, and ${allItems.length - 5} more` : '';
@@ -2970,39 +3194,19 @@ ${cleanFaqBlock}`;
           const moreSuffixMr = allItems.length > 5 ? ` आणि इतर ${allItems.length - 5} पर्याय` : '';
 
           if (queryLang === 'mr-IN') {
-            replyText = `आमच्याकडे सध्या ${allItems.length} ${nounMr} उपलब्ध आहेत: ${itemSummary}${moreSuffixMr}. आपल्याला अधिक माहिती हवी असल्यास नक्की सांगा!`;
+            replyText = `आमच्याकडे सध्या ${allItems.length} ${nounMr} उपलब्ध आहेत: ${itemSummary}${moreSuffixMr}. आपल्याला कोणत्याही पर्यायाबद्दल अधिक माहिती हवी असल्यास सांगा!`;
           } else if (queryLang === 'hi-IN') {
             replyText = `हमारे पास अभी ${allItems.length} ${nounHi} उपलब्ध हैं: ${itemSummary}${moreSuffixHi}। किसी भी विकल्प के बारे में और जानने के लिए मुझे बताएं!`;
           } else {
-            replyText = `We currently have ${allItems.length} ${nounEn} available: ${itemSummary}${moreSuffixEn}. Let me know if you would like details on any of these!`;
+            replyText = `We currently have ${allItems.length} ${nounEn} available: ${itemSummary}${moreSuffixEn}. Let me know which one you would like details on!`;
           }
         } else {
-          // Check Agent Knowledge Base & Host FAQs BEFORE falling back to generic message
+          // Check Agent Knowledge Base & Live Host Page Snippets BEFORE falling back
+          const groundedCat = findGroundedKbOrSnippet('course program product menu plan room service catalog list offer');
           const hk = extractHostPageKnowledge();
-          const catalogKb = [...(agentConfig.knowledgeBase || []), ...hk.faqs].filter(item => isCustomerSafeFaq(item.q, item.a));
-          let bestCatalogKb = null;
-          let bestCatalogScore = 0;
-          for (const item of catalogKb) {
-            const qL = (item.q || '').toLowerCase();
-            const aL = (item.a || '').toLowerCase();
-            let sc = 0;
-            if (lower.includes(qL) || qL.includes(lower)) sc += 80;
-            for (const sw of stemmedWords) {
-              if (qL.includes(sw)) sc += 20;
-              if (aL.includes(sw)) sc += 8;
-            }
-            if (/\b(course|courses|program|programs|product|products|menu|dish|dishes|plan|plans|room|rooms|service|services|offer|provide|catalog|list)\b/i.test(qL)) {
-              sc += 10;
-            }
-            if (sc > bestCatalogScore) {
-              bestCatalogScore = sc;
-              bestCatalogKb = item;
-            }
-          }
-
-          if (bestCatalogKb && bestCatalogScore >= 20) {
-            if (context) context.activeTopic = bestCatalogKb.q;
-            replyText = bestCatalogKb.a;
+          if (groundedCat) {
+            if (context) context.activeTopic = groundedCat.topic;
+            replyText = groundedCat.answer;
           } else if (hk.services && hk.services.length > 0) {
             const servList = hk.services.slice(0, 5).join(', ');
             replyText = `We offer: ${servList}.${sec ? ` I have scrolled your screen down to our ${sec.label}!` : ''}`;
@@ -3029,6 +3233,45 @@ ${cleanFaqBlock}`;
           reply: replyText,
           navAction: sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null
         };
+      }
+
+      // 1.5 General Pricing / Fee Structure Overview Handler (Works across ALL website types even when activeItem is null!)
+      if (bridge && bridge.status === 'FOUND_PRICE_OVERVIEW') {
+        const allItems = Array.isArray(bridge.data) && bridge.data.length > 0 ? bridge.data : getAllCatalogItems(agentConfig);
+        const pricedItems = allItems.filter(i => i.price);
+        const sec = findHostSection('pricing') || findHostSection('fees') || findHostSection('courses') || findHostSection('products');
+        if (sec) scrollToHostSection(sec);
+
+        if (pricedItems.length > 0) {
+          if (context) {
+            context.lastDisplayedItems = pricedItems;
+            context.catalogOffset = Math.min(5, pricedItems.length);
+            context.activeTopic = 'pricing';
+            context.fallbackCount = 0;
+          }
+          const summary = pricedItems.slice(0, 5).map(i => `${i.name}: ${i.price}`).join(', ');
+          const moreEn = pricedItems.length > 5 ? `, and ${pricedItems.length - 5} more` : '';
+          let priceReply = `Here is our ${profile.priceLabelEn} overview: ${summary}${moreEn}. Ask about any specific option for full details!`;
+          if (queryLang === 'mr-IN') {
+            priceReply = `आमची ${profile.priceLabelMr} रचना: ${summary}. कोणत्याही पर्यायाबद्दल सविस्तर माहितीसाठी विचारा!`;
+          } else if (queryLang === 'hi-IN') {
+            priceReply = `हमारी ${profile.priceLabelHi} जानकारी: ${summary}। किसी विशेष विकल्प के बारे में विस्तार से पूछें!`;
+          }
+          return {
+            reply: priceReply,
+            navAction: sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null
+          };
+        }
+
+        const groundedPrice = findGroundedKbOrSnippet('fee fees price pricing cost rate tuition charges');
+        if (groundedPrice) {
+          if (context) context.activeTopic = groundedPrice.topic;
+          return groundedPrice.answer;
+        }
+        if (allItems.length > 0) {
+          const names = allItems.slice(0, 5).map(i => i.name).join(', ');
+          return `Our available ${profile.itemNounEn} include ${names}. Please tell me which one you're interested in or contact our team for exact ${profile.priceLabelEn} details!`;
+        }
       }
 
       // 2. Direct Section Navigation Handler (e.g. "take me to pricing", "where is contact")
@@ -3190,51 +3433,102 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // 6. Semantic Knowledge Base & On-Page FAQ Matching (Plural-Normalized & Context-Aware)
+      // 6. Semantic Knowledge Base, On-Page FAQs & Live Host Page Content Snippet Matching
       const hostKnowledge = extractHostPageKnowledge();
-      const combinedKb = [...(agentConfig.knowledgeBase || []), ...hostKnowledge.faqs];
-      const kb = combinedKb.filter(item => isCustomerSafeFaq(item.q, item.a));
-      let bestItem = null;
-      let highestScore = 0;
-
-      for (const item of kb) {
-        const qLower = (item.q || '').toLowerCase();
-        const aLower = (item.a || '').toLowerCase();
-        let score = 0;
-
-        if (lower.includes(qLower) || qLower.includes(lower)) {
-          score += 80;
+      const groundedHit = findGroundedKbOrSnippet();
+      if (groundedHit) {
+        if (context) {
+          context.activeTopic = groundedHit.topic;
+          context.fallbackCount = 0;
         }
-
-        for (let i = 0; i < meaningfulWords.length; i++) {
-          const word = meaningfulWords[i];
-          const stem = stemmedWords[i] || word;
-          if (qLower.includes(word) || qLower.includes(stem)) score += 20;
-          if (aLower.includes(word) || aLower.includes(stem)) score += 8;
-        }
-
-        if (score > highestScore && isCustomerSafeFaq(item.q, item.a)) {
-          highestScore = score;
-          bestItem = item;
-        }
+        return groundedHit.answer;
       }
 
-      if (bestItem && highestScore >= 20 && isCustomerSafeFaq(bestItem.q, bestItem.a)) {
-        if (context) context.activeTopic = bestItem.q;
-        return bestItem.a;
+      // 6.8 Universal Archetype Intent Handlers (Works EVEN WHEN activeItem is null across ALL 10 website types!)
+      // Guarantees the bot ALWAYS directly answers its own suggested topics (fees, eligibility, admission/order/booking procedure, documents, warranty, shipping, reservations, test drive, etc.) instead of looping!
+      const isGeneralEligibility = /\b(eligibility|criteria|requirements?|qualification|percentage|marks|prerequisites?)\b/i.test(lower) || /(पात्रता|पात्रता मानदंड)/i.test(text);
+      const isGeneralProcedure = /\b(how to apply|how to order|how to buy|how to book|how to get|how to subscribe|admission\s*(?:process|procedure|steps?)|booking\s*(?:process|procedure)|order\s*(?:process|procedure)|getting\s*started|steps|apply online|order online|registration|enroll|table\s*reservations?|reservations?|reserve|test\s*drives?|site\s*visits?|book\s*(?:a\s*)?consultation)\b/i.test(lower) || /(प्रवेश प्रक्रिया|अर्ज कसा करावा|एडमिशन प्रक्रिया|कैसे आवेदन|कैसे ऑर्डर|बुकिंग)/i.test(text);
+      const isGeneralDocsOrPolicy = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate|prescription|id proof|warranty|return\s*policy|refund|shipping|delivery|cancellation|check-?in|check-?out|billing|dietary|amenities)\b/i.test(lower) || /(कागदपत्रे|रिटर्न पॉलिसी|डिलिव्हरी|वॉरंटी|दस्तावेज|डिलीवरी|वारंटी)/i.test(text);
+
+      if (isGeneralProcedure) {
+        if (context) {
+          context.activeTopic = 'procedure';
+          context.fallbackCount = 0;
+        }
+        if (queryLang === 'mr-IN') return `पुढे जाण्यासाठी: ${profile.actionMr}.`;
+        if (queryLang === 'hi-IN') return `आगे बढ़ने के लिए: ${profile.actionHi}।`;
+        return `To get started: ${profile.actionEn}.`;
+      }
+
+      if (isGeneralEligibility) {
+        if (context) {
+          context.activeTopic = 'eligibility';
+          context.fallbackCount = 0;
+        }
+        if (currentArchetype === 'academic') {
+          if (queryLang === 'mr-IN') return `प्रवेशासाठी विद्यार्थ्यांनी मागील पात्रता परीक्षा आवश्यक गुणांसह उत्तीर्ण केलेली असावी. विशिष्ट अभ्यासक्रमाचे नाव सांगितल्यास मी अधिक तपशील देऊ शकतो.`;
+          if (queryLang === 'hi-IN') return `एडमिशन के लिए छात्रों को पिछली पात्रता परीक्षा आवश्यक अंकों के साथ उत्तीर्ण करनी होती है। किसी विशेष कोर्स का नाम बताएं ताकि मैं सटीक विवरण दे सकूँ।`;
+          return `For admissions, applicants must have passed the qualifying board examination with the required merit marks. Tell me which course you are interested in for exact details!`;
+        }
+        if (currentArchetype === 'healthcare') {
+          return `Prescription medicines require a valid doctor prescription; over-the-counter items are available directly. Ask about any specific medicine for details!`;
+        }
+        if (currentArchetype === 'financial') {
+          return `Eligibility depends on your profile, KYC verification (PAN/ID), and income documents. Let me know which financial service you need!`;
+        }
+        return `Our ${profile.nounEn} are available to all customers directly through this website. Tell me which option you'd like to explore!`;
+      }
+
+      if (isGeneralDocsOrPolicy) {
+        if (context) {
+          context.activeTopic = 'policy_docs';
+          context.fallbackCount = 0;
+        }
+        if (currentArchetype === 'academic') {
+          if (queryLang === 'mr-IN') return `प्रवेशासाठी लागणारी कागदपत्रे: मागील इयत्तेची मार्कशीट, मूळ शाळा सोडल्याचा दाखला (LC), आधार कार्ड आणि पासपोर्ट आकाराचे फोटो.`;
+          if (queryLang === 'hi-IN') return `एडमिशन के लिए आवश्यक दस्तावेज: पिछली कक्षा की मार्कशीट, मूल स्कूल छोड़ने का प्रमाण पत्र (LC), आधार कार्ड और पासपोर्ट फोटो।`;
+          return `Required admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs.`;
+        }
+        if (currentArchetype === 'ecommerce') {
+          return `We provide authentic products with standard shipping, manufacturer warranty, and hassle-free returns as listed on our store policy. Ask about any specific product for exact details!`;
+        }
+        if (currentArchetype === 'healthcare') {
+          return `Please keep a valid doctor prescription and patient ID ready for prescription items. Over-the-counter healthcare items do not require a prescription.`;
+        }
+        if (currentArchetype === 'hospitality') {
+          return `Standard government photo ID is required at check-in. Check-in, check-out, and cancellation terms are shown on our reservation section—ask about any room for full details!`;
+        }
+        if (currentArchetype === 'saas') {
+          return `Flexible monthly and annual billing options are available with instant activation. Ask about any specific plan to compare features and pricing!`;
+        }
+        if (currentArchetype === 'food') {
+          return `We offer fresh dine-in, takeaway, and delivery options with clear dietary details. Ask about any dish on our menu for ingredients and pricing!`;
+        }
+        if (currentArchetype === 'automotive') {
+          return `Manufacturer warranty, financing, and servicing support are included. Please carry a valid driving license for showroom test drives!`;
+        }
+        if (currentArchetype === 'financial') {
+          return `Standard KYC documents (PAN card, Aadhaar/ID proof, and relevant financial statements) are typically required. Ask about a specific service for an exact checklist!`;
+        }
+        return `You can review full policy and requirement details on our website or ask me about any specific ${profile.itemNounEn} option!`;
       }
 
       // 7. Polite Universal Catalog Guidance Fallback (Plural-Safe Across All 10 Website Archetypes)
       const allItems = getAllCatalogItems(agentConfig);
-      if (allItems.length > 0 && /\b(medicines?|meds?|products?|items?|drugs?|tables?|catalogs?|catalogues?|stocks?|prices?|dishes?|foods?|pizzas?|burgers?|menus?|plans?|tiers?|services?|courses?|programs?|programmes?|streams?|classes?|degrees?|admissions?|rooms?|suites?|bookings?|vehicles?|cars?|bikes?|properties|property|flats?|apartments?|loans?|packages?)\b/i.test(lower)) {
+      if (allItems.length > 0 && /\b(medicines?|meds?|products?|items?|drugs?|tables?|catalogs?|catalogues?|stocks?|prices?|fees?|dishes?|foods?|pizzas?|burgers?|menus?|plans?|tiers?|services?|courses?|programs?|programmes?|streams?|classes?|degrees?|admissions?|rooms?|suites?|bookings?|vehicles?|cars?|bikes?|properties|property|flats?|apartments?|loans?|packages?)\b/i.test(lower)) {
+        if (context) {
+          context.lastDisplayedItems = allItems;
+          context.catalogOffset = Math.min(5, allItems.length);
+          context.fallbackCount = 0;
+        }
         const itemSummary = allItems.slice(0, 5).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
         const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
-        let catReply = `In our live database, we currently offer: ${itemSummary}.${sec ? ` I have scrolled your screen down to the ${sec.label}!` : ''}`;
+        let catReply = `We currently offer: ${itemSummary}.${sec ? ` I have scrolled your screen down to the ${sec.label}!` : ' Let me know which one you would like details on!'}`;
         if (queryLang === 'mr-IN') {
-          catReply = `आमच्या डेटाबेसमध्ये उपलब्ध पर्याय: ${itemSummary}.${sec ? ` मी स्क्रीन थेट ${sec.label}वर नेली आहे!` : ''}`;
+          catReply = `आमच्याकडे उपलब्ध पर्याय: ${itemSummary}.${sec ? ` मी स्क्रीन थेट ${sec.label}वर नेली आहे!` : ''}`;
         } else if (queryLang === 'hi-IN') {
-          catReply = `हमारे डेटाबेस में उपलब्ध विकल्प: ${itemSummary}।${sec ? ` मैंने स्क्रीन को सीधे ${sec.label} पर स्क्रॉल कर दिया है!` : ''}`;
+          catReply = `हमारे पास उपलब्ध विकल्प: ${itemSummary}।${sec ? ` मैंने स्क्रीन को सीधे ${sec.label} पर स्क्रॉल कर दिया है!` : ''}`;
         }
         return {
           reply: catReply,
@@ -3242,27 +3536,52 @@ ${cleanFaqBlock}`;
         };
       }
 
+      // 8. Anti-Loop / Stuck-State Recovery Guard: NEVER repeat the exact same vague fallback message twice!
+      const itemContextName = context?.activeItem?.name ? ` regarding ${context.activeItem.name}` : '';
+      let genericFallback = `I am here to assist you${itemContextName}. Would you like to know more about our ${profile.followUpEn}?`;
+      if (queryLang === 'mr-IN') {
+        genericFallback = `मी आपल्या सेवेसाठी तत्पर आहे${itemContextName}. आपल्याला ${profile.followUpMr}बद्दल अधिक माहिती हवी आहे का?`;
+      } else if (queryLang === 'hi-IN') {
+        genericFallback = `मैं आपकी सहायता के लिए उपस्थित हूँ${itemContextName}। क्या आप ${profile.followUpHi} के बारे में और जानना चाहते हैं?`;
+      }
+
+      const wouldLoop = Boolean(context && (context.lastReply === genericFallback || (context.fallbackCount || 0) >= 1));
+      if (wouldLoop) {
+        if (context) context.fallbackCount = (context.fallbackCount || 0) + 1;
+        // Proactively break out of any loop with REAL concrete options from this website!
+        if (allItems.length > 0) {
+          if (context) {
+            context.lastDisplayedItems = allItems;
+            context.catalogOffset = Math.min(5, allItems.length);
+          }
+          const topList = allItems.slice(0, 4).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+          if (queryLang === 'mr-IN') return `मी थेट मदत करू शकतो! आमचे प्रमुख पर्याय: ${topList}. यापैकी कोणाचेही नाव किंवा "पहिला" असे सांगा!`;
+          if (queryLang === 'hi-IN') return `मैं सीधे मदद कर सकता हूँ! हमारे प्रमुख विकल्प हैं: ${topList}। किसी का भी नाम बताएं या "पहला" कहें!`;
+          return `Let me show you concrete options right away: ${topList}. Just name any of these or say "the first one" for full details!`;
+        }
+        const safeKbTopics = (agentConfig.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a)).slice(0, 3).map(k => k.q);
+        if (safeKbTopics.length > 0) {
+          return `I can answer questions right away such as: ${safeKbTopics.join(' | ')}. Which topic would you like me to explain?`;
+        }
+        if (hostKnowledge.phone || hostKnowledge.email) {
+          const contactParts = [hostKnowledge.phone ? `call ${hostKnowledge.phone}` : '', hostKnowledge.email ? `email ${hostKnowledge.email}` : ''].filter(Boolean).join(' or ');
+          return `I want to make sure you get the exact answer you need. You can ask me about ${profile.followUpEn}, or reach our team directly via ${contactParts}.`;
+        }
+      }
+
       if (history && history.length > 0) {
-        const currentArchetype = detectCurrentArchetype(agentConfig);
-        const profile = getArchetypeProfile(currentArchetype);
-        const itemContextName = context?.activeItem?.name ? ` regarding ${context.activeItem.name}` : '';
-        if (queryLang === 'mr-IN') {
-          return `मी आपल्या सेवेसाठी तत्पर आहे${itemContextName}. आपल्याला ${profile.followUpMr}बद्दल अधिक माहिती हवी आहे का?`;
-        }
-        if (queryLang === 'hi-IN') {
-          return `मैं आपकी सहायता के लिए उपस्थित हूँ${itemContextName}। क्या आप ${profile.followUpHi} के बारे में और जानना चाहते हैं?`;
-        }
-        return `I am here to assist you${itemContextName}. Would you like to know more about our ${profile.followUpEn}?`;
+        if (context) context.fallbackCount = (context.fallbackCount || 0) + 1;
+        return genericFallback;
       }
 
       if (queryLang === 'mr-IN') {
-        return `मी ${agentConfig.name} आहे. मी आपल्या प्रश्नाचे स्वागत करतो. आपण आमच्या सेवा, कॅटलॉग, थेट डेटाबेस साठा, किंमती किंवा अपॉइंटमेंटबद्दल विचारू शकता. मी कशी मदत करू?`;
+        return `मी ${agentConfig.name} आहे. मी आपल्या प्रश्नाचे स्वागत करतो. आपण आमच्या ${profile.nounMr}बद्दल विचारू शकता. मी कशी मदत करू?`;
       }
       if (queryLang === 'hi-IN') {
-        return `मैं ${agentConfig.name} हूँ। मैं आपकी सहायता के लिए तत्पर हूँ। आप हमारी सेवाओं, कैटलॉग, लाइव डेटाबेस स्टॉक, कीमतों या अपॉइंटमेंट के बारे में पूछ सकते हैं। मैं आपकी क्या मदद करूँ?`;
+        return `मैं ${agentConfig.name} हूँ। आप हमारी ${profile.nounHi} के बारे में कुछ भी पूछ सकते हैं। मैं आपकी क्या मदद करूँ?`;
       }
 
-      return `Hello, I'm ${agentConfig.name}! I am your customer support guide for this website. You can ask me about our services, database catalog, live stock, pricing, or ask me to scroll to any section on this page!`;
+      return `Hello, I'm ${agentConfig.name}! You can ask me about our ${profile.nounEn}, ${profile.followUpEn}, or ask me to jump to any section on this page.`;
     }
 
     // Maintain multi-turn conversation memory & session logs
@@ -3270,6 +3589,11 @@ ${cleanFaqBlock}`;
     const conversationContext = {
       activeItem: null,
       activeTopic: null,
+      lastDisplayedItems: [],
+      catalogOffset: 0,
+      lastIntent: null,
+      lastReply: '',
+      fallbackCount: 0,
       turnCount: 0
     };
     const visitorId = 'Visitor #' + Math.floor(1000 + Math.random() * 9000);
@@ -3466,8 +3790,13 @@ ${cleanFaqBlock}`;
           if (sec) scrollToHostSection(sec);
           const cleanBtnName = cleanScrapedItemTitle(bridgeResult.data?.name || 'Item').name.substring(0, 25);
           navAction = sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec } : null;
-        } else if (bridgeResult.status === 'FOUND_CATALOG_LIST') {
-          const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
+        } else if (bridgeResult.status === 'FOUND_CATALOG_LIST' || bridgeResult.status === 'FOUND_PRICE_OVERVIEW') {
+          if (Array.isArray(bridgeResult.data) && bridgeResult.data.length > 0) {
+            conversationContext.lastDisplayedItems = bridgeResult.data;
+            conversationContext.catalogOffset = Math.min(5, bridgeResult.data.length);
+            conversationContext.activeTopic = bridgeResult.status === 'FOUND_PRICE_OVERVIEW' ? 'pricing' : 'catalog_list';
+          }
+          const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
           if (sec) scrollToHostSection(sec);
           navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null;
         }
@@ -3477,6 +3806,7 @@ ${cleanFaqBlock}`;
       if (apiKey) {
         const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext);
         reply = await callLLMWithBYOK(userText, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
+        if (reply) conversationContext.fallbackCount = 0;
       }
 
       // 3. Fallback to Local Semantic Knowledge Reasoner ONLY if BYOK failed or API key missing
@@ -3490,6 +3820,8 @@ ${cleanFaqBlock}`;
         }
       }
 
+      conversationContext.lastReply = reply;
+      conversationContext.turnCount = (conversationContext.turnCount || 0) + 1;
       conversationHistory.push({ role: 'assistant', content: reply });
       sessionLogMessages.push({ role: 'agent', text: reply, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
       recordSessionLogToAgentFolder(sessionLogMessages);
