@@ -177,11 +177,11 @@ export default function LandingPage({ onOpenAuth, onDirectDemoLogin }) {
             </div>
             <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-2xs">
               <CheckCircle2 size={14} className="text-emerald-600" />
-              <span>Shadow DOM Style Isolation</span>
+              <span>Clean Website Integration</span>
             </div>
             <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-2xs">
               <CheckCircle2 size={14} className="text-emerald-600" />
-              <span>Locked Persona Voice Consistency</span>
+              <span>Natural Voice &amp; Accents</span>
             </div>
           </div>
 
@@ -325,7 +325,7 @@ export default function LandingPage({ onOpenAuth, onDirectDemoLogin }) {
           <div className="text-xs font-bold text-indigo-600 uppercase tracking-widest font-mono">WORKFLOW</div>
           <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900">How to Build Your AI Agent in 3 Steps</h2>
           <p className="text-sm text-slate-600 max-w-xl mx-auto">
-            From raw codebase files to a fully standalone, keyless, production-ready AI voice widget.
+            From your website and database files to a fully functional, live AI voice help desk.
           </p>
         </div>
 
@@ -418,17 +418,17 @@ export default function LandingPage({ onOpenAuth, onDirectDemoLogin }) {
         </div>
       </section>
 
-      {/* 7. Keyless Engine & 15-Day Storage Policy */}
+      {/* 7. Privacy & Storage Policy */}
       <section id="storage-policy" className="relative z-10 py-24 px-6 max-w-6xl mx-auto">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
           
           <div className="space-y-6">
             <div className="text-xs font-bold text-amber-600 uppercase tracking-widest font-mono">PRIVACY &amp; LIFECYCLE</div>
             <h2 className="text-3xl font-extrabold text-slate-900 leading-tight">
-              15-Day Auto-Purge Storage &amp; Zero Client API Key Exposure
+              15-Day Auto-Purge Storage &amp; Secure Cloud Integration
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-              When an agent is created, your API keys stay safely behind our website. The exported agent is completely autonomous and operates directly inside the visitor's web browser using native Web Speech and client-side semantic intent resolution.
+              When an agent is created, your AI API keys and database credentials stay secure. The assistant connects directly to your live database records to provide accurate answers to your visitors.
             </p>
             <div className="space-y-3 text-xs text-slate-600">
               <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs">

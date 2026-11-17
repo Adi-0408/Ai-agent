@@ -32,7 +32,7 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
   const [step, setStep] = useState(1); // 1: Setup & Upload, 2: Review & Create
   const [name, setName] = useState('');
   const [websiteName, setWebsiteName] = useState('');
-  const [model, setModel] = useState('Groq Qwen 27B (<200ms Free)');
+  const [model, setModel] = useState('Groq Llama 3.1 8B (<200ms Instant)');
   const [voice, setVoice] = useState('Adam');
   const [themeColor, setThemeColor] = useState('#6366f1');
   const [accentColor, setAccentColor] = useState('#06b6d4');
@@ -55,7 +55,7 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
     setStep(1);
     setName('');
     setWebsiteName('');
-    setModel('Groq Qwen 27B (<200ms Free)');
+    setModel('Groq Llama 3.1 8B (<200ms Instant)');
     setVoice('Adam');
     setThemeColor('#6366f1');
     setAccentColor('#06b6d4');
@@ -438,9 +438,9 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full h-9 px-3 rounded-lg bg-white border border-slate-300 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 shadow-2xs cursor-pointer"
               >
-                <option>Groq Qwen 27B (&lt;200ms Free)</option>
-                <option>Google Gemini 3.8 Flash (Free)</option>
-                <option>Groq GPT-OSS 20B (Free)</option>
+                <option>Groq Llama 3.1 8B (&lt;200ms Instant)</option>
+                <option>Groq Llama 3.3 70B Versatile</option>
+                <option>Google Gemini 2.5 Flash (Free)</option>
               </select>
             </div>
 

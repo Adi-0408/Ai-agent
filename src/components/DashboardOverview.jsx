@@ -65,7 +65,7 @@ export default function DashboardOverview({
             AI Voice Help Desk <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-cyan-500 bg-clip-text text-transparent">Command Center</span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-600 max-w-xl leading-relaxed">
-            Manage your autonomous voice assistants, test deterministic locked voices, and export standalone packages that run anywhere with <strong className="text-slate-900 font-semibold">zero external API keys</strong>.
+            Manage your AI voice assistants, test natural voice accents, and connect live database grounding with your dedicated AI key.
           </p>
         </div>
 
@@ -391,7 +391,7 @@ export default function DashboardOverview({
             </div>
             <div className="text-sm font-semibold text-slate-900">Voice Library</div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              Audition and configure deterministic locked voice profiles.
+              Audition and configure natural voice accents and speaking tones.
             </p>
           </div>
 

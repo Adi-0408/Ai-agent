@@ -482,7 +482,13 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
   // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms with llama-3.1-8b-instant)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
     try {
-      const groqModel = options?.model || 'llama-3.1-8b-instant';
+      let groqModel = 'llama-3.1-8b-instant';
+      if (options?.model) {
+        const m = String(options.model).toLowerCase();
+        if (m.includes('70b')) groqModel = 'llama-3.3-70b-versatile';
+        else if (m.includes('mixtral')) groqModel = 'mixtral-8x7b-32768';
+        else if (m.startsWith('llama-') || m.startsWith('mixtral-') || m.startsWith('gemma')) groqModel = options.model;
+      }
       const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -707,8 +713,14 @@ Your floating voice assistant widget will appear immediately on your site, with 
       return `Our verified database includes: ${summary}. You can ask me for real-time stock, pricing, or details on any item!`;
     }
     const matchedRecord = dbRecords.find(r => {
-      const rName = (r.name || '').toLowerCase();
-      return rName && (lower.includes(rName) || rName.includes(lower));
+      const rName = (r.name || '').toLowerCase().trim();
+      if (!rName) return false;
+      if (lower === rName) return true;
+      if (lower.length < 4 || rName.length < 4) {
+        const wordRegex = new RegExp('\\b' + lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+        return wordRegex.test(rName);
+      }
+      return lower.includes(rName) || rName.includes(lower);
     });
     if (matchedRecord) {
       if (isAcademic) {

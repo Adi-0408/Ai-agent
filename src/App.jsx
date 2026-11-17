@@ -289,7 +289,7 @@ export default function App() {
   const [systemPromptText, setSystemPromptText] = useState('');
   const [assistantName, setAssistantName] = useState('');
   const [firstMessageText, setFirstMessageText] = useState('');
-  const [selectedModel, setSelectedModel] = useState('Groq Qwen 27B (<200ms Free)');
+  const [selectedModel, setSelectedModel] = useState('Groq Llama 3.1 8B (<200ms Instant)');
   const [selectedVoice, setSelectedVoice] = useState('Adam');
   const [isEditingName, setIsEditingName] = useState(false);
   const [isAutoDevelopModalOpen, setIsAutoDevelopModalOpen] = useState(false);
@@ -679,6 +679,19 @@ export default function App() {
     try {
       setIsSyncingFirestore(true);
       await saveAgent(updated);
+
+      // Instant Invalidation of Widget Cache in localStorage so embed/demo page reflects changes immediately
+      try {
+        const targetId = (updated.id || '').toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
+        const targetName = (updated.name || '').toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('vhd_') && (k.includes(targetId) || k.includes(targetName))) {
+            localStorage.removeItem(k);
+          }
+        }
+      } catch (_) {}
+
       setAssistantsList(prev => prev.map(a => (a.id === prevId || a.id === updated.id) ? updated : a));
       setSelectedAssistantId(updated.id);
       setFirestoreSyncSuccess(true);
@@ -2439,10 +2452,9 @@ export default function App() {
                                   onChange={(e) => setSelectedModel(e.target.value)}
                                   className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 cursor-pointer shadow-2xs"
                                 >
-                                  <option value="Groq Qwen 27B (<200ms Free)">Groq Qwen 27B (&lt;200ms Free)</option>
-                                  <option value="Google Gemini 3.8 Flash (Free)">Google Gemini 3.8 Flash (Free)</option>
+                                  <option value="Groq Llama 3.1 8B (<200ms Instant)">Groq Llama 3.1 8B (&lt;200ms Instant)</option>
                                   <option value="Groq Llama 3.3 70B Versatile">Groq Llama 3.3 70B Versatile</option>
-                                  <option value="Groq GPT-OSS 20B (Free)">Groq GPT-OSS 20B (Free)</option>
+                                  <option value="Google Gemini 2.5 Flash (Free)">Google Gemini 2.5 Flash (Free)</option>
                                 </select>
                                 <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-1.5 font-medium">
                                   <span className="w-3.5 h-3.5 rounded bg-emerald-600 text-[10px] font-bold text-white flex items-center justify-center">G</span>
@@ -3982,7 +3994,6 @@ export default function App() {
               {[
                 { label: 'Voice Assistants Builder', tab: 'assistants' },
                 { label: 'Knowledge Base (JSON Upload)', tab: 'files' },
-                { label: 'Custom Tools & Webhooks', tab: 'tools' },
                 { label: 'Embed & Client Integration', tab: 'embed-widget' },
                 { label: 'Live Conversation Logs', tab: 'logs' },
                 { label: 'Voice Library', tab: 'voice-library' },

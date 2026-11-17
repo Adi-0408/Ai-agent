@@ -810,6 +810,7 @@
               formData.append('model', 'whisper-large-v3-turbo');
               formData.append('response_format', 'verbose_json');
               formData.append('temperature', '0.0');
+              formData.append('prompt', 'English, Hindi, Marathi, Sangli Shikshan Sanstha, admissions, courses, fees, syllabus, नमस्कार, नमस्ते, ॲडमिशन, प्रवेश, फी, अभ्यासक्रम, निकाल');
 
               // Only force language if user manually selected a specific language
               if (currentSpeechLang && currentSpeechLang !== 'auto') {
@@ -898,16 +899,8 @@
       }, 300);
     }
 
-    // Unified Voice Recording Handler (Supports Instant Barge-in)
+    // Unified Voice Recording Handler (Instant <50ms Barge-in Response)
     const toggleVoiceRecording = async () => {
-      // Re-verify if agent has been deleted before opening mic
-      const stillActive = await fetchAgentConfig();
-      if (!stillActive) {
-        const existing = document.getElementById('voice-helpdesk-root');
-        if (existing) existing.remove();
-        return;
-      }
-
       if (!recognition) {
         alert('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
         return;
@@ -1641,6 +1634,14 @@
       return items;
     }
 
+    // Conversational & Greeting Filter: Never search catalog for small-talk or greetings
+    function isGreetingOrConversational(text) {
+      const t = String(text || '').trim().toLowerCase();
+      if (!t) return false;
+      return /^(hi|hello|hey|howdy|greetings|good\s*(morning|afternoon|evening|day)|namaste|namaskar|kasa\s*ahes|kase\s*ahat|kaise\s*ho|whats?\s*up|sup|hola|thank\s*you|thanks|dhanyavad|shukriya|bye|goodbye|alvida)\b/i.test(t) ||
+             /^(नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|शुभ प्रभात|शुभ दुपार|शुभ संध्याकाळ|धन्यवाद|आभार|बाय|अलविदा)(?:\s|$|[.,!?])/i.test(t);
+    }
+
     function extractTargetItem(text, history = []) {
       let cleaned = String(text || '').trim()
         .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
@@ -1648,6 +1649,11 @@
         .replace(/[?!.,;]/g, '')
         .trim();
       cleaned = cleaned.replace(/\s+/g, ' ');
+
+      // Never treat conversational greetings as a catalog search item
+      if (isGreetingOrConversational(cleaned)) {
+        return '';
+      }
 
       // If user said e.g. "just give me current stock number", resolve item from previous user messages
       if (cleaned.length < 3 && Array.isArray(history) && history.length > 0) {
@@ -1661,7 +1667,7 @@
               .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
               .replace(/[?!.,;]/g, '')
               .trim();
-            if (prevClean.length >= 3) {
+            if (prevClean.length >= 3 && !isGreetingOrConversational(prevClean)) {
               return prevClean.replace(/\s+/g, ' ');
             }
           }
@@ -1676,22 +1682,23 @@
               .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
               .replace(/[?!.,;]/g, '')
               .trim();
-            if (prevClean.length >= 3) {
+            if (prevClean.length >= 3 && !isGreetingOrConversational(prevClean)) {
               return prevClean.replace(/\s+/g, ' ');
             }
           }
         }
       }
 
-      return cleaned;
+      return isGreetingOrConversational(cleaned) ? '' : cleaned;
     }
 
     function matchInInventory(inventorySource, rawTarget) {
       if (!inventorySource) return null;
       const target = String(rawTarget || '').toLowerCase().trim();
-      if (!target) return null;
+      if (!target || isGreetingOrConversational(target)) return null;
 
       const cleanTarget = target.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!cleanTarget || cleanTarget.length < 2) return null;
       const allTokens = cleanTarget.split(' ').filter(w => w.length >= 2);
 
       // Filter out universal stopwords and unit/packaging stopwords
@@ -1705,12 +1712,27 @@
         ? inventorySource
         : Object.entries(inventorySource).map(([k, v]) => (typeof v === 'object' && v !== null ? { name: v.name || k, ...v } : { name: k, stock: v }));
 
-      // Phase 1: Exact normalized substring match on clean name
+      // Phase 1: Exact normalized match or safe word-boundary match
       for (const item of itemsList) {
         const name = String(item.name || item.product || item.title || '').toLowerCase().trim();
         const cleanName = name.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
-        if (name && (name === target || cleanName === cleanTarget || name.includes(target) || cleanName.includes(cleanTarget))) {
+        // Exact match
+        if (name === target || cleanName === cleanTarget) {
+          return item;
+        }
+
+        // For short target tokens (< 4 chars, e.g. "hi", "it", "on", "in"), strictly require word-boundary regex!
+        if (cleanTarget.length < 4) {
+          const wordRegex = new RegExp('\\b' + cleanTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+          if (wordRegex.test(cleanName)) {
+            return item;
+          }
+          continue; // NEVER use .includes() for short tokens!
+        }
+
+        // For longer tokens (>= 4 chars), require cleanTarget to be at least 4 chars before substring check
+        if (cleanName.includes(cleanTarget) && cleanTarget.length >= 4) {
           return item;
         }
       }
@@ -1822,6 +1844,10 @@
 
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
     async function resolveDatabaseBridge(query, agentConfig) {
+      if (!query || isGreetingOrConversational(query)) {
+        return null; // NEVER query database for conversational greetings or small talk!
+      }
+
       const isList = isCatalogListQuery(query);
       const isNav = isSectionNavigationQuery(query);
 
@@ -2188,10 +2214,10 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         ? `[VERIFIED_COURSES_AND_PROGRAMS_DATABASE]`
         : `[VERIFIED_DATABASE_RECORDS]`;
 
-      return `You are ${roleDescription}, trained with accuracy, deep database grounding, and professionalism. You are speaking directly to a visitor browsing the website.
+      return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
-- AUDIENCE IS CONSUMER / VISITOR ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${isAcademic ? 'courses, admissions, fees, eligibility, syllabus, campus guidelines' : 'products, pricing, stock availability, store hours, location, ordering'}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
+- AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${isAcademic ? 'courses, admissions, fees, eligibility, syllabus, campus guidelines' : 'products, pricing, stock availability, store hours, location, ordering'}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
 - Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
 - If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items/programs concisely in 1-2 sentences and confirm you have opened them.
@@ -2239,6 +2265,13 @@ ${cleanFaqBlock}`;
       try {
         // 1. Groq Provider (gsk_...) - High-speed enterprise inference (<200ms)
         if (trimmedKey.startsWith('gsk_')) {
+          let targetModel = 'llama-3.1-8b-instant';
+          if (model) {
+            const m = String(model).toLowerCase();
+            if (m.includes('70b')) targetModel = 'llama-3.3-70b-versatile';
+            else if (m.includes('mixtral')) targetModel = 'mixtral-8x7b-32768';
+            else if (m.startsWith('llama-') || m.startsWith('mixtral-') || m.startsWith('gemma')) targetModel = model;
+          }
           const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -2246,7 +2279,7 @@ ${cleanFaqBlock}`;
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              model: model || 'llama-3.1-8b-instant',
+              model: targetModel,
               messages: [
                 { role: 'system', content: systemPrompt },
                 ...conversationHistory.slice(-6).map(m => ({
@@ -2271,7 +2304,12 @@ ${cleanFaqBlock}`;
         // 2. Google Gemini Provider (AIza...)
         // Valid system_instruction schema preventing HTTP 400 errors
         if (trimmedKey.startsWith('AIza')) {
-          const geminiModel = (model && model.includes('gemini')) ? model : 'gemini-2.5-flash';
+          let geminiModel = 'gemini-2.5-flash';
+          if (model) {
+            const m = String(model).toLowerCase();
+            if (m.includes('1.5')) geminiModel = 'gemini-1.5-flash';
+            else if (m.startsWith('gemini-')) geminiModel = model;
+          }
           const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${trimmedKey}`;
 
           const contents = [
@@ -2355,6 +2393,22 @@ ${cleanFaqBlock}`;
       const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'your', 'about', 'can', 'you']);
       const meaningfulWords = cleanWords.filter(w => !stopWords.has(w));
       const queryLang = detectTextLanguage(text);
+
+      // 0. Immediate Greeting & Small Talk Handler (English, Hindi, Marathi)
+      if (isGreetingOrConversational(text)) {
+        const currentArchetype = detectCurrentArchetype(agentConfig);
+        const isAcademic = currentArchetype === 'academic' ||
+                           /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university|curriculum|exam|shikshan|sanstha)\b/i.test(agentConfig?.role || agentConfig?.name || (typeof document !== 'undefined' ? document.title : ''));
+        const noun = isAcademic ? 'admissions and courses' : 'our products and services';
+
+        if (queryLang === 'mr-IN') {
+          return `नमस्कार! मी ${agentConfig.name} आहे. मी आज आपल्याला कशी मदत करू शकतो?`;
+        } else if (queryLang === 'hi-IN') {
+          return `नमस्ते! मैं ${agentConfig.name} हूँ। मैं आज आपकी क्या सहायता कर सकता हूँ?`;
+        } else {
+          return `Hello! Welcome to ${agentConfig.name}. How can I assist you with ${noun} today?`;
+        }
+      }
 
       // 1. Direct Catalog List Query Handler (e.g. "give list of all meds", "show all products", "show menu")
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig);

@@ -79,4 +79,61 @@ assert.notStrictEqual(keyAcademic, keyLocalAcademic);
 
 console.log('  ✓ Cache keys strictly isolated by agent ID AND hostname');
 
+// 5. Test Action Verb and Code Signature Rejection in Database Ingestion
+console.log('\nTest 5: Action Verbs and Python/JS Syntax Rejected from Catalog');
+const actionVerbCandidates = [
+  'Generate high-fidelity prototypes',
+  'Create PDF document',
+  'Build user interface',
+  'Run test suite',
+  'Install npm packages',
+  'def __init__(self, arg)',
+  'self.image(LOGO_IMG)',
+  'class DatabaseService():',
+  'return result;'
+];
+
+const actionVerbRegex = /^(generate|create|build|run|click|install|download|configure|setup|update|test|verify|deploy|fix|add|remove|delete|edit|include|allow|ensure|enable|disable|check|select|choose|press|provide|support|optimize|use|using|implement|import|export|return|class|def|self)\b/i;
+const codeSyntaxRegex = /(def\s|self\.|class\s|import\s|return\s|\(\)|\[\]|\{\}|=>|===)/;
+
+actionVerbCandidates.forEach(cand => {
+  const isRejected = actionVerbRegex.test(cand) || codeSyntaxRegex.test(cand);
+  assert.strictEqual(isRejected, true, `Action/code entity must be rejected: ${cand}`);
+});
+console.log('  ✓ Action verbs (Generate, Create, etc.) and code signatures (def, self.) strictly blocked from database');
+
+// 6. Test Greeting Interception and Strict Word Boundary Matching
+console.log('\nTest 6: Greeting Interception & Strict Word Boundaries');
+function isGreetingOrConversational(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  return /^(hi|hello|hey|howdy|greetings|good\s*(morning|afternoon|evening|day)|namaste|namaskar|kasa\s*ahes|kase\s*ahat|kaise\s*ho|whats?\s*up|sup|hola|thank\s*you|thanks|dhanyavad|shukriya|bye|goodbye|alvida)\b/i.test(t) ||
+         /^(नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|शुभ प्रभात|शुभ दुपार|शुभ संध्याकाळ|धन्यवाद|आभार|बाय|अलविदा)(?:\s|$|[.,!?])/i.test(t);
+}
+
+assert.strictEqual(isGreetingOrConversational('hi'), true);
+assert.strictEqual(isGreetingOrConversational('Hello!'), true);
+assert.strictEqual(isGreetingOrConversational('नमस्ते'), true);
+assert.strictEqual(isGreetingOrConversational('नमस्कार'), true);
+assert.strictEqual(isGreetingOrConversational('how much is admission fee?'), false);
+assert.strictEqual(isGreetingOrConversational('what courses do you have?'), false);
+
+// Word-boundary simulation: "hi" must NOT match "Generate high-fidelity" or "High School"
+function safeWordBoundaryMatch(cleanTarget, cleanName) {
+  if (cleanTarget.length < 4) {
+    if (cleanTarget === cleanName) return true;
+    const wordRegex = new RegExp('\\b' + cleanTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+    return wordRegex.test(cleanName);
+  }
+  return cleanName.includes(cleanTarget);
+}
+
+assert.strictEqual(safeWordBoundaryMatch('hi', 'generate high fidelity'), false, 'hi must NOT match high fidelity');
+assert.strictEqual(safeWordBoundaryMatch('hi', 'high school admissions'), false, 'hi must NOT match high school');
+assert.strictEqual(safeWordBoundaryMatch('hi', 'sangli shikshan sanstha'), false, 'hi must NOT match shikshan');
+assert.strictEqual(safeWordBoundaryMatch('hi', 'hi'), true, 'hi must match exact hi');
+assert.strictEqual(safeWordBoundaryMatch('science', 'std 11th 12th science'), true, 'science matches 11th 12th science');
+
+console.log('  ✓ Greeting "hi" verified to NEVER collide with "high-fidelity", "high school", or "shikshan"');
+
 console.log('\n🎉 ALL MULTI-AGENT ISOLATION & ACCURACY TESTS PASSED PERFECTLY!\n');

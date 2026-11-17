@@ -12,6 +12,12 @@ export function detectFileType(fileName, content) {
   const lowerName = (fileName || '').toLowerCase();
   const lowerContent = (content || '').toLowerCase();
 
+  // 0. Explicit executable code files must NEVER be classified as database files!
+  const isExecutableCode = /\.(py|go|java|php|rb|rs|c|cpp|cs|swift|kt|sh|bat)$/i.test(lowerName);
+  if (isExecutableCode) {
+    return 'backend';
+  }
+
   // 1. Database & Document files
   if (
     lowerName.endsWith('.sql') ||
@@ -35,8 +41,7 @@ export function detectFileType(fileName, content) {
     lowerName.includes('database') ||
     lowerName.includes('schema') ||
     lowerName.includes('dump') ||
-    lowerName.includes('catalog') ||
-    lowerName.includes('doc')
+    lowerName.includes('catalog')
   ) {
     return 'database';
   }
@@ -482,9 +487,12 @@ export function analyzeDatabaseFile(fileName, content) {
     if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(name)) return;
 
     // Strict block on programming code lines, loops, function signatures, syntax tokens
-    if (/^(console\.|function\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|throw\b|new\s|window\.|document\.)/i.test(name)) return;
-    if (name.includes('=>') || name.includes('();') || name.includes('===') || name.includes('!==') || name.includes('++') || name.includes('${') || name.includes('for (const') || name.includes('console.log')) return;
+    if (/^(console\.|function\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|throw\b|new\s|window\.|document\.|def\s|self\.)/i.test(name)) return;
+    if (name.includes('=>') || name.includes('();') || name.includes('()') || name.includes('===') || name.includes('!==') || name.includes('++') || name.includes('${') || name.includes('for (const') || name.includes('console.log') || name.includes('def ') || name.includes('self.')) return;
     if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('CREATE TABLE')) return;
+
+    // Strict block on action verbs (e.g. "Generate high-fidelity", "Create PDF", "Build dashboard")
+    if (/^(generate|create|build|run|click|install|download|configure|setup|update|test|verify|deploy|fix|add|remove|delete|edit|include|allow|ensure|enable|disable|check|select|choose|press|provide|support|optimize|use|using|implement|import|export|return|class|def|self)\b/i.test(name)) return;
 
     if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|test\b|sample\b|untitled\b|sr\.?no\b|action\b|features?\b|services?\b|welcome\b|about\b)/i.test(name)) return;
     if (name.includes('?') || name.split(/\s+/).length > 8) return;
