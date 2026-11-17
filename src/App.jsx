@@ -17,9 +17,16 @@ import {
   getDriveConnectionStatus,
   connectGoogleDrive,
   disconnectDrive,
-  initDeveloperDriveSync
+  initDeveloperDriveSync,
+  deleteAgentFolderAndFilesFromDrive,
+  deleteAllAgentsDriveFolders
 } from './services/googleDriveService';
-import { saveFileToLocalStore, getFileFromLocalStore, clearAllFilesFromLocalStore } from './utils/localFileStore';
+import {
+  saveFileToLocalStore,
+  getFileFromLocalStore,
+  clearAllFilesFromLocalStore,
+  deleteAgentFilesFromLocalStore
+} from './utils/localFileStore';
 import { extractKnowledgeFromJson, parseJsonFile } from './utils/aiKnowledgeExtractor';
 import {
   saveAgent,
@@ -823,7 +830,7 @@ export default function App() {
     const idToDelete = targetObj.id || targetObj.name;
     const nameToDelete = targetObj.name || targetObj.id;
 
-    if (!window.confirm(`⚠️ Are you sure you want to delete "${nameToDelete}"? Once deleted, this assistant will immediately stop working and will no longer appear on any website where it was embedded.`)) {
+    if (!window.confirm(`⚠️ Are you sure you want to delete "${nameToDelete}"? Once deleted, this assistant and its associated files will be removed from Google Drive, and it will no longer appear on any website where it was embedded.`)) {
       return;
     }
 
@@ -832,19 +839,39 @@ export default function App() {
     } catch (err) {
       console.error("Failed to delete assistant from Firestore:", err);
     }
+
+    // Delete associated files and dedicated folder from Google Drive
+    try {
+      if (isDriveConnected()) {
+        await deleteAgentFolderAndFilesFromDrive(nameToDelete, targetObj.uploadedFiles || []);
+      }
+    } catch (err) {
+      console.warn("Failed to delete assistant files from Google Drive:", err);
+    }
+
+    // Delete associated files from local IndexedDB store
+    try {
+      await deleteAgentFilesFromLocalStore(nameToDelete);
+    } catch (err) {
+      console.warn("Failed to delete assistant files from local store:", err);
+    }
+
     const remaining = assistantsList.filter(a => a.id !== idToDelete && a.name !== nameToDelete);
     setAssistantsList(remaining);
     setSelectedAssistantId(remaining.length > 0 ? remaining[0].id : null);
   };
 
-  // Completely wipe all assistants and their data across Firestore, IndexedDB, and localStorage
+  // Completely wipe all assistants and their data across Firestore, IndexedDB, Google Drive, and localStorage
   const handlePurgeAllAssistantsAndData = async () => {
-    if (!window.confirm('⚠️ Are you sure you want to remove ALL assistants and their data? This will reset your workspace.')) {
+    if (!window.confirm('⚠️ Are you sure you want to remove ALL assistants and their data? This will reset your workspace and remove files from Google Drive.')) {
       return;
     }
     try {
       await deleteAllAgentsAndData();
       await clearAllFilesFromLocalStore();
+      if (isDriveConnected()) {
+        await deleteAllAgentsDriveFolders();
+      }
       setAssistantsList([]);
       setSelectedAssistantId(null);
       setAssistantName('');
@@ -853,7 +880,7 @@ export default function App() {
       setEditingFaqList([]);
       setToolsList([]);
       setComposerAttachedFiles([]);
-      alert('✓ All assistants and their data have been completely removed.');
+      alert('✓ All assistants and their data have been completely removed from workspace and Google Drive.');
     } catch (err) {
       console.error("Failed to purge all data:", err);
       alert("Failed to remove all data: " + err.message);
@@ -1200,9 +1227,54 @@ export default function App() {
       return;
     }
 
-    // Direct Assistant Editing via Composer (When user asks to change/update the targeted assistant)
+    // Direct Assistant Editing or Deletion via Composer
     if (currentAssistant && attachedSnapshot.length === 0) {
       const lowerText = text.toLowerCase().trim();
+
+      // Check for delete / remove assistant intent via Composer
+      const isDeleteIntent =
+        /\b(?:delete|remove|destroy|purge|wipe)\s+(?:the\s+|this\s+|my\s+)?(?:agent|assistant)\b/i.test(lowerText) ||
+        /^(?:delete|remove)\s+(?:it|this|agent|assistant)$/i.test(lowerText);
+
+      if (isDeleteIntent) {
+        const agentToDelete = { ...currentAssistant };
+        const idToDelete = agentToDelete.id || agentToDelete.name;
+        const nameToDelete = agentToDelete.name || agentToDelete.id;
+
+        try {
+          await deleteAgent(agentToDelete);
+        } catch (e) {
+          console.error("Firestore delete error:", e);
+        }
+        try {
+          if (isDriveConnected()) {
+            await deleteAgentFolderAndFilesFromDrive(nameToDelete, agentToDelete.uploadedFiles || []);
+          }
+        } catch (e) {
+          console.warn("Drive delete error:", e);
+        }
+        try {
+          await deleteAgentFilesFromLocalStore(nameToDelete);
+        } catch (e) {
+          console.warn("Local store delete error:", e);
+        }
+
+        const remaining = assistantsList.filter(a => a.id !== idToDelete && a.name !== nameToDelete);
+        setAssistantsList(remaining);
+        setSelectedAssistantId(remaining.length > 0 ? remaining[0].id : null);
+
+        const assistantMessage = {
+          id: 'msg-' + (Date.now() + 1),
+          sender: 'assistant',
+          text: `✓ I have permanently deleted "${nameToDelete}". All corresponding files and folders have been removed from Google Drive, IndexedDB, and Firestore.`,
+          timestamp: 'Just now'
+        };
+
+        setThreads((prev) =>
+          prev.map((t) => (t.id === currentThreadId ? { ...t, messages: [...t.messages, assistantMessage] } : t))
+        );
+        return;
+      }
 
       // Check for normal / general / everyday questions intent
       const isNormalQuestionsIntent =

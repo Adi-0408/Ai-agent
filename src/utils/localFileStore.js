@@ -96,6 +96,31 @@ export async function clearAllFilesFromLocalStore() {
   }
 }
 
+export async function deleteAgentFilesFromLocalStore(assistantName) {
+  try {
+    const cleanTarget = (assistantName || '').toLowerCase().trim();
+    if (!cleanTarget) return false;
+    const db = await openDatabase();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const all = req.result || [];
+        for (const f of all) {
+          if ((f.assistantName || '').toLowerCase().trim() === cleanTarget) {
+            store.delete(f.id);
+          }
+        }
+      };
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
 export async function listFilesFromLocalStore(assistantName) {
   try {
     const db = await openDatabase();

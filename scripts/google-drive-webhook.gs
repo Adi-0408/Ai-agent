@@ -105,6 +105,59 @@ function doPost(e) {
       return handleDatabaseQuery(payload);
     }
 
+    // ── ACTION: Delete Agent Folder & Files ──
+    if (action === 'delete_agent' || action === 'delete_agent_files') {
+      var agentNameToDelete = sanitizeName(payload.assistantName || payload.name || '');
+      if (!agentNameToDelete) {
+        return respondJson({ status: 'error', success: false, message: 'assistantName is required for deletion.' });
+      }
+      var rootFolders = DriveApp.getFoldersByName(ROOT_FOLDER_NAME);
+      var deletedCount = 0;
+      while (rootFolders.hasNext()) {
+        var rFolder = rootFolders.next();
+        var targetAgentFolders = rFolder.getFoldersByName(agentNameToDelete);
+        while (targetAgentFolders.hasNext()) {
+          var af = targetAgentFolders.next();
+          try {
+            af.setTrashed(true);
+            deletedCount++;
+          } catch (tErr) {}
+        }
+      }
+      return respondJson({
+        status: 'success',
+        success: true,
+        message: 'Agent folder "' + agentNameToDelete + '" and all its files have been deleted from Google Drive.',
+        deletedFolders: deletedCount,
+        assistantName: agentNameToDelete
+      });
+    }
+
+    // ── ACTION: Delete Single File ──
+    if (action === 'delete_file' || (action === 'delete' && payload.fileId)) {
+      var fileIdToDelete = payload.fileId || payload.driveFileId || '';
+      if (!fileIdToDelete) {
+        return respondJson({ status: 'error', success: false, message: 'fileId is required for deletion.' });
+      }
+      try {
+        var targetFile = DriveApp.getFileById(fileIdToDelete);
+        targetFile.setTrashed(true);
+        return respondJson({
+          status: 'success',
+          success: true,
+          message: 'File deleted from Google Drive.',
+          fileId: fileIdToDelete
+        });
+      } catch (fErr) {
+        return respondJson({
+          status: 'success',
+          success: true,
+          message: 'File not found or already deleted: ' + fErr.toString(),
+          fileId: fileIdToDelete
+        });
+      }
+    }
+
     // ── ACTION: Upload File ──
     var fileName = payload.fileName || payload.filename || ('file_' + new Date().getTime() + '.txt');
     var rawContent = payload.content !== undefined ? payload.content : (payload.data !== undefined ? payload.data : '');

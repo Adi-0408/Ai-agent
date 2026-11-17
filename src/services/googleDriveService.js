@@ -766,10 +766,30 @@ export async function listAssistantDriveFiles(assistantName) {
 }
 
 /**
- * Delete (or trash) a file from Google Drive
+ * Delete (or trash) a file from Google Drive (Supports both Webhook and Direct Drive API)
  */
 export async function deleteDriveFile(driveFileId) {
   if (!driveFileId || !isDriveConnected()) return false;
+
+  // 1. Webhook mode
+  const webhookUrl = getDriveWebhookUrl();
+  if (webhookUrl) {
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'delete_file',
+          fileId: driveFileId
+        })
+      });
+      return res.ok;
+    } catch (err) {
+      console.warn('Webhook deleteDriveFile error:', err);
+    }
+  }
+
+  // 2. Direct API mode
   try {
     const res = await driveFetch(`${DRIVE_API_BASE}/files/${encodeURIComponent(driveFileId)}`, {
       method: 'DELETE'
@@ -787,4 +807,124 @@ export async function deleteDriveFile(driveFileId) {
     console.warn('Could not delete file from Google Drive:', e);
     return false;
   }
+}
+
+/**
+ * Deletes an assistant's dedicated folder and all its associated files from Google Drive.
+ * Supports both Google Apps Script Webhook and Direct Drive API.
+ */
+export async function deleteAgentFolderAndFilesFromDrive(assistantName, uploadedFiles = []) {
+  if (!assistantName || !isDriveConnected()) return false;
+
+  const cleanAgent = (assistantName || '').trim().replace(/\//g, '-') || 'Voice Assistant';
+  let overallSuccess = false;
+
+  // 1. Webhook Mode
+  const webhookUrl = getDriveWebhookUrl();
+  if (webhookUrl) {
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'delete_agent',
+          assistantName: cleanAgent
+        })
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => ({}));
+        if (json.success || json.status === 'success') {
+          overallSuccess = true;
+        }
+      }
+    } catch (err) {
+      console.warn('Webhook deleteAgentFolderAndFilesFromDrive error:', err);
+    }
+  }
+
+  // 2. Direct Drive API Mode (or fallback if direct access tokens exist)
+  if (getDriveAccessToken()) {
+    try {
+      // A. Delete any files recorded with explicit driveFileId
+      if (Array.isArray(uploadedFiles)) {
+        for (const file of uploadedFiles) {
+          if (file?.driveFileId) {
+            await deleteDriveFile(file.driveFileId);
+          }
+        }
+      }
+
+      // B. Locate and trash the assistant's parent folder under ROOT_FOLDER_NAME or Echo_AI_Agent_Files
+      const rootNames = [ROOT_FOLDER_NAME, 'Echo_AI_Agent_Files'];
+      for (const rName of rootNames) {
+        const rootFoldersQuery = `name = '${escapeDriveQuery(rName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const rootRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(rootFoldersQuery)}&fields=files(id,name)`);
+        if (rootRes.ok) {
+          const rootJson = await rootRes.json();
+          for (const rFolder of rootJson.files || []) {
+            const agentQuery = `name = '${escapeDriveQuery(cleanAgent)}' and mimeType = 'application/vnd.google-apps.folder' and '${escapeDriveQuery(rFolder.id)}' in parents and trashed = false`;
+            const agentRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(agentQuery)}&fields=files(id,name)`);
+            if (agentRes.ok) {
+              const agentJson = await agentRes.json();
+              for (const aFolder of agentJson.files || []) {
+                await deleteDriveFile(aFolder.id);
+                overallSuccess = true;
+              }
+            }
+          }
+        }
+      }
+
+      // C. Clear in-memory folder cache matching this agent
+      for (const key of folderIdCache.keys()) {
+        if (key.includes(cleanAgent)) {
+          folderIdCache.delete(key);
+        }
+      }
+    } catch (err) {
+      console.warn('Direct Drive deleteAgentFolderAndFilesFromDrive error:', err);
+    }
+  }
+
+  return overallSuccess;
+}
+
+/**
+ * Trashes all Echo AI Agent folders and data across Google Drive.
+ */
+export async function deleteAllAgentsDriveFolders() {
+  if (!isDriveConnected()) return false;
+
+  const webhookUrl = getDriveWebhookUrl();
+  if (webhookUrl) {
+    try {
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'delete_all' })
+      });
+    } catch (e) {}
+  }
+
+  if (getDriveAccessToken()) {
+    try {
+      const rootNames = [ROOT_FOLDER_NAME, 'Echo_AI_Agent_Files'];
+      for (const rName of rootNames) {
+        const rootFoldersQuery = `name = '${escapeDriveQuery(rName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const rootRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(rootFoldersQuery)}&fields=files(id,name)`);
+        if (rootRes.ok) {
+          const rootJson = await rootRes.json();
+          for (const rFolder of rootJson.files || []) {
+            await deleteDriveFile(rFolder.id);
+          }
+        }
+      }
+      folderIdCache.clear();
+      inFlightFolderPromises.clear();
+    } catch (e) {
+      console.warn('Direct Drive deleteAllAgentsDriveFolders error:', e);
+    }
+  }
+
+  return true;
 }
