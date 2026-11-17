@@ -39,7 +39,6 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
   const [showApiKey, setShowApiKey] = useState(false);
   const [keyValidationState, setKeyValidationState] = useState('idle');
   const [keyValidationMsg, setKeyValidationMsg] = useState('');
-  const [isKeylessMode, setIsKeylessMode] = useState(false);
   const [jsonInputMode, setJsonInputMode] = useState('upload'); // 'upload' | 'paste'
   const [rawJsonText, setRawJsonText] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -49,26 +48,6 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
   const [isSaving, setIsSaving] = useState(false);
   const [isUnpacking, setIsUnpacking] = useState(false);
   const [unpackProgress, setUnpackProgress] = useState('');
-
-  // Sample JSON for instant testing
-  const sampleJson = [
-    {
-      "question": "What is your return and refund policy?",
-      "answer": "We offer a 30-day no-questions-asked refund guarantee on all products and services."
-    },
-    {
-      "question": "How much does shipping cost and how long does it take?",
-      "answer": "Standard shipping is free on orders over $50 and typically arrives in 2-4 business days."
-    },
-    {
-      "question": "What are your business hours?",
-      "answer": "Our automated AI support is available 24/7. Human support representatives are available Monday through Friday from 9 AM to 6 PM EST."
-    },
-    {
-      "question": "How do I cancel or upgrade my subscription?",
-      "answer": "You can change or cancel your subscription anytime from your Account Settings > Billing page."
-    }
-  ];
 
   const handleFileUpload = async (e) => {
     const rawFileList = Array.from(e.target.files || []);
@@ -189,31 +168,15 @@ ${fullStack.summary}
     setErrorMsg('');
   };
 
-  const loadSampleData = () => {
-    setName('Nova Support');
-    setWebsiteName('Acme Cloud');
-    const jsonStr = JSON.stringify(sampleJson, null, 2);
-    setUploadedFileName('sample_helpdesk_db.json');
-    processJsonContent(jsonStr, 'sample_helpdesk_db.json');
-    setPendingRawFiles([
-      {
-        id: `f_sample_${Date.now()}`,
-        name: 'sample_helpdesk_db.json',
-        mimeType: 'application/json',
-        size: `${(new Blob([jsonStr]).size / 1024).toFixed(1)} KB`,
-        sizeBytes: new Blob([jsonStr]).size,
-        type: 'database',
-        categoryLabel: 'Database (Records/Catalog)',
-        isBinary: false,
-        rawFile: new Blob([jsonStr], { type: 'application/json' }),
-        content: jsonStr
-      }
-    ]);
-  };
-
   const handleCreate = async () => {
     if (!name.trim()) {
       setErrorMsg('Please enter an assistant name.');
+      return;
+    }
+
+    const effectiveApiKey = customApiKey.trim() || getUserApiKeys().activeKey || '';
+    if (!effectiveApiKey) {
+      setErrorMsg('Please enter or verify an AI API Key (Groq or Gemini) for this assistant.');
       return;
     }
 
@@ -281,7 +244,7 @@ ${fullStack.summary}
         themeColor: themeColor || '#6366f1',
         accentColor: accentColor || '#06b6d4',
         position: 'bottom-right',
-        apiKey: isKeylessMode ? '' : customApiKey.trim(),
+        apiKey: effectiveApiKey,
         knowledgeBase: Array.isArray(extractedData?.knowledgeBase) ? extractedData.knowledgeBase : [],
         databaseRecords: Array.isArray(extractedData?.databaseRecords) ? extractedData.databaseRecords : [],
         tools: Array.isArray(extractedData?.tools) ? extractedData.tools : [],
@@ -405,117 +368,83 @@ ${fullStack.summary}
             </div>
           </div>
 
-          {/* Dedicated Single API Key Block */}
+          {/* AI API Key Section (Mandatory Groq or Gemini Key) */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
             <div className="flex items-center justify-between text-xs">
               <label className="font-bold text-slate-800 flex items-center gap-1.5">
                 <KeyRound size={13} className="text-indigo-600" />
-                <span>AI API Key for this Assistant (Single Key)</span>
+                <span>AI API Key for this Assistant (Groq or Gemini)</span>
+                <span className="text-[10px] text-rose-500 font-bold">*Required</span>
               </label>
-              <div className="flex items-center gap-1 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => setIsKeylessMode(false)}
-                  className={`px-2 py-0.5 rounded-md font-semibold transition-colors cursor-pointer ${
-                    !isKeylessMode
-                      ? 'bg-indigo-600 text-white shadow-2xs'
-                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  Dedicated Key
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsKeylessMode(true)}
-                  className={`px-2 py-0.5 rounded-md font-semibold transition-colors cursor-pointer ${
-                    isKeylessMode
-                      ? 'bg-emerald-600 text-white shadow-2xs'
-                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  100% Offline (Keyless)
-                </button>
-              </div>
+              <a
+                href="https://console.groq.com/keys"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-indigo-600 hover:text-indigo-800 text-[11px] font-semibold inline-flex items-center gap-0.5"
+              >
+                <span>Get Free Key</span>
+                <ExternalLink size={10} />
+              </a>
             </div>
 
-            {!isKeylessMode ? (
-              <div className="space-y-2 pt-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-slate-600">
-                    Paste a single <strong>Groq Cloud</strong> (<code className="text-indigo-600">gsk_...</code>) or <strong>Gemini</strong> (<code className="text-indigo-600">AIza...</code>) key for this AI:
-                  </span>
-                  <a
-                    href="https://console.groq.com/keys"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-indigo-600 hover:text-indigo-800 font-semibold inline-flex items-center gap-0.5"
-                  >
-                    <span>Get Free Key</span>
-                    <ExternalLink size={10} />
-                  </a>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type={showApiKey ? 'text' : 'password'}
-                      value={customApiKey}
-                      onChange={(e) => {
-                        setCustomApiKey(e.target.value);
-                        setKeyValidationState('idle');
-                      }}
-                      placeholder="gsk_... or AIza... (Dedicated key for this AI)"
-                      className="w-full h-9 pl-3 pr-8 rounded-lg bg-white border border-slate-300 text-xs font-mono text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 shadow-2xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey(!showApiKey)}
-                      className="absolute right-2 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                      title={showApiKey ? "Hide key" : "Show key"}
-                    >
-                      {showApiKey ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </button>
-                  </div>
+            <div className="space-y-2 pt-0.5">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    value={customApiKey}
+                    onChange={(e) => {
+                      setCustomApiKey(e.target.value);
+                      setKeyValidationState('idle');
+                      if (errorMsg) setErrorMsg('');
+                    }}
+                    placeholder="Paste Groq (gsk_...) or Gemini (AIza...) key"
+                    className="w-full h-9 pl-3 pr-8 rounded-lg bg-white border border-slate-300 text-xs font-mono text-slate-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 shadow-2xs"
+                  />
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (!customApiKey.trim()) {
-                        setKeyValidationState('invalid');
-                        setKeyValidationMsg('Please paste an API key first.');
-                        return;
-                      }
-                      setKeyValidationState('validating');
-                      setKeyValidationMsg('Verifying...');
-                      const provider = customApiKey.startsWith('gsk_') ? 'groq' : 'gemini';
-                      const res = await validateUserApiKey(provider, customApiKey);
-                      if (res.valid) {
-                        setKeyValidationState('valid');
-                        setKeyValidationMsg(`✓ Verified Active ${provider === 'groq' ? 'Groq LPU' : 'Gemini Flash'} Key!`);
-                      } else {
-                        setKeyValidationState('invalid');
-                        setKeyValidationMsg(res.error || 'Failed to verify key.');
-                      }
-                    }}
-                    className="h-9 px-3 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold cursor-pointer shrink-0 transition-colors shadow-2xs"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-2 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    title={showApiKey ? "Hide key" : "Show key"}
                   >
-                    {keyValidationState === 'validating' ? 'Checking...' : keyValidationState === 'valid' ? '✓ Verified' : 'Verify Key'}
+                    {showApiKey ? <EyeOff size={13} /> : <Eye size={13} />}
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!customApiKey.trim()) {
+                      setKeyValidationState('invalid');
+                      setKeyValidationMsg('Please paste an API key first.');
+                      return;
+                    }
+                    setKeyValidationState('validating');
+                    setKeyValidationMsg('Verifying...');
+                    const provider = customApiKey.startsWith('gsk_') ? 'groq' : 'gemini';
+                    const res = await validateUserApiKey(provider, customApiKey);
+                    if (res.valid) {
+                      setKeyValidationState('valid');
+                      setKeyValidationMsg(`✓ Verified Active ${provider === 'groq' ? 'Groq LPU' : 'Gemini Flash'} Key!`);
+                    } else {
+                      setKeyValidationState('invalid');
+                      setKeyValidationMsg(res.error || 'Failed to verify key.');
+                    }
+                  }}
+                  className="h-9 px-3 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold cursor-pointer shrink-0 transition-colors shadow-2xs"
+                >
+                  {keyValidationState === 'validating' ? 'Checking...' : keyValidationState === 'valid' ? '✓ Verified' : 'Verify Key'}
+                </button>
+              </div>
 
-                {keyValidationState !== 'idle' && (
-                  <div className={`text-[11px] font-semibold ${keyValidationState === 'valid' ? 'text-emerald-700' : keyValidationState === 'invalid' ? 'text-rose-600' : 'text-slate-500'}`}>
-                    {keyValidationMsg}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200/80 text-[11px] text-emerald-800 leading-relaxed">
-                ✓ <strong>Offline Rule-Based Mode:</strong> This assistant will answer visitor inquiries exclusively using the compiled Knowledge Base and Web Speech API without making any external LLM calls or requiring API keys.
-              </div>
-            )}
+              {keyValidationState !== 'idle' && (
+                <div className={`text-[11px] font-semibold ${keyValidationState === 'valid' ? 'text-emerald-700' : keyValidationState === 'invalid' ? 'text-rose-600' : 'text-slate-500'}`}>
+                  {keyValidationMsg}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Section 2: Ingest Database / Website JSON */}
+          {/* Section 2: Ingest Database / Website Files */}
           <div className="pt-4 border-t border-slate-100 space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -527,14 +456,6 @@ ${fullStack.summary}
                   Upload database exports (.sql, .json, .csv) and website source files (.zip, HTML, code) for live AI access.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={loadSampleData}
-                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold underline flex items-center gap-1 cursor-pointer"
-              >
-                <Sparkles size={11} />
-                Load Sample JSON
-              </button>
             </div>
 
             {/* Upload or Paste Tabs */}

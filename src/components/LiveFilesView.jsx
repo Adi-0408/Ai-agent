@@ -23,7 +23,6 @@ import {
   Plus
 } from 'lucide-react';
 import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExtractor';
-import { SAMPLE_DATABASE_FILE } from '../utils/sampleFullStackData';
 import { detectFileType, analyzeDatabaseFile } from '../utils/codebaseAnalyzer';
 import { isZipFile, expandFileList } from '../utils/zipHandler';
 import {
@@ -293,72 +292,6 @@ export default function LiveFilesView({
     showNotice('success', `Saved ${newRecords.length} file(s) inside "${targetName}"${kbCountMsg}!`);
   };
 
-  // Load sample Knowledge Base JSON specifically for a target assistant
-  const handleLoadSampleForAssistant = async (targetAssistant) => {
-    try {
-      setIsUploading(true);
-      const targetName = targetAssistant?.name || targetAssistant?.id || 'Shared Workspace';
-      const targetId = targetAssistant?.id || targetName;
-      const fileId = `sample_kb_${Date.now()}`;
-      const content = SAMPLE_DATABASE_FILE.content;
-      const parsed = parseJsonFile(content);
-      let itemsCount = 0;
-      let newKbItems = [];
-
-      if (parsed.success) {
-        const extracted = extractKnowledgeFromJson(parsed.data, targetName, 'Website');
-        itemsCount = extracted?.itemsExtracted || 0;
-        newKbItems = extracted?.knowledgeBase || [];
-      }
-
-      await saveFileToLocalStore({
-        id: fileId,
-        name: SAMPLE_DATABASE_FILE.name,
-        mimeType: 'application/json',
-        type: 'database',
-        content,
-        assistantName: targetName
-      });
-
-      const newRecord = {
-        id: fileId,
-        name: SAMPLE_DATABASE_FILE.name,
-        size: SAMPLE_DATABASE_FILE.size,
-        sizeBytes: 4600,
-        mimeType: 'application/json',
-        type: 'database',
-        categoryLabel: 'Database (Records/Catalog)',
-        uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        itemsCount,
-        isBinary: false,
-        contentPreview: content.slice(0, 5000),
-        storageStatus: 'local_cached',
-        driveFolderPath: `Echo AI Agents / ${targetName} / Database`
-      };
-
-      const currentFiles = getAssistantFiles(targetAssistant);
-      const updatedFileList = [newRecord, ...currentFiles.filter(f => f.name !== newRecord.name)];
-
-      if (targetAssistant && onUpdateAssistantFiles) {
-        const existingKb = Array.isArray(targetAssistant.knowledgeBase) ? targetAssistant.knowledgeBase : [];
-        const mergedKb = [...existingKb, ...newKbItems];
-        onUpdateAssistantFiles(targetId, updatedFileList, mergedKb);
-      } else {
-        setSharedFallbackFiles(updatedFileList);
-        try {
-          localStorage.setItem('echo_workspace_shared_files', JSON.stringify(updatedFileList));
-        } catch (e) {}
-      }
-
-      showNotice('success', `Loaded sample Knowledge Base JSON (${itemsCount} facts indexed directly into "${targetName}")!`);
-    } catch (err) {
-      console.error('Failed loading sample knowledge JSON:', err);
-      showNotice('error', 'Failed loading sample knowledge: ' + err.message);
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
   // Delete file from a specific assistant
   const handleDeleteFileForAssistant = async (fileObj, targetAssistant) => {
     const currentFiles = getAssistantFiles(targetAssistant);
@@ -497,17 +430,6 @@ export default function LiveFilesView({
 
           {/* Action Buttons for this Specific Assistant */}
           <div className="flex items-center gap-2 flex-wrap shrink-0">
-            <button
-              type="button"
-              onClick={() => handleLoadSampleForAssistant(ast)}
-              disabled={isUploading}
-              className="h-8 px-3 rounded-lg bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
-              title={`Load sample knowledge database JSON for "${astName}"`}
-            >
-              <Database size={13} className="text-sky-600" />
-              <span>Load Sample JSON</span>
-            </button>
-
             <label className="h-8 px-3.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-sm shadow-indigo-500/20 active:scale-95 transition-all">
               {isUploading ? <RefreshCw size={13} className="animate-spin" /> : <Upload size={13} />}
               <span>+ Upload Files to "{astName}"</span>
@@ -602,16 +524,6 @@ export default function LiveFilesView({
                     className="hidden"
                   />
                 </label>
-
-                <button
-                  type="button"
-                  onClick={() => handleLoadSampleForAssistant(ast)}
-                  disabled={isUploading}
-                  className="h-8 px-3.5 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-bold inline-flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
-                >
-                  <Database size={13} className="text-sky-600" />
-                  <span>Load Sample Knowledge JSON</span>
-                </button>
               </div>
             </div>
           ) : (

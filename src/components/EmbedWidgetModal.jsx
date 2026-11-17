@@ -27,9 +27,6 @@ export default function EmbedWidgetModal({ isOpen, onClose, agent }) {
   const [showApiKey, setShowApiKey] = useState(false);
   const [testMode, setTestMode] = useState(false);
 
-  // Deployment Mode: 'keyless' (Mode A - 100% Keyless Offline Bundle) vs 'live-byok' (Mode B - Live LLM Inference)
-  const [deploymentMode, setDeploymentMode] = useState('keyless');
-
   const storedKeys = getUserApiKeys();
   const [currentApiKey, setCurrentApiKey] = useState(() => agent?.apiKey || storedKeys.activeKey || '');
   const [isEditingKey, setIsEditingKey] = useState(false);
@@ -39,11 +36,7 @@ export default function EmbedWidgetModal({ isOpen, onClose, agent }) {
   const agentId = agentName.replace(/\//g, '-');
   const widgetUrl = `${window.location.origin}/widget.js`;
 
-  // Mode A: Zero API keys in script tag (Keyless)
-  // Mode B: Includes user's domain-restricted key
-  const scriptSnippet = deploymentMode === 'keyless'
-    ? `<script src="${widgetUrl}" data-agent-id="${agentId}" defer></script>`
-    : `<script src="${widgetUrl}" data-agent-id="${agentId}" data-api-key="${currentApiKey}" defer></script>`;
+  const scriptSnippet = `<script src="${widgetUrl}" data-agent-id="${agentId}"${currentApiKey ? ` data-api-key="${currentApiKey}"` : ''} defer></script>`;
 
   const handleCopy = (text) => {
     navigator.clipboard.writeText(text);
@@ -67,8 +60,8 @@ export default function EmbedWidgetModal({ isOpen, onClose, agent }) {
   ];
 
   const getPlatformCode = () => {
-    const keyAttr = deploymentMode === 'live-byok' && currentApiKey ? `\n          data-api-key="${currentApiKey}"` : '';
-    const keyInline = deploymentMode === 'live-byok' && currentApiKey ? ` data-api-key="${currentApiKey}"` : '';
+    const keyAttr = currentApiKey ? `\n          data-api-key="${currentApiKey}"` : '';
+    const keyInline = currentApiKey ? ` data-api-key="${currentApiKey}"` : '';
 
     switch (activePlatform) {
       case 'realtime':
@@ -114,7 +107,7 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body>
         {children}
-        {/* Real-time Voice Help Desk Agent (${deploymentMode === 'keyless' ? '100% Keyless Edge Bundle' : 'Live BYOK LLM'}) */}
+        {/* Real-time Voice Help Desk Agent (Live AI Key & Database Connected) */}
         <Script 
           src="${widgetUrl}" 
           data-agent-id="${agentId}"${keyAttr}
@@ -125,10 +118,9 @@ export default function RootLayout({ children }) {
   );
 }`;
       case 'curl':
-        return deploymentMode === 'live-byok' && currentApiKey
-          ? `# Directly test the Agent inference API using your personal API Key:
+        return `# Directly test the Agent inference API using your personal AI API Key:
 curl -X POST "https://api.groq.com/openai/v1/chat/completions" \\
-  -H "Authorization: Bearer ${currentApiKey}" \\
+  -H "Authorization: Bearer ${currentApiKey || 'YOUR_GROQ_API_KEY'}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "qwen/qwen3.8-27b",
@@ -144,10 +136,7 @@ curl -X POST "https://api.groq.com/openai/v1/chat/completions" \\
     ],
     "temperature": 0.5,
     "max_tokens": 150
-  }'`
-          : `# Keyless Mode: Voice agent operates client-side with zero external API calls:
-# Embed the 1-line script tag directly in your website HTML!
-<script src="${widgetUrl}" data-agent-id="${agentId}" defer></script>`;
+  }'`;
       case 'wordpress':
         return `<!-- WordPress: Add this to footer.php right before </body>, or use a Header/Footer Scripts plugin -->
 <script src="${widgetUrl}" data-agent-id="${agentId}"${keyInline} defer></script>`;
@@ -172,7 +161,7 @@ curl -X POST "https://api.groq.com/openai/v1/chat/completions" \\
     const script = document.createElement('script');
     script.src = '/widget.js';
     script.setAttribute('data-agent-id', agentId);
-    if (deploymentMode === 'live-byok' && currentApiKey) {
+    if (currentApiKey) {
       script.setAttribute('data-api-key', currentApiKey);
     }
     script.defer = true;
@@ -181,7 +170,7 @@ curl -X POST "https://api.groq.com/openai/v1/chat/completions" \\
   };
 
   const openDemoPage = () => {
-    const keyParam = deploymentMode === 'live-byok' && currentApiKey ? `&key=${encodeURIComponent(currentApiKey)}` : '';
+    const keyParam = currentApiKey ? `&key=${encodeURIComponent(currentApiKey)}` : '';
     const voiceParam = agent?.voice ? `&voice=${encodeURIComponent(agent.voice)}` : '';
     window.open(`/demo-client-site.html?agent=${agentId}${keyParam}${voiceParam}`, '_blank');
   };
@@ -221,160 +210,108 @@ curl -X POST "https://api.groq.com/openai/v1/chat/completions" \\
         {/* Content Body */}
         <div className="p-6 overflow-y-auto space-y-5">
           
-          {/* 1. Deployment Security Mode Selector */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-800 flex items-center justify-between">
-              <span>Choose Client Deployment Mode:</span>
-              <span className="text-[10px] text-slate-500 font-medium">Select based on your website security preference</span>
-            </label>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Mode A: 100% Keyless */}
-              <div
-                onClick={() => setDeploymentMode('keyless')}
-                className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-                  deploymentMode === 'keyless'
-                    ? 'bg-emerald-50/60 border-emerald-400 ring-2 ring-emerald-500/20 shadow-xs'
-                    : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs">
-                    <ShieldCheck size={15} className="text-emerald-600" />
-                    <span>Mode A: 100% Keyless Bundle</span>
-                  </div>
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold font-mono">
-                    DEFAULT / SAFE
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
-                  <strong>Zero API keys</strong> exposed in website HTML. Responds instantly to visitor speech using the compiled Knowledge Base and Web Speech API on the client device.
-                </p>
+          {/* 1. Production AI Key Configuration Card */}
+          <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs">
+                <Zap size={15} className="text-indigo-600" />
+                <span>AI API Key Configuration (Groq or Gemini)</span>
               </div>
-
-              {/* Mode B: Live BYOK */}
-              <div
-                onClick={() => setDeploymentMode('live-byok')}
-                className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
-                  deploymentMode === 'live-byok'
-                    ? 'bg-indigo-50/60 border-indigo-400 ring-2 ring-indigo-500/20 shadow-xs'
-                    : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs">
-                    <Zap size={15} className="text-indigo-600" />
-                    <span>Mode B: Live LLM (User BYOK)</span>
-                  </div>
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold font-mono">
-                    REAL-TIME LLM
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
-                  Attaches your personal <strong>Groq</strong> or <strong>Gemini</strong> API key for real-time generative reasoning. Recommended to use a domain-restricted key.
-                </p>
-              </div>
+              <span className="text-[9px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold font-mono">
+                REAL-TIME LLM
+              </span>
             </div>
-          </div>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              This assistant runs with your dedicated <strong>Groq</strong> or <strong>Gemini</strong> API key for real-time generative reasoning, voice answers, and direct live database access.
+            </p>
 
-          {/* Mode B Warning / Key Manager */}
-          {deploymentMode === 'live-byok' && (
-            <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2.5 animate-fadeIn">
-              <div className="flex items-start gap-2 text-xs text-amber-900">
-                <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
-                <div className="leading-relaxed">
-                  <strong>Live BYOK Notice:</strong> When deploying Mode B onto public websites, restrict your key to your production domain (via Groq/Google Cloud console) or route traffic through a backend proxy to prevent unauthorized quota usage.
+            {/* Key display / editing */}
+            <div className="pt-1">
+              {isEditingKey ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={keyInput}
+                    onChange={(e) => setKeyInput(e.target.value)}
+                    placeholder="Paste your personal Groq (gsk_...) or Gemini Key"
+                    className="flex-1 h-9 px-3 rounded-xl bg-white border border-indigo-400 text-xs font-mono text-slate-900 focus:outline-none shadow-2xs"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = keyInput.trim();
+                      if (trimmed) {
+                        setCurrentApiKey(trimmed);
+                        saveUserApiKeys({ groqKey: trimmed });
+                        setIsEditingKey(false);
+                      }
+                    }}
+                    className="h-9 px-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs flex items-center gap-1 shadow-sm cursor-pointer"
+                  >
+                    <Check size={13} />
+                    <span>Save Key</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingKey(false)}
+                    className="h-9 px-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs cursor-pointer"
+                  >
+                    Cancel
+                  </button>
                 </div>
-              </div>
-
-              {/* Key display / editing */}
-              <div className="pt-1">
-                {isEditingKey ? (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={keyInput}
-                      onChange={(e) => setKeyInput(e.target.value)}
-                      placeholder="Paste your personal Groq (gsk_...) or Gemini Key"
-                      className="flex-1 h-9 px-3 rounded-xl bg-white border border-indigo-400 text-xs font-mono text-slate-900 focus:outline-none shadow-2xs"
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const trimmed = keyInput.trim();
-                        if (trimmed) {
-                          setCurrentApiKey(trimmed);
-                          saveUserApiKeys({ groqKey: trimmed });
-                          setIsEditingKey(false);
-                        }
-                      }}
-                      className="h-9 px-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs flex items-center gap-1 shadow-sm cursor-pointer"
-                    >
-                      <Check size={13} />
-                      <span>Save Key</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingKey(false)}
-                      className="h-9 px-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 text-xs cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-9 px-3 rounded-xl bg-white border border-slate-300 flex items-center justify-between text-xs font-mono text-slate-800">
-                      <span>
-                        {currentApiKey
-                          ? showApiKey
-                            ? currentApiKey
-                            : currentApiKey.substring(0, 10) + '••••••••••••••••••••••••'
-                          : 'No API key set. Click "Add Key"'}
-                      </span>
-                      {currentApiKey && (
-                        <button
-                          type="button"
-                          onClick={() => setShowApiKey(!showApiKey)}
-                          className="p-1 rounded text-slate-400 hover:text-slate-700 cursor-pointer"
-                        >
-                          {showApiKey ? <EyeOff size={13} /> : <Eye size={13} />}
-                        </button>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setKeyInput(currentApiKey);
-                        setIsEditingKey(true);
-                      }}
-                      className="h-9 px-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-semibold flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs"
-                    >
-                      <Pencil size={12} />
-                      <span>{currentApiKey ? 'Change Key' : 'Add Key'}</span>
-                    </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-9 px-3 rounded-xl bg-white border border-slate-300 flex items-center justify-between text-xs font-mono text-slate-800">
+                    <span>
+                      {currentApiKey
+                        ? showApiKey
+                          ? currentApiKey
+                          : currentApiKey.substring(0, 10) + '••••••••••••••••••••••••'
+                        : 'No API key set. Click "Add Key"'}
+                    </span>
                     {currentApiKey && (
                       <button
                         type="button"
-                        onClick={handleCopyKey}
-                        className="h-9 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold text-xs flex items-center gap-1 cursor-pointer shrink-0"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="p-1 rounded text-slate-400 hover:text-slate-700 cursor-pointer"
                       >
-                        {copiedKey ? <Check size={13} /> : <Copy size={13} />}
-                        <span>{copiedKey ? 'Copied' : 'Copy'}</span>
+                        {showApiKey ? <EyeOff size={13} /> : <Eye size={13} />}
                       </button>
                     )}
                   </div>
-                )}
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setKeyInput(currentApiKey);
+                      setIsEditingKey(true);
+                    }}
+                    className="h-9 px-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-semibold flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+                  >
+                    <Pencil size={12} />
+                    <span>{currentApiKey ? 'Change Key' : 'Add Key'}</span>
+                  </button>
+                  {currentApiKey && (
+                    <button
+                      type="button"
+                      onClick={handleCopyKey}
+                      className="h-9 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold text-xs flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      {copiedKey ? <Check size={13} /> : <Copy size={13} />}
+                      <span>{copiedKey ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* 1-Line Embed Script Tag Card */}
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
                 <Code2 size={15} className="text-indigo-600" />
-                <span>1-Line Website Embed Tag ({deploymentMode === 'keyless' ? 'Mode A: 100% Keyless' : 'Mode B: Live BYOK'})</span>
+                <span>1-Line Website Embed Tag (Live AI Key &amp; Database Connected)</span>
               </div>
               <span className="text-[10px] text-slate-500 font-medium">Direct drop-in · Zero dependencies</span>
             </div>

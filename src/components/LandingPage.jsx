@@ -132,7 +132,7 @@ export default function LandingPage({ onOpenAuth, onDirectDemoLogin }) {
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold shadow-2xs">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            <span>Autonomous Voice AI · Zero Client API Keys · $0 Free Tier</span>
+            <span>Autonomous Voice AI · Direct AI Key &amp; Database Engine · $0 Free Tier</span>
           </div>
 
           {/* Headline */}
@@ -142,7 +142,7 @@ export default function LandingPage({ onOpenAuth, onDirectDemoLogin }) {
 
           {/* Subtitle */}
           <p className="text-base sm:text-lg text-slate-600 max-w-2xl mx-auto leading-relaxed">
-            Upload your Frontend, Backend, and Database files. The AI Composer synthesizes a production-ready voice assistant with locked deterministic voices, shadow DOM isolation, and <strong className="text-slate-900 font-semibold">100% keyless export</strong>.
+            Upload your Frontend, Backend, and Database files. The AI Composer synthesizes a production-ready voice assistant with locked deterministic voices, shadow DOM isolation, and <strong className="text-slate-900 font-semibold">1-line script embed</strong>.
           </p>
 
           {/* Hero CTAs */}
@@ -169,7 +169,7 @@ export default function LandingPage({ onOpenAuth, onDirectDemoLogin }) {
           <div className="flex flex-wrap items-center justify-center gap-6 pt-6 text-xs text-slate-600 font-semibold">
             <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-2xs">
               <CheckCircle2 size={14} className="text-emerald-600" />
-              <span>0 OpenAI/Gemini Keys for Clients</span>
+              <span>Direct AI Key &amp; Live Database Access</span>
             </div>
             <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-2xs">
               <CheckCircle2 size={14} className="text-emerald-600" />
