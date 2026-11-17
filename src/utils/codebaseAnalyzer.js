@@ -432,9 +432,10 @@ export function analyzeDatabaseFile(fileName, content) {
   function addDatabaseRecord(rec) {
     if (!rec) return;
     const name = String(rec.name || rec.product || rec.title || rec.item || '').trim();
-    if (!name || name.length < 2 || name.length > 80) return;
-    if (/^(what is|tell me|how to|can you|why|who|test|sample|untitled|sr\.?no|action)$/i.test(name)) return;
+    if (!name || name.length < 2 || name.length > 70) return;
+    if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|test\b|sample\b|untitled\b|sr\.?no\b|action\b|features?\b|services?\b|welcome\b|about\b)/i.test(name)) return;
     if (name.includes('?') || name.includes('{') || name.includes('CREATE TABLE')) return;
+    if (name.split(/\s+/).length > 8) return;
 
     const price = rec.price !== undefined ? (typeof rec.price === 'number' ? `₹${rec.price}` : String(rec.price).trim()) : '';
     const stock = rec.stock !== undefined ? Number(rec.stock) : (rec.quantity !== undefined ? Number(rec.quantity) : (rec.qty !== undefined ? Number(rec.qty) : null));
@@ -443,6 +444,9 @@ export function analyzeDatabaseFile(fileName, content) {
     const dosage = String(rec.dosage || rec.composition || rec.salt || '').trim();
     const desc = String(rec.description || rec.desc || rec.details || '').trim();
     const rx = Boolean(rec.rx || rec.prescriptionRequired);
+
+    // If item has no price, no stock, and desc starts with "We offer:", it's a feature summary, not a catalog product
+    if (!price && (stock === null || isNaN(stock)) && /^(we offer:|welcome to)/i.test(desc)) return;
 
     const existing = databaseRecords.find(r => r.name.toLowerCase() === name.toLowerCase());
     if (!existing) {

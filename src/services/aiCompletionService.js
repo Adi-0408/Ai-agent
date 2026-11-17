@@ -306,9 +306,10 @@ export async function transcribeAudioWithGroqWhisper(audioBlob, customApiKey = '
       const rawText = (data.text || '').trim();
       const detectedLang = (data.language || '').toLowerCase().trim();
 
-      // Whisper Hallucination Guard: filters out low-audio / silence hallucinations
+      // Whisper Hallucination & 3-Language (English, Hindi, Marathi) Guard
+      const isAllowedLanguage = !detectedLang || ['en', 'english', 'hi', 'hindi', 'mr', 'marathi'].includes(detectedLang);
       const isHallucination = /^(thank you|thanks for watching|thank you for watching|bye|subtitles by|you|amara\.org)[\.!]?$/i.test(rawText);
-      const cleanText = isHallucination ? '' : rawText;
+      const cleanText = (isHallucination || !isAllowedLanguage) ? '' : rawText;
 
       if (options?.verbose) {
         return {
@@ -428,6 +429,11 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     ? `\n\nVerified Knowledge Base Facts:\n${JSON.stringify(kbList)}`
     : '';
 
+  const dbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
+  const dbContext = (Array.isArray(dbRecords) && dbRecords.length > 0)
+    ? `\n\nVerified Live Database Records & Product Catalog:\n${JSON.stringify(dbRecords.slice(0, 50))}`
+    : '';
+
   const userKeys = getUserApiKeys();
   const effectiveGroqKey = (apiKey && apiKey.startsWith('gsk_')) ? apiKey : userKeys.groqKey;
   const effectiveGeminiKey = (apiKey && (apiKey.startsWith('AIza') || !apiKey.startsWith('gsk_'))) ? apiKey : userKeys.geminiKey;
@@ -445,7 +451,7 @@ PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Multilingual Support: The agent supports English, Hindi (हिंदी), and Marathi (मराठी) with auto-detection for voice recognition and spoken responses.
 `;
 
-  const systemInstructions = `${baseIdentity}${kbContext}
+  const systemInstructions = `${baseIdentity}${kbContext}${dbContext}
 
 CORE MISSION & ASSIGNMENT:
 You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, technical issues, and general company policies, guiding customers every step of the way.
@@ -684,7 +690,6 @@ Your floating voice assistant widget will appear immediately on your site, with 
   }
 
   // Check live database records first if provided
-  const dbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
   if (Array.isArray(dbRecords) && dbRecords.length > 0) {
     if (/\b(what products|list products|what do you sell|all products|available products|show products|what models|what cars|what services|offerings|catalog|all meds|list of all meds|list all meds|medicines)\b/i.test(lower)) {
       const summary = dbRecords.slice(0, 6).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');

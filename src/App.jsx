@@ -6,7 +6,6 @@ import EmbedWidgetModal from './components/EmbedWidgetModal';
 import CreateAssistantModal from './components/CreateAssistantModal';
 import AutoDevelopModal from './components/AutoDevelopModal';
 import LiveFilesView from './components/LiveFilesView';
-import LiveToolsView from './components/LiveToolsView';
 import LiveLogsView from './components/LiveLogsView';
 import GoogleDriveSetupModal from './components/GoogleDriveSetupModal';
 import ApiKeyModal from './components/ApiKeyModal';
@@ -533,6 +532,7 @@ export default function App() {
         preset: selectedPreset || base.preset,
         apiKey: base.apiKey || getUserApiKeys().activeKey || '',
         knowledgeBase: (editingFaqList && editingFaqList.length > 0) ? editingFaqList : (base.knowledgeBase || []),
+        databaseRecords: Array.isArray(base.databaseRecords) ? base.databaseRecords : [],
         tools: (toolsList !== undefined) ? toolsList : (base.tools || []),
         uploadedFiles: sanitizeFilesForFirestore(base.uploadedFiles || []),
         updatedAt: new Date().toISOString()
@@ -1380,7 +1380,10 @@ export default function App() {
         currentAssistant?.prompt || defaultSupportPrompt,
         currentAssistant?.knowledgeBase || [],
         activeKey,
-        { agentName: currentAgentName }
+        {
+          agentName: currentAgentName,
+          databaseRecords: currentAssistant?.databaseRecords || []
+        }
       );
 
       const assistantMessage = {
@@ -1572,23 +1575,12 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab('files')}
-              title="Knowledge Base (JSON)"
+              title="Database Records & Files"
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
                 activeTab === 'files' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
               }`}
             >
-              <HardDrive size={16} />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('tools')}
-              title="Custom Tools"
-              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
-                activeTab === 'tools' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-            >
-              <Wrench size={16} />
+              <Database size={16} />
             </button>
 
             <button
@@ -1758,8 +1750,7 @@ export default function App() {
                   <div className="space-y-0.5">
                     {[
                       { id: 'assistants', label: 'Voice Assistants', icon: Bot, star: true },
-                      { id: 'files', label: 'Knowledge Base (JSON)', icon: HardDrive, star: true },
-                      { id: 'tools', label: 'Custom Tools', icon: Wrench, star: true },
+                      { id: 'files', label: 'Database & Files', icon: Database, star: true },
                     ].map((item) => {
                       const Icon = item.icon;
                       const isActive = activeTab === item.id;
@@ -2822,32 +2813,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ========================================================
-            VIEW 2: TOOLS (LIVE TOOLS BUILDER & SIMULATOR)
-           ======================================================== */}
-        {activeTab === 'tools' && (
-          <LiveToolsView
-            tools={toolsList}
-            setTools={(updater) => {
-              setToolsList((prevTools) => {
-                const nextTools = typeof updater === 'function' ? updater(prevTools) : updater;
-                if (currentAssistant) {
-                  const updated = {
-                    ...currentAssistant,
-                    tools: nextTools,
-                    updatedAt: new Date().toISOString()
-                  };
-                  setAssistantsList(prev => prev.map(a => a.id === updated.id ? updated : a));
-                  saveAgent(updated).catch(console.error);
-                }
-                return nextTools;
-              });
-            }}
-            currentAssistant={currentAssistant}
-            assistantsList={assistantsList}
-            onSelectAssistant={handleSelectAssistant}
-          />
-        )}
+
 
         {/* ========================================================
             VIEW 3: EMBED & CLIENT INTEGRATION

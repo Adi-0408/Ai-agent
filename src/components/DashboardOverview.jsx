@@ -40,7 +40,7 @@ export default function DashboardOverview({
   const userName = user?.displayName || 'Workspace Creator';
   const userRole = user?.role || 'Admin';
   const totalAssistants = assistants?.length || 0;
-  const totalTools = toolsList?.length || 0;
+  const totalDbRecords = currentAssistant?.databaseRecords?.length || 0;
   const totalFacts = currentAssistant?.knowledgeBase?.length || 0;
   const storageInfo = getAgentStorageInfo(currentAssistant);
 
@@ -115,24 +115,28 @@ export default function DashboardOverview({
           </div>
         </div>
 
-        {/* Metric 2: Backend Tools */}
-        <div className="bg-white border border-slate-200 border-t-4 border-t-amber-500 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-3 hover:shadow-md transition-all">
+        {/* Metric 2: Live Database Records */}
+        <div 
+          onClick={() => onNavigateTab && onNavigateTab('files')}
+          className="bg-white border border-slate-200 border-t-4 border-t-amber-500 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-3 hover:shadow-md transition-all cursor-pointer group"
+          title="Click to view Database Records & Files"
+        >
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold uppercase tracking-wider">
-            <span>Action Tools</span>
-            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-              <Wrench size={16} />
+            <span>Database Records</span>
+            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <Database size={16} />
             </div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-slate-900">{totalTools}</div>
+            <div className="text-2xl font-bold text-slate-900">{totalDbRecords}</div>
             <div className="text-[11px] text-amber-700 font-medium mt-0.5">
-              {totalTools === 0 ? '0 Tools Configured' : 'REST & Webhooks Bound'}
+              {totalDbRecords === 0 ? '0 Database Records' : 'Direct Real-Time Access Active'}
             </div>
           </div>
           <div className="text-[10px] text-slate-500 pt-3 border-t border-slate-100 flex items-center justify-between">
-            <span>Executable in Browser</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${totalTools > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-              {totalTools > 0 ? 'Ready' : 'None'}
+            <span className="text-amber-700 font-medium group-hover:underline">Open Database & Files →</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${totalDbRecords > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+              {totalDbRecords > 0 ? 'Live Connected' : 'None'}
             </span>
           </div>
         </div>
@@ -392,15 +396,15 @@ export default function DashboardOverview({
           </div>
 
           <div
-            onClick={() => onNavigateTab('tools')}
+            onClick={() => onNavigateTab('files')}
             className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-amber-300 hover:shadow-md transition-all cursor-pointer space-y-2 group shadow-sm"
           >
             <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center group-hover:scale-105 transition-transform">
-              <Wrench size={16} />
+              <Database size={16} />
             </div>
-            <div className="text-sm font-semibold text-slate-900">Custom Tools</div>
+            <div className="text-sm font-semibold text-slate-900">Database & Files</div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              Inspect backend API routes, webhooks, and client actions.
+              Upload database exports (.sql, .json, .csv) & website files for live agent access.
             </p>
           </div>
 

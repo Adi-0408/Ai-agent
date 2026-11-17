@@ -48,7 +48,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
   const recognitionRef = useRef(null);
   const recordedTranscriptRef = useRef('');
   const interimTranscriptRef = useRef('');
-  const lastDetectedLangRef = useRef('en-US');
+  const lastDetectedLangRef = useRef('en-IN');
   const speechHandledRef = useRef(false);
   const synthRef = useRef(typeof window !== 'undefined' ? window.speechSynthesis : null);
   const chatBottomRef = useRef(null);
@@ -214,13 +214,19 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
             const whisperRes = await Promise.race([whisperPromise, timeoutPromise]);
             const cleanWhisper = (whisperRes?.text || '').trim();
             const detectedLID = (whisperRes?.language || '').toLowerCase().trim();
+            const isSupportedLID = !detectedLID || ['en', 'english', 'hi', 'hindi', 'mr', 'marathi'].includes(detectedLID);
 
             if (cleanWhisper && !speechHandledRef.current) {
+              if (!isSupportedLID) {
+                setErrorMessage('Voice input is restricted strictly to English, Hindi (हिंदी), and Marathi (मराठी).');
+                setInterimTranscript('');
+                return;
+              }
               if (detectedLID) {
                 const badge = detectedLID.includes('marathi') ? '🚩 मराठी' :
                               detectedLID.includes('hindi') ? '🇮🇳 हिंदी' :
                               detectedLID.includes('english') ? '🇬🇧 English' :
-                              detectedLID;
+                              '🇮🇳 Indian English';
                 setDetectedLangBadge(badge);
               }
               handleUserSpeech(cleanWhisper);
@@ -260,7 +266,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         const rec = new SpeechRec();
         rec.continuous = true;
         rec.interimResults = true;
-        const defaultBrowserLang = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'en-US';
+        const defaultBrowserLang = 'en-IN';
         rec.lang = (selectedLang && selectedLang !== 'auto')
           ? selectedLang
           : (lastDetectedLangRef.current || defaultBrowserLang);
@@ -395,7 +401,10 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         assistant?.systemPrompt || `You are ${assistantName}, a helpful AI voice assistant. Respond in 1-2 clear, conversational spoken sentences.`,
         assistant?.knowledgeBase || [],
         activeKey,
-        { agentName: assistantName }
+        {
+          agentName: assistantName,
+          databaseRecords: assistant?.databaseRecords || []
+        }
       );
 
       const replyText = reply || `I heard: "${cleanText}". How else can I help?`;

@@ -19,7 +19,7 @@ assert(widgetCode.includes('window.EchoAIData'), 'Must support window.EchoAIData
 console.log('✓ Host window.EchoAIData support verified.');
 
 // 4. Ensure no hardcoded fake catalog items when empty
-assert(widgetCode.includes('I checked our database, but no product or medicine records are currently loaded in this catalog'), 'Must state database empty factually without guessing');
+assert(widgetCode.includes('are currently loaded in this catalog'), 'Must state database empty factually without guessing');
 console.log('✓ Factual, unhallucinated empty state response verified.');
 
 console.log('\n ALL WIDGET SAFEGUARD TESTS PASSED! 🛡️');

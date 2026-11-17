@@ -521,10 +521,10 @@ ${fullStack.summary}
               <div>
                 <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                   <Database size={14} className="text-indigo-600" />
-                  Database / Website Knowledge File (JSON)
+                  Database Records & Website Knowledge Files
                 </h4>
                 <p className="text-[11px] text-slate-500">
-                  Upload database exports, products, or website FAQs to train the assistant.
+                  Upload database exports (.sql, .json, .csv) and website source files (.zip, HTML, code) for live AI access.
                 </p>
               </div>
               <button
@@ -546,7 +546,7 @@ ${fullStack.summary}
                   jsonInputMode === 'upload' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                 }`}
               >
-                Upload .json File
+                Upload Database / Zip Files
               </button>
               <button
                 type="button"

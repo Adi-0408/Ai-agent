@@ -6,12 +6,16 @@
 (function () {
   'use strict';
 
-  // Find the script tag and extract the agent ID
-  const currentScript = document.currentScript || (function () {
-    const scripts = document.getElementsByTagName('script');
-    return scripts[scripts.length - 1];
-  })();
+  // Find the widget script tag safely across all bundlers, defer, async, and iframe setups
+  function getWidgetScript() {
+    if (document.currentScript) return document.currentScript;
+    const scripts = document.querySelectorAll('script[src*="widget.js"], script[data-agent-id], script[data-api-key]');
+    if (scripts.length > 0) return scripts[scripts.length - 1];
+    const all = document.getElementsByTagName('script');
+    return all.length > 0 ? all[all.length - 1] : null;
+  }
 
+  const currentScript = getWidgetScript();
   const rawAgentId = currentScript ? (currentScript.getAttribute('data-agent-id') || currentScript.getAttribute('data-agent')) : (typeof window !== 'undefined' ? window.AI_VOICE_AGENT_ID : null);
   const agentId = (rawAgentId || 'Help Desk').trim();
 
@@ -115,27 +119,22 @@
         } catch (searchErr) {}
       }
 
-      // If agent was not found in Firestore (e.g. 404), it does NOT exist or has been deleted
+      // If agent was not found in Firestore (e.g. 404 or CORS on external site), operate in Autonomous On-Page Mode!
       if (!res || !res.ok) {
-        console.warn(`[Voice Help Desk] Agent "${cleanInitialName}" (ID: ${agentId}) does not exist in the database or has been deleted. Voice widget is disabled.`);
-        try {
-          localStorage.removeItem(CACHE_KEY);
-          localStorage.setItem(DELETED_KEY, 'true');
-        } catch (e) {}
-        const existingHost = document.getElementById('voice-helpdesk-root');
-        if (existingHost) existingHost.remove();
-        return false;
+        console.info(`[Voice Help Desk] Operating in Autonomous On-Page Mode for "${cleanInitialName}".`);
+        const scriptEl = getWidgetScript();
+        const customName = scriptEl?.getAttribute('data-agent-id') || scriptEl?.getAttribute('data-agent') || cleanInitialName;
+        const pageTitle = (typeof document !== 'undefined' && document.title) ? document.title.split(/[-|•–:]/)[0].trim() : '';
+        const finalName = customName && customName !== 'Help Desk' ? customName : (pageTitle || 'AI Assistant');
+        
+        agentConfig.name = finalName;
+        agentConfig.greeting = `Hello! Welcome to ${pageTitle || 'our website'}. I am ${finalName}, your live customer support assistant. How can I assist you with our catalog, services, or inquiries today?`;
+        return true;
       }
 
       const json = await res.json();
       if (!json || !json.fields) {
-        try {
-          localStorage.removeItem(CACHE_KEY);
-          localStorage.setItem(DELETED_KEY, 'true');
-        } catch (e) {}
-        const existingHost = document.getElementById('voice-helpdesk-root');
-        if (existingHost) existingHost.remove();
-        return false;
+        return true;
       }
 
       const fields = json.fields;
@@ -173,6 +172,30 @@
           }
           return null;
         }).filter(Boolean);
+      } else if (Array.isArray(json.knowledgeBase)) {
+        parsedData.knowledgeBase = json.knowledgeBase;
+      }
+
+      if (fields.databaseRecords && fields.databaseRecords.arrayValue && fields.databaseRecords.arrayValue.values) {
+        parsedData.databaseRecords = fields.databaseRecords.arrayValue.values.map(v => {
+          if (v.mapValue && v.mapValue.fields) {
+            const f = v.mapValue.fields;
+            return {
+              id: f.id?.stringValue || '',
+              name: f.name?.stringValue || '',
+              price: f.price?.stringValue || (f.price?.doubleValue !== undefined ? `₹${f.price.doubleValue}` : (f.price?.integerValue !== undefined ? `₹${f.price.integerValue}` : '')),
+              stock: f.stock?.integerValue !== undefined ? Number(f.stock.integerValue) : (f.stock?.doubleValue !== undefined ? Number(f.stock.doubleValue) : null),
+              unit: f.unit?.stringValue || 'units',
+              category: f.category?.stringValue || '',
+              dosage: f.dosage?.stringValue || '',
+              description: f.description?.stringValue || '',
+              rx: f.rx?.booleanValue || false
+            };
+          }
+          return null;
+        }).filter(Boolean);
+      } else if (Array.isArray(json.databaseRecords)) {
+        parsedData.databaseRecords = json.databaseRecords;
       }
 
       // Enforce agent name consistency: replace any residual persona names
@@ -201,7 +224,7 @@
 
       return true;
     } catch (err) {
-      console.warn('[Voice Help Desk] Could not verify remote agent config:', err);
+      console.warn('[Voice Help Desk] Could not verify remote agent config, running in autonomous mode:', err);
       const isDeletedFlag = localStorage.getItem(DELETED_KEY) === 'true';
       if (isDeletedFlag) return false;
       const cached = localStorage.getItem(CACHE_KEY);
@@ -210,11 +233,10 @@
           const parsed = JSON.parse(cached);
           if (Date.now() - parsed.timestamp < CACHE_TTL_MS && parsed.data) {
             agentConfig = { ...agentConfig, ...parsed.data };
-            return true;
           }
         } catch (e) {}
       }
-      return false;
+      return true; // Never self-destruct on external websites
     }
   }
 
@@ -626,7 +648,7 @@
       recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = true;
-      const defaultNavLang = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'en-US';
+      const defaultNavLang = 'en-IN';
       recognition.lang = currentSpeechLang === 'auto' ? defaultNavLang : currentSpeechLang;
 
       recognition.onstart = () => {
@@ -724,15 +746,22 @@
                 const wData = await wRes.json();
                 const cleanWhisper = (wData?.text || '').trim();
                 const detectedLID = (wData?.language || '').toLowerCase().trim();
-
+                const isAllowedLanguage = !detectedLID || ['en', 'english', 'hi', 'hindi', 'mr', 'marathi'].includes(detectedLID);
                 const isHallucination = /^(thank you|thanks for watching|thank you for watching|bye|subtitles by|you|amara\.org)[\.!]?$/i.test(cleanWhisper);
+
+                if (!isAllowedLanguage) {
+                  console.warn('[Echo AI Voice] Rejecting unsupported voice input language:', detectedLID);
+                  voiceLabel.textContent = 'Please speak in English, हिंदी, or मराठी';
+                  return;
+                }
+
                 if (cleanWhisper && !isHallucination) {
                   finalRecordedTranscript = '';
                   lastCapturedSpokenText = '';
                   if (detectedLID) {
                     const tag = detectedLID.includes('marathi') ? '🚩 मराठी' :
                                 detectedLID.includes('hindi') ? '🇮🇳 हिंदी' :
-                                detectedLID.includes('english') ? '🇬🇧 English' : detectedLID;
+                                detectedLID.includes('english') ? '🇬🇧 English' : '🇮🇳 Indian English';
                     voiceLabel.textContent = `Detected ${tag}...`;
                   }
                   handleUserMessage(cleanWhisper);
@@ -1078,6 +1107,115 @@
       }
     }
 
+    // Autonomous Host Page Knowledge Harvester (Universal for any website)
+    function extractHostPageKnowledge() {
+      if (typeof document === 'undefined') {
+        return {
+          businessName: '',
+          metaDesc: '',
+          phone: '',
+          email: '',
+          address: '',
+          hours: '',
+          sections: [],
+          faqs: [],
+          services: []
+        };
+      }
+
+      const knowledge = {
+        businessName: '',
+        metaDesc: '',
+        phone: '',
+        email: '',
+        address: '',
+        hours: '',
+        sections: [],
+        faqs: [],
+        services: []
+      };
+
+      try {
+        const ogSite = document.querySelector('meta[property="og:site_name"]')?.getAttribute('content');
+        const logoEl = document.querySelector('.logo, #logo, header h1, nav h1, a[class*="brand"], a[class*="logo"]');
+        const pageTitle = document.title ? document.title.split(/[-|•–:]/)[0].trim() : '';
+        knowledge.businessName = ogSite || (logoEl ? logoEl.textContent.trim() : pageTitle) || agentConfig?.name || 'our store';
+
+        knowledge.metaDesc = document.querySelector('meta[name="description"]')?.getAttribute('content') ||
+                             document.querySelector('meta[property="og:description"]')?.getAttribute('content') || '';
+
+        const telLink = document.querySelector('a[href^="tel:"]');
+        if (telLink) {
+          knowledge.phone = telLink.getAttribute('href').replace(/^tel:/, '').trim() || telLink.textContent.trim();
+        } else {
+          const bodyText = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+          const phoneMatch = bodyText.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+          if (phoneMatch) knowledge.phone = phoneMatch[0].trim();
+        }
+
+        const mailLink = document.querySelector('a[href^="mailto:"]');
+        if (mailLink) {
+          knowledge.email = mailLink.getAttribute('href').replace(/^mailto:/, '').split('?')[0].trim() || mailLink.textContent.trim();
+        } else {
+          const bodyText = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+          const emailMatch = bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+          if (emailMatch) knowledge.email = emailMatch[0].trim();
+        }
+
+        const addrEl = document.querySelector('address, [itemprop="address"], .address, #address, .contact-address, [class*="address"]');
+        if (addrEl) {
+          knowledge.address = addrEl.textContent.replace(/\s+/g, ' ').trim();
+        }
+
+        const hoursEl = document.querySelector('#hours, .hours, .business-hours, [itemprop="openingHours"], .timings, #timings, [class*="timing"], [class*="hours"]');
+        if (hoursEl) {
+          knowledge.hours = hoursEl.textContent.replace(/\s+/g, ' ').trim();
+        }
+
+        const details = document.querySelectorAll('details, .faq-item, .accordion-item, .faq');
+        details.forEach(d => {
+          const qEl = d.querySelector('summary, .faq-question, .accordion-header, h3, h4');
+          const aEl = d.querySelector('.faq-answer, .accordion-content, p');
+          if (qEl && aEl) {
+            const q = qEl.textContent.replace(/\s+/g, ' ').trim();
+            const a = aEl.textContent.replace(/\s+/g, ' ').trim();
+            if (q.length > 3 && a.length > 5 && !knowledge.faqs.some(f => f.q === q)) {
+              knowledge.faqs.push({ q, a });
+            }
+          }
+        });
+
+        const serviceSection = document.querySelector('#services, .services, #features, .features');
+        if (serviceSection) {
+          const serviceHeadings = serviceSection.querySelectorAll('h3, h4, .service-title');
+          serviceHeadings.forEach(sh => {
+            const t = sh.textContent.replace(/\s+/g, ' ').trim();
+            if (t && t.length > 2 && t.length < 50 && !knowledge.services.includes(t)) {
+              knowledge.services.push(t);
+            }
+          });
+        }
+
+        const sectionElements = document.querySelectorAll('section[id], div[id][class*="section"], [id*="section"]');
+        sectionElements.forEach(s => {
+          const heading = s.querySelector('h1, h2, h3, h4');
+          const hText = heading ? heading.textContent.replace(/\s+/g, ' ').trim() : '';
+          const id = s.id;
+          if (id && (hText || id.length > 2)) {
+            knowledge.sections.push({
+              id,
+              label: hText || formatSectionLabel(id),
+              element: s
+            });
+          }
+        });
+      } catch (e) {
+        console.warn('[Echo AI Knowledge] Host page extraction warning:', e);
+      }
+
+      return knowledge;
+    }
+
     const UNIVERSAL_STOPWORDS = new Set([
       // English grammatical & common words
       'the', 'a', 'an', 'and', 'or', 'for', 'of', 'in', 'on', 'at', 'to', 'from', 'with', 'by', 'is', 'are', 'was', 'were',
@@ -1097,17 +1235,69 @@
       'है', 'नहीं', 'क्या', 'कितना', 'कितने', 'दीजिए', 'बताइए', 'दिखाइए', 'चाहिए', 'कीमत', 'दाम', 'रेट'
     ]);
 
+    const GENERIC_PRODUCT_NOUNS = new Set([
+      'pizza', 'burger', 'sandwich', 'pasta', 'salad', 'coffee', 'tea', 'drink', 'beverage', 'cake', 'bread',
+      'phone', 'mobile', 'laptop', 'computer', 'watch', 'headphone', 'headphones', 'earbuds', 'case', 'cover', 'charger',
+      'shoe', 'shoes', 'sneaker', 'sneakers', 'boot', 'boots', 'shirt', 'tshirt', 'pant', 'pants', 'jeans', 'jacket', 'dress',
+      'medicine', 'medicines', 'med', 'meds', 'drug', 'drugs', 'pill', 'pills', 'tablet', 'tablets', 'capsule', 'capsules',
+      'syrup', 'syrups', 'injection', 'injections', 'drops', 'ointment', 'cream', 'gel',
+      'plan', 'plans', 'service', 'services', 'treatment', 'consultation', 'appointment', 'course', 'room'
+    ]);
+
+    function cleanScrapedItemTitle(raw) {
+      if (!raw) return { name: '', desc: '' };
+      let str = String(raw).trim();
+      // Disentangle jammed words (e.g. "TabletParacetamol" or "(650mg)Micro")
+      // Requires at least 3 lowercase letters or closing paren before capital to prevent splitting "iPhone", "eBay", etc.
+      str = str.replace(/([a-z]{3,}|\))([A-Z][a-z])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+
+      let cleanName = str;
+      let secondary = '';
+
+      const m = str.match(/^(.+?\b(?:Tablet|Tablets|Capsule|Capsules|Syrup|Injection|Drops|Ointment|Cream|Gel|Suspension|Pill|Soap|Lotion|Shampoo))\s+([A-Z][a-z]+.*)$/);
+      if (m) {
+        cleanName = m[1].trim();
+        secondary = m[2].trim();
+      } else if (str.includes('(')) {
+        const idx = str.indexOf('(');
+        const beforeParen = str.substring(0, idx).trim();
+        const words = beforeParen.split(' ');
+        const formIdx = words.findIndex(w => /^(Tablet|Tablets|Capsule|Capsules|Syrup|Injection|Drops|Ointment|Cream|Gel)$/i.test(w));
+        if (formIdx >= 0) {
+          cleanName = words.slice(0, formIdx + 1).join(' ');
+          secondary = words.slice(formIdx + 1).join(' ') + ' ' + str.substring(idx).trim();
+        } else {
+          cleanName = beforeParen;
+          secondary = str.substring(idx).trim();
+        }
+      }
+
+      return { name: cleanName, desc: secondary };
+    }
+
     function getAllCatalogItems(agentConfig) {
       const items = [];
       const seen = new Set();
 
       function addItem(it) {
         if (!it) return;
-        const name = String(it.name || it.product || it.title || it.item || '').trim();
-        if (!name || name.length < 2 || name.length > 90) return;
+        const rawName = String(it.name || it.product || it.title || it.item || '').trim();
+        if (!rawName || rawName.length < 2 || rawName.length > 70) return;
+        if (/^(what\b|tell me\b|how\b|why\b|who\b|can you\b|action\b|sr\.?no\b|name\b|product\b|item\b|price\b|stock\b|total\b|status\b|select\b|features?\b|services?\b|welcome\b|about\b)/i.test(rawName)) return;
+        if (/\b(tell me about|how to|what is|why do|can you|about us|contact us|privacy policy|terms of service|faq|features? overview|welcome to)\b/i.test(rawName)) return;
+        if (rawName.includes('?') || rawName.includes('{') || rawName.includes('CREATE TABLE')) return;
+        if (rawName.split(/\s+/).length > 8) return;
+
+        const rawDesc = String(it.description || it.details || it.desc || '').trim();
+        if (!it.price && (it.stock === null || it.stock === undefined || isNaN(it.stock)) && /^(we offer:|welcome to)/i.test(rawDesc)) return;
+
+        const cleaned = cleanScrapedItemTitle(rawName);
+        const name = cleaned.name || rawName;
         if (seen.has(name.toLowerCase())) return;
-        if (/^(what is|tell me|how to|why|who|can you|action|sr\.?no|name|product|item|price|stock|total|status|select)$/i.test(name)) return;
-        if (name.includes('?') || name.includes('{')) return;
+
+        const extraDesc = cleaned.desc;
+        const combDesc = [it.description, it.details, extraDesc].filter(Boolean).join(' ');
+        const combDosage = [it.dosage, it.composition, it.salt, extraDesc].filter(Boolean).join(' ');
 
         seen.add(name.toLowerCase());
         items.push({
@@ -1118,8 +1308,8 @@
           unit: it.unit || 'units',
           rx: Boolean(it.rx || it.prescriptionRequired),
           category: it.category || '',
-          dosage: it.dosage || it.composition || '',
-          description: it.description || it.details || ''
+          dosage: combDosage,
+          description: combDesc
         });
       }
 
@@ -1225,18 +1415,34 @@
               }
 
               // Extract clean primary title from first line or title element
-              const titleEl = titleTd.querySelector('.name, .title, strong, b, h4, h5, a');
+              const titleEl = titleTd.querySelector('.name, .title, [class*="name"], [class*="title"], strong, b, h1, h2, h3, h4, h5, a');
               let rawTitle = '';
+              let secondaryDesc = '';
+
               if (titleEl && titleEl.textContent.trim().length >= 2) {
                 rawTitle = titleEl.textContent.trim();
+                const otherChildren = Array.from(titleTd.children).filter(c => c !== titleEl && !titleEl.contains(c));
+                if (otherChildren.length > 0) {
+                  secondaryDesc = otherChildren.map(c => c.textContent.trim()).filter(Boolean).join(' ');
+                }
+              } else if (titleTd.children.length > 0) {
+                rawTitle = titleTd.firstElementChild.textContent.trim();
+                if (titleTd.children.length > 1) {
+                  secondaryDesc = Array.from(titleTd.children).slice(1).map(c => c.textContent.trim()).filter(Boolean).join(' ');
+                }
               } else {
                 const lines = titleTd.innerText ? titleTd.innerText.split('\n').map(l => l.trim()).filter(Boolean) : [titleTd.textContent.trim()];
                 rawTitle = lines[0] || '';
               }
 
-              // Extract secondary lines / composition / details
-              const lines = titleTd.innerText ? titleTd.innerText.split('\n').map(l => l.trim()).filter(Boolean) : [];
-              let secondaryDesc = lines.slice(1).join(' ');
+              // Disentangle jammed text and composition
+              const cleaned = cleanScrapedItemTitle(rawTitle);
+              rawTitle = cleaned.name;
+              if (cleaned.desc) {
+                secondaryDesc = secondaryDesc ? `${cleaned.desc} ${secondaryDesc}` : cleaned.desc;
+              }
+
+              // Extract secondary lines / composition / details from description column if present
               if (!secondaryDesc && descColIdx >= 0 && descColIdx < tds.length) {
                 secondaryDesc = tds[descColIdx].textContent.trim();
               }
@@ -1304,22 +1510,24 @@
         });
 
         // B. Card / Grid / List items scraper
-        const cardElements = document.querySelectorAll('.product-card, .item-card, .shop-item, .product-item, .medicine-item, [data-product], .menu-item, article.product');
+        const cardElements = document.querySelectorAll('.product-card, .item-card, .shop-item, .product-item, .medicine-item, [data-product], .menu-item, article.product, .pricing-card, .plan-card, [class*="product-card"], [class*="menu-item"], div[role="row"]');
         cardElements.forEach(card => {
-          const titleEl = card.querySelector('.name, .title, h2, h3, h4, h5, [data-title], a[class*="title"], a[class*="name"]');
+          const titleEl = card.querySelector('.name, .title, [class*="name"], [class*="title"], h2, h3, h4, h5, [data-title], a[class*="title"], a[class*="name"]');
           const rawTitle = titleEl ? titleEl.textContent.trim() : (card.getAttribute('data-product') || card.getAttribute('data-name') || '');
-          const priceEl = card.querySelector('.price, [data-price], .cost, .amount');
+          const priceEl = card.querySelector('.price, [data-price], .cost, .amount, [class*="price"]');
           const priceMatch = priceEl ? priceEl.textContent.trim() : (card.getAttribute('data-price') || '');
-          const stockEl = card.querySelector('.stock, [data-stock], .quantity, .availability');
+          const stockEl = card.querySelector('.stock, [data-stock], .quantity, .availability, [class*="stock"]');
           const stockText = stockEl ? stockEl.textContent.trim() : (card.getAttribute('data-stock') || '');
           const m = stockText.match(/^(\d+)\s*([a-zA-Z]+)?/);
 
           if (rawTitle && rawTitle.length >= 2 && !rawTitle.includes('?')) {
+            const cleaned = cleanScrapedItemTitle(rawTitle);
             addItem({
-              name: rawTitle,
+              name: cleaned.name || rawTitle,
               price: priceMatch,
               stock: m ? parseInt(m[1], 10) : (/in stock/i.test(stockText) ? 100 : (/out of stock/i.test(stockText) ? 0 : null)),
-              unit: m && m[2] ? m[2] : 'units'
+              unit: m && m[2] ? m[2] : 'units',
+              description: cleaned.desc || ''
             });
           }
         });
@@ -1331,7 +1539,8 @@
 
     function extractTargetItem(text, history = []) {
       let cleaned = String(text || '').trim()
-        .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|is there|do you have|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+        .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+        .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
         .replace(/[?!.,;]/g, '')
         .trim();
       cleaned = cleaned.replace(/\s+/g, ' ');
@@ -1344,7 +1553,8 @@
           const prevText = prevMsg?.content || prevMsg?.text || '';
           if (prevRole === 'user' && prevText && prevText !== text) {
             const prevClean = prevText
-              .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|is there|do you have|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+              .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+              .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
               .replace(/[?!.,;]/g, '')
               .trim();
             if (prevClean.length >= 3) {
@@ -1358,7 +1568,8 @@
           const prevText = history[i]?.content || history[i]?.text || '';
           if (prevText && prevText !== text) {
             const prevClean = prevText
-              .replace(/\b(we have|strips of|in stock at|available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|is there|do you have|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+              .replace(/\b(we have|strips of|in stock at|available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
+              .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
               .replace(/[?!.,;]/g, '')
               .trim();
             if (prevClean.length >= 3) {
@@ -1383,6 +1594,9 @@
       const distinctiveTokens = allTokens.filter(tok => !UNIVERSAL_STOPWORDS.has(tok));
       const searchTokens = distinctiveTokens.length > 0 ? distinctiveTokens : allTokens;
 
+      // Specific entity tokens: tokens that are NOT generic nouns (e.g. "augmentin", "dolo", "margherita", "iphone")
+      const specificTokens = searchTokens.filter(tok => !GENERIC_PRODUCT_NOUNS.has(tok));
+
       const itemsList = Array.isArray(inventorySource)
         ? inventorySource
         : Object.entries(inventorySource).map(([k, v]) => (typeof v === 'object' && v !== null ? { name: v.name || k, ...v } : { name: k, stock: v }));
@@ -1397,21 +1611,31 @@
         }
       }
 
-      // Phase 2: Distinctive Token Overlap Match
+      // Phase 2: Distinctive Token Overlap Match with Entity Verification
       let best = null;
       let maxScore = 0;
 
       for (const item of itemsList) {
         const name = String(item.name || item.product || item.title || '').toLowerCase().trim();
+        const cleanName = name.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
         const details = String(item.description || item.dosage || item.composition || item.category || '').toLowerCase().trim();
-        const combined = `${name} ${details}`.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        const combined = `${cleanName} ${details}`.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
         const itemTokens = new Set(combined.split(' '));
+
+        // If query has specific entity tokens, at least ONE must match in the item name or details
+        // Prevents "Augmentin" from matching "Dolo 650", and "Pepperoni" from matching "Margherita"
+        if (specificTokens.length > 0) {
+          const hasSpecificMatch = specificTokens.some(tok => cleanName.includes(tok) || itemTokens.has(tok));
+          if (!hasSpecificMatch) {
+            continue; // REJECT: Only generic noun matched, specific entity did not match!
+          }
+        }
 
         let matchCount = 0;
         let nameMatchCount = 0;
 
         for (const tok of searchTokens) {
-          if (name.includes(tok)) {
+          if (cleanName.includes(tok)) {
             nameMatchCount += 2; // Extra weight for matching the actual name
             matchCount++;
           } else if (itemTokens.has(tok) || combined.includes(tok)) {
@@ -1496,18 +1720,12 @@
     async function resolveDatabaseBridge(query, agentConfig) {
       const isList = isCatalogListQuery(query);
       const isNav = isSectionNavigationQuery(query);
-      const isDynamic = isDynamicDataQuery(query);
 
-      if (!isList && !isNav && !isDynamic) {
-        return { status: 'NOT_DYNAMIC_QUERY', item: null, data: null };
-      }
-
-      // Handle Catalog List query
+      // 1. Handle Catalog List query (e.g. "give list of all meds", "show menu", "what products do you sell")
       if (isList) {
         const allItems = getAllCatalogItems(agentConfig);
-
-        // If local items empty and external databaseHookUrl / apiEndpoint exists, query webhook
-        const dbEndpoint = agentConfig?.databaseHookUrl || (currentScript && currentScript.getAttribute('data-database-url')) || (currentScript && currentScript.getAttribute('data-api-endpoint')) || agentConfig?.apiEndpoint;
+        const scriptEl = getWidgetScript();
+        const dbEndpoint = agentConfig?.databaseHookUrl || (scriptEl && scriptEl.getAttribute('data-database-url')) || (scriptEl && scriptEl.getAttribute('data-api-endpoint')) || agentConfig?.apiEndpoint;
         if (allItems.length === 0 && dbEndpoint && !dbEndpoint.includes('example.com')) {
           try {
             const fetchUrl = dbEndpoint.includes('?') ? `${dbEndpoint}&action=get_catalog` : `${dbEndpoint}?action=get_catalog`;
@@ -1544,7 +1762,7 @@
         };
       }
 
-      // Handle Section Navigation query
+      // 2. Handle Section Navigation query (e.g. "take me to pricing", "where is contact")
       if (isNav) {
         const sec = findHostSection(query);
         return {
@@ -1556,49 +1774,8 @@
 
       const targetItem = extractTargetItem(query, conversationHistory);
 
-      // Stage 1: Check Host Page State (window.EchoAIData)
-      if (typeof window !== 'undefined' && window.EchoAIData) {
-        if (typeof window.EchoAIData.queryDatabase === 'function') {
-          try {
-            const hostResult = await window.EchoAIData.queryDatabase(query);
-            if (hostResult) {
-              return {
-                status: 'FOUND_IN_HOST_STATE',
-                item: targetItem,
-                data: hostResult
-              };
-            }
-          } catch (err) {
-            console.warn('[Echo AI Live Bridge] window.EchoAIData.queryDatabase error:', err);
-          }
-        }
-
-        const hostInventory = window.EchoAIData.inventory || window.EchoAIData.liveInventory || window.EchoAIData.products || window.EchoAIData.database;
-        if (hostInventory) {
-          const match = matchInInventory(hostInventory, targetItem || query);
-          if (match) {
-            return {
-              status: 'FOUND_IN_HOST_STATE',
-              item: targetItem,
-              data: match
-            };
-          }
-        }
-      }
-
-      // Stage 1.2: Check Agent's Structured Database Records from Firestore
-      if (agentConfig && Array.isArray(agentConfig.databaseRecords) && agentConfig.databaseRecords.length > 0) {
-        const match = matchInInventory(agentConfig.databaseRecords, targetItem || query);
-        if (match) {
-          return {
-            status: 'FOUND_IN_HOST_STATE',
-            item: targetItem,
-            data: match
-          };
-        }
-      }
-
-      // Stage 1.5: Autonomous DOM Scraper for products on page
+      // 3. Search all catalog sources (Live DOM Scraper, Host JS State, Firestore records, Webhooks)
+      // Tier 1: Live DOM Table & Card Scraper (Direct access to webpage data)
       if (typeof document !== 'undefined') {
         const domItems = getAllCatalogItems(agentConfig);
         if (domItems.length > 0) {
@@ -1613,9 +1790,43 @@
         }
       }
 
-      // Check window.echoLiveInventory fallback
-      if (typeof window !== 'undefined' && window.echoLiveInventory) {
-        const match = matchInInventory(window.echoLiveInventory, targetItem || query);
+      // Tier 2: Host Page JavaScript State (window.EchoAIData / window.products / window.inventory)
+      if (typeof window !== 'undefined') {
+        const hostObj = window.EchoAIData || window.echoLiveInventory || window.EchoInventory || window.productsData || window.catalogData;
+        if (hostObj) {
+          if (typeof hostObj.queryDatabase === 'function') {
+            try {
+              const hostResult = await hostObj.queryDatabase(query);
+              if (hostResult) {
+                return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: hostResult };
+              }
+            } catch (err) {}
+          }
+          const inv = hostObj.inventory || hostObj.liveInventory || hostObj.products || hostObj.database || hostObj.items || hostObj.catalog || hostObj.menu;
+          if (inv) {
+            const match = matchInInventory(inv, targetItem || query);
+            if (match) {
+              return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+            }
+          }
+        }
+        if (Array.isArray(window.products)) {
+          const match = matchInInventory(window.products, targetItem || query);
+          if (match) return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+        }
+        if (Array.isArray(window.inventory)) {
+          const match = matchInInventory(window.inventory, targetItem || query);
+          if (match) return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+        }
+        if (Array.isArray(window.catalog)) {
+          const match = matchInInventory(window.catalog, targetItem || query);
+          if (match) return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+        }
+      }
+
+      // Tier 3: Agent's Structured Database Records from Firestore
+      if (agentConfig && Array.isArray(agentConfig.databaseRecords) && agentConfig.databaseRecords.length > 0) {
+        const match = matchInInventory(agentConfig.databaseRecords, targetItem || query);
         if (match) {
           return {
             status: 'FOUND_IN_HOST_STATE',
@@ -1625,8 +1836,9 @@
         }
       }
 
-      // Stage 2: Check Live API / Webhook (data-api-endpoint / databaseHookUrl)
-      const apiEndpoint = (currentScript && (currentScript.getAttribute('data-database-url') || currentScript.getAttribute('data-api-endpoint'))) ||
+      // Tier 4: Live API / Webhook (data-database-url / databaseHookUrl)
+      const scriptEl = getWidgetScript();
+      const apiEndpoint = (scriptEl && (scriptEl.getAttribute('data-database-url') || scriptEl.getAttribute('data-api-endpoint'))) ||
                           agentConfig.databaseHookUrl ||
                           agentConfig.apiEndpoint ||
                           (agentConfig.tools && agentConfig.tools.find(t => t.endpoint && !t.endpoint.includes('example.com'))?.endpoint) ||
@@ -1671,12 +1883,49 @@
         }
       }
 
-      // If the item is not found in database:
-      return {
-        status: 'ITEM_NOT_FOUND',
-        item: targetItem,
-        data: null
-      };
+      // 4. Check if query is looking for an item that is genuinely NOT in the database
+      const lower = query.toLowerCase();
+      const isDynamic = isDynamicDataQuery(query) ||
+                        /\b(do you have|is there any|price of|cost of|stock of|available|check)\b/i.test(lower) ||
+                        /(साठा|स्टॉक|उपलब्ध|शिल्लक|किंमत|भाव|दर|कीमत|दाम)/i.test(query);
+
+      if (isDynamic) {
+        return {
+          status: 'ITEM_NOT_FOUND',
+          item: targetItem || query,
+          data: null
+        };
+      }
+
+      // 5. Host Page Knowledge Query (Contact, Address, Phone, Email, Hours, Services)
+      const hostKnowledge = extractHostPageKnowledge();
+      if (/\b(location|address|where are you|where is the (store|shop|clinic|office)|directions|map)\b/i.test(lower) || /(कुठे आहे|पत्ता|स्थान|कहाँ है|पता)/i.test(query)) {
+        if (hostKnowledge.address) {
+          return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'location', data: hostKnowledge };
+        }
+      }
+      if (/\b(phone|phone number|call|contact number|mobile|telephone)\b/i.test(lower) || /(फोन|नंबर|कॉल)/i.test(query)) {
+        if (hostKnowledge.phone) {
+          return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'phone', data: hostKnowledge };
+        }
+      }
+      if (/\b(email|mail|write to you|contact email)\b/i.test(lower) || /(ईमेल|मेल)/i.test(query)) {
+        if (hostKnowledge.email) {
+          return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'email', data: hostKnowledge };
+        }
+      }
+      if (/\b(hours|timings|opening hours|working hours|when do you open|closing time|schedule)\b/i.test(lower) || /(वेळ|वेळापत्रक|समय|कब खुलता)/i.test(query)) {
+        if (hostKnowledge.hours) {
+          return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'hours', data: hostKnowledge };
+        }
+      }
+      if (/\b(services|what do you do|what services|specialties|offerings)\b/i.test(lower) || /(सेवा|सुविधा)/i.test(query)) {
+        if (hostKnowledge.services.length > 0 || hostKnowledge.metaDesc) {
+          return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'services', data: hostKnowledge };
+        }
+      }
+
+      return { status: 'NOT_DYNAMIC_QUERY', item: null, data: null };
     }
 
     // --- STRICT LIVE CUSTOMER SUPPORT SYSTEM PROMPT BUILDER ---
@@ -1708,18 +1957,40 @@
         langDirective = 'Reply strictly in natural, polite Hindi (हिंदी).';
       }
 
+      const hostKnowledge = extractHostPageKnowledge();
+      const hostContextBlock = [
+        hostKnowledge.businessName ? `Business: ${hostKnowledge.businessName}` : '',
+        hostKnowledge.metaDesc ? `About: ${hostKnowledge.metaDesc}` : '',
+        hostKnowledge.phone ? `Phone: ${hostKnowledge.phone}` : '',
+        hostKnowledge.email ? `Email: ${hostKnowledge.email}` : '',
+        hostKnowledge.address ? `Address: ${hostKnowledge.address}` : '',
+        hostKnowledge.hours ? `Hours: ${hostKnowledge.hours}` : '',
+        hostKnowledge.services.length > 0 ? `Key Services: ${hostKnowledge.services.join(', ')}` : ''
+      ].filter(Boolean).join('\n');
+
+      const allDbRecords = (agentConfig && Array.isArray(agentConfig.databaseRecords) && agentConfig.databaseRecords.length > 0)
+        ? agentConfig.databaseRecords
+        : getAllCatalogItems(agentConfig);
+      const catalogSummary = allDbRecords.slice(0, 30).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}${r.stock !== null && r.stock !== undefined ? ` [${r.stock} ${r.unit || 'units'} in stock]` : ''}`).join('; ');
+
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website. You are speaking directly to a customer browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
-- Answer strictly using the injected [LIVE_BRIDGE_DATA] and [CLEAN_CUSTOMER_FAQ_KB] provided below.
+- Answer strictly using the injected [LIVE_BRIDGE_DATA], [VERIFIED_DATABASE_RECORDS], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below.
 - If [LIVE_BRIDGE_DATA] contains exact stock, price, order status, or availability (e.g., '42 strips available at ₹185.50'), state the exact numbers naturally and concisely in 1-2 spoken-friendly sentences.
-- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize the available catalog products/medicines with prices concisely in 1-2 sentences and confirm you have scrolled them to the inventory section.
-- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the customer that the requested item is not currently listed in our live catalog, mention available alternatives if present, and offer to scroll them to the catalog section. NEVER say "verify with our counter/support team" or give generic error text.
+- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize the available catalog products/medicines with prices concisely in 1-2 sentences and confirm you have opened them.
+- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the customer that the requested item is not currently listed in our live catalog, mention available alternatives if present, and offer to show the catalog. NEVER say "verify with our counter/support team" or give generic error text.
 - Keep responses plain-text, conversational, and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
 - LANGUAGE: ${langDirective}
 
 [LIVE_BRIDGE_DATA]
 ${bridgeBlock}
+
+[VERIFIED_DATABASE_RECORDS]
+${catalogSummary || 'Catalog empty or not loaded.'}
+
+[LIVE_HOST_WEBSITE_CONTEXT]
+${hostContextBlock || 'Customer website live interface.'}
 
 [CLEAN_CUSTOMER_FAQ_KB]
 ${cleanFaqBlock}`;
@@ -1890,16 +2161,25 @@ ${cleanFaqBlock}`;
 
         let replyText = '';
         if (allItems.length > 0) {
-          const itemSummary = allItems.map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+          const displayedItems = allItems.slice(0, 5);
+          const itemSummary = displayedItems.map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+          const moreSuffixEn = allItems.length > 5 ? `, and ${allItems.length - 5} more` : '';
+          const moreSuffixHi = allItems.length > 5 ? ` और अन्य ${allItems.length - 5} विकल्प` : '';
+          const moreSuffixMr = allItems.length > 5 ? ` आणि इतर ${allItems.length - 5} पर्याय` : '';
+
           if (queryLang === 'mr-IN') {
-            replyText = `आमच्या लाइव्ह डेटाबेसमध्ये सध्या उपलब्ध ${nounMr}: ${itemSummary}.${sec ? ` मी स्क्रीन खाली थेट ${sec.label}वर नेली आहे!` : ''}`;
+            replyText = `आमच्याकडे सध्या ${allItems.length} ${nounMr} उपलब्ध आहेत: ${itemSummary}${moreSuffixMr}. आपल्याला अधिक माहिती हवी असल्यास नक्की सांगा!`;
           } else if (queryLang === 'hi-IN') {
-            replyText = `हमारे लाइव डेटाबेस में उपलब्ध ${nounHi}: ${itemSummary}।${sec ? ` मैंने स्क्रीन को सीधे ${sec.label} पर स्क्रॉल कर दिया है!` : ''}`;
+            replyText = `हमारे पास अभी ${allItems.length} ${nounHi} उपलब्ध हैं: ${itemSummary}${moreSuffixHi}। किसी भी आइटम के बारे में और जानने के लिए मुझे बताएं!`;
           } else {
-            replyText = `We currently have ${allItems.length} ${nounEn} in our live database: ${itemSummary}.${sec ? ` I have scrolled your screen down to the ${sec.label}!` : ''}`;
+            replyText = `We currently have ${allItems.length} ${nounEn} available: ${itemSummary}${moreSuffixEn}. Let me know if you would like details on any of these!`;
           }
         } else {
-          if (sec) {
+          const hk = extractHostPageKnowledge();
+          if (hk.services && hk.services.length > 0) {
+            const servList = hk.services.slice(0, 5).join(', ');
+            replyText = `We offer: ${servList}.${sec ? ` I have scrolled your screen down to our ${sec.label}!` : ''}`;
+          } else if (sec) {
             if (queryLang === 'mr-IN') {
               replyText = `आमचा संपूर्ण कॅटलॉग थेट खालील ${sec.label} विभागात उपलब्ध आहे. मी आपल्याला तेथे नेले आहे!`;
             } else if (queryLang === 'hi-IN') {
@@ -1947,10 +2227,10 @@ ${cleanFaqBlock}`;
         const formatted = formatRealtimeStockResponse(bridge.data, queryLang, text);
         const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
-        const cleanBtnName = (bridge.data.name || 'Item').split(/[\(\n,]/)[0].trim().substring(0, 30);
+        const cleanBtnName = cleanScrapedItemTitle(bridge.data.name || 'Item').name.substring(0, 30);
         return {
           reply: formatted,
-          navAction: sec ? { label: `View ${cleanBtnName} in Table`, sectionInfo: sec } : null
+          navAction: sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec } : null
         };
       }
 
@@ -1977,17 +2257,71 @@ ${cleanFaqBlock}`;
 
         let replyText = '';
         if (queryLang === 'mr-IN') {
-          replyText = `मी तपासले, पण "${cleanItem}" सध्या आमच्या डेटाबेसमध्ये उपलब्ध नाही.${topAvailable.length > 0 ? ` आमच्याकडे उपलब्ध ${nounMr}: ${topAvailable.join(', ')}.` : ''} आपण उपलब्ध यादी पाहू इच्छिता?`;
+          replyText = `क्षमस्व, "${cleanItem}" सध्या उपलब्ध नाही.${topAvailable.length > 0 ? ` आमच्याकडे उपलब्ध ${nounMr}: ${topAvailable.join(', ')}.` : ''} आपण उपलब्ध यादी पाहू इच्छिता?`;
         } else if (queryLang === 'hi-IN') {
-          replyText = `मैंने चेक किया, लेकिन "${cleanItem}" वर्तमान में हमारे डेटाबेस में उपलब्ध नहीं है।${topAvailable.length > 0 ? ` हमारे पास उपलब्ध ${nounHi}: ${topAvailable.join(', ')}।` : ''} क्या आप उपलब्ध सूची देखना चाहेंगे?`;
+          replyText = `क्षमा करें, "${cleanItem}" अभी उपलब्ध नहीं है।${topAvailable.length > 0 ? ` हमारे पास उपलब्ध ${nounHi}: ${topAvailable.join(', ')}।` : ''} क्या आप उपलब्ध सूची देखना चाहेंगे?`;
         } else {
-          replyText = `I checked our database, but "${cleanItem}" is not currently listed.${topAvailable.length > 0 ? ` Available ${nounEn} in stock include: ${topAvailable.join(', ')}.` : ''} Would you like to check our ${sec ? sec.label : 'catalog'}?`;
+          replyText = `Sorry, "${cleanItem}" is not available right now.${topAvailable.length > 0 ? ` In stock ${nounEn} include: ${topAvailable.join(', ')}.` : ''} Would you like to check our available ${nounEn}?`;
         }
 
         return {
           reply: replyText,
           navAction: sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null
         };
+      }
+
+      // 5. Host Page Live Knowledge Query (Contact, Location, Phone, Email, Hours, Services)
+      if (bridge && bridge.status === 'HOST_KNOWLEDGE_QUERY') {
+        const hk = bridge.data || extractHostPageKnowledge();
+        const contactSec = findHostSection('contact');
+        if (bridge.topic === 'location' && hk.address) {
+          if (contactSec) scrollToHostSection(contactSec);
+          let rep = `We are located at ${hk.address}.${contactSec ? ' I have scrolled your screen down to our location section!' : ''}`;
+          if (queryLang === 'mr-IN') rep = `आमचा पत्ता: ${hk.address}.${contactSec ? ' मी स्क्रीन थेट संपर्क विभागावर नेली आहे!' : ''}`;
+          if (queryLang === 'hi-IN') rep = `हमारा पता है: ${hk.address}।${contactSec ? ' मैंने स्क्रीन को सीधे लोकेशन सेक्शन पर स्क्रॉल कर दिया है!' : ''}`;
+          return {
+            reply: rep,
+            navAction: contactSec ? { label: `View ${contactSec.label}`, sectionInfo: contactSec } : null
+          };
+        }
+        if (bridge.topic === 'phone' && hk.phone) {
+          if (contactSec) scrollToHostSection(contactSec);
+          let rep = `You can reach us directly at ${hk.phone}.${contactSec ? ' Full contact details are also available below.' : ''}`;
+          if (queryLang === 'mr-IN') rep = `आपण थेट ${hk.phone} वर संपर्क करू शकता.`;
+          if (queryLang === 'hi-IN') rep = `आप सीधे ${hk.phone} पर कॉल कर सकते हैं।`;
+          return {
+            reply: rep,
+            navAction: contactSec ? { label: `View ${contactSec.label}`, sectionInfo: contactSec } : null
+          };
+        }
+        if (bridge.topic === 'email' && hk.email) {
+          if (contactSec) scrollToHostSection(contactSec);
+          let rep = `You can email us at ${hk.email} anytime.`;
+          if (queryLang === 'mr-IN') rep = `आपण ${hk.email} वर ईमेल पाठवू शकता.`;
+          if (queryLang === 'hi-IN') rep = `आप हमें ${hk.email} पर ईमेल कर सकते हैं।`;
+          return {
+            reply: rep,
+            navAction: contactSec ? { label: `View ${contactSec.label}`, sectionInfo: contactSec } : null
+          };
+        }
+        if (bridge.topic === 'hours' && hk.hours) {
+          let rep = `Our business hours are: ${hk.hours}.`;
+          if (queryLang === 'mr-IN') rep = `आमची कामाची वेळ: ${hk.hours}.`;
+          if (queryLang === 'hi-IN') rep = `हमारे खुलने का समय है: ${hk.hours}।`;
+          return rep;
+        }
+        if (bridge.topic === 'services' && (hk.services.length > 0 || hk.metaDesc)) {
+          const servList = hk.services.length > 0 ? hk.services.slice(0, 6).join(', ') : hk.metaDesc;
+          const servSec = findHostSection('how it works') || findHostSection('pricing') || findHostSection('services');
+          if (servSec) scrollToHostSection(servSec);
+          let rep = `We offer: ${servList}.${servSec ? ` I have scrolled your screen to our ${servSec.label}!` : ''}`;
+          if (queryLang === 'mr-IN') rep = `आमच्या मुख्य सेवा: ${servList}.`;
+          if (queryLang === 'hi-IN') rep = `हमारी मुख्य सुविधाएं: ${servList}।`;
+          return {
+            reply: rep,
+            navAction: servSec ? { label: `View ${servSec.label}`, sectionInfo: servSec } : null
+          };
+        }
       }
 
       // Marathi Conversational Queries
@@ -2031,24 +2365,16 @@ ${cleanFaqBlock}`;
 
       // 2. Identity & Role Inquiries
       if (/\b(who are you|what is your name|what do you do|introduce yourself)\b/i.test(lower)) {
-        const topicSamples = (agentConfig.knowledgeBase || []).slice(0, 3).map(k => k.q).join(', ');
-        return `I am ${agentConfig.name}, an AI voice agent configured as a ${agentConfig.role || 'customer assistant'}. I run directly in your browser with zero external servers. ${topicSamples ? `You can ask me about: ${topicSamples}.` : ''}`;
+        const hk = extractHostPageKnowledge();
+        const biz = hk.businessName || agentConfig.name;
+        return `I am ${agentConfig.name}, the official customer support voice and chat guide for ${biz}. I can help you check live inventory, prices, services, or navigate anywhere on this site!`;
       }
 
       // 3. Capabilities & Help Inquiries
       if (/\b(what can you do|help me|features|services|capabilities|options)\b/i.test(lower)) {
-        const kb = agentConfig.knowledgeBase || [];
-        const topics = kb.slice(0, 4).map(k => k.q).filter(Boolean);
-        const tools = (agentConfig.tools || []).map(t => t.name).filter(Boolean);
-        let reply = "I can guide you through our services and answer your inquiries. ";
-        if (topics.length > 0) {
-          reply += "I'm trained to answer questions on " + topics.join('; ') + ". ";
-        }
-        if (tools.length > 0) {
-          reply += "I can also trigger actions such as " + tools.join(', ') + ". ";
-        }
-        reply += "What would you like to know?";
-        return reply;
+        const hk = extractHostPageKnowledge();
+        const servSummary = hk.services.length > 0 ? `including ${hk.services.slice(0, 4).join(', ')}. ` : '';
+        return `I can guide you through our services ${servSummary}and check our live database catalog for availability and pricing. What would you like to explore?`;
       }
 
       // 4. Gratitude & Farewells
@@ -2074,8 +2400,10 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // 6. Semantic Knowledge Base Matching (Customer-Safe Only)
-      const kb = (agentConfig.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a));
+      // 6. Semantic Knowledge Base & On-Page FAQ Matching
+      const hostKnowledge = extractHostPageKnowledge();
+      const combinedKb = [...(agentConfig.knowledgeBase || []), ...hostKnowledge.faqs];
+      const kb = combinedKb.filter(item => isCustomerSafeFaq(item.q, item.a));
       let bestItem = null;
       let highestScore = 0;
 
@@ -2103,17 +2431,17 @@ ${cleanFaqBlock}`;
         return bestItem.a;
       }
 
-      // 7. Polite Everyday Knowledge & Catalog Guidance Fallback
+      // 7. Polite Universal Catalog Guidance Fallback
       const allItems = getAllCatalogItems(agentConfig);
-      if (allItems.length > 0 && /\b(medicine|med|product|item|drug|table|catalog|stock|price)\b/i.test(lower)) {
+      if (allItems.length > 0 && /\b(medicine|med|product|item|drug|table|catalog|stock|price|dish|food|pizza|burger|menu|plan|service|course|room|booking)\b/i.test(lower)) {
         const itemSummary = allItems.slice(0, 4).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
-        const sec = findHostSection('inventory');
+        const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
-        let catReply = `In our live database, we currently offer: ${itemSummary}.${sec ? ' I have scrolled your screen down to the live inventory table!' : ''}`;
+        let catReply = `In our live database, we currently offer: ${itemSummary}.${sec ? ` I have scrolled your screen down to the ${sec.label}!` : ''}`;
         if (queryLang === 'mr-IN') {
-          catReply = `आमच्या लाइव्ह डेटाबेसमध्ये उपलब्ध पर्याय: ${itemSummary}.${sec ? ' मी स्क्रीन थेट लाइव्ह स्टॉक तक्त्यावर नेली आहे!' : ''}`;
+          catReply = `आमच्या डेटाबेसमध्ये उपलब्ध पर्याय: ${itemSummary}.${sec ? ` मी स्क्रीन थेट ${sec.label}वर नेली आहे!` : ''}`;
         } else if (queryLang === 'hi-IN') {
-          catReply = `हमारे लाइव डेटाबेस में उपलब्ध विकल्प: ${itemSummary}।${sec ? ' मैंने स्क्रीन को सीधे लाइव इन्वेंटरी टेबल पर स्क्रॉल कर दिया है!' : ''}`;
+          catReply = `हमारे डेटाबेस में उपलब्ध विकल्प: ${itemSummary}।${sec ? ` मैंने स्क्रीन को सीधे ${sec.label} पर स्क्रॉल कर दिया है!` : ''}`;
         }
         return {
           reply: catReply,
