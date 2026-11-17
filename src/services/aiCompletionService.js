@@ -608,61 +608,66 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
   }
 
   // 3. Fallback to Local Knowledge Base Matching (100% Keyless Offline Rule-Based Engine)
-  const lower = cleanMessage.toLowerCase();
-  const words = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 1);
+  const rawTrimmed = cleanMessage.trim();
+  const normalizedNoPunct = rawTrimmed.toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
+  const rawCleanNoPunct = rawTrimmed.replace(/[!?.,।;:]+$/g, '').replace(/\s+/g, ' ').trim();
 
-  // English conversational queries & greetings
-  if (/^(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening))\b/i.test(lower)) {
+  // Standalone English / Marathi / Hindi greetings, gratitude, and farewells ONLY (never hijack questions starting with "hey ...")
+  if (/^(hi+|hello+|hey+|hii+|helo+|howdy|greetings|yo|sup|hola|good\s+(morning|afternoon|evening|day))(\s+(there|everyone|sir|ma'?am|mam|bot|assistant|team))?$/i.test(normalizedNoPunct)) {
     return "Hello! I am your AI assistant. How can I help you today?";
   }
-  if (/\b(how are you|how is it going|how are you doing)\b/i.test(lower)) {
+  if (/^(how are you|how is it going|how are you doing|whats?\s*up)$/i.test(normalizedNoPunct)) {
     return "I'm doing great, thank you for asking! How can I assist you today?";
   }
+  if (/^(thank you|thanks|thx|ty|many thanks|thanks a lot|appreciate it)$/i.test(normalizedNoPunct)) {
+    return "You're very welcome! Let me know if there's anything else I can help with.";
+  }
+  if (/^(bye+|goodbye|see you|have a nice day|take care)$/i.test(normalizedNoPunct)) {
+    return "Goodbye! Have a wonderful day ahead!";
+  }
+  if (/^(नमस्कार|कसे आहात|कसा आहेस|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)$/i.test(rawCleanNoPunct) || /^(kasa ahes|kase ahat|namaskar)(\s+(sir|ji))?$/i.test(normalizedNoPunct)) {
+    return "नमस्कार! मी आपला व्हॉइस असिस्टंट आहे. मी आपल्याला कशी मदत करू शकतो?";
+  }
+  if (/^(धन्यवाद|आभार|खूप छान)$/i.test(rawCleanNoPunct) || /^(dhanyavad|dhanyavaad|aabhar)$/i.test(normalizedNoPunct)) {
+    return "आपले मनःपूर्वक स्वागत आहे! मी आपल्याला आणखी काही मदत करू शकतो का?";
+  }
+  if (/^(अलविदा|बाय|पुन्हा भेटू|काळजी घ्या)$/i.test(rawCleanNoPunct)) {
+    return "धन्यवाद! काळजी घ्या आणि आपला दिवस चांगला जावो.";
+  }
+  if (/^(नमस्ते|प्रणाम|हेलो|हाय|कैसे हो|क्या हाल है|शुभ प्रभात)$/i.test(rawCleanNoPunct) || /^(namaste|kaise ho|kya haal(\s+hai)?)(\s+(sir|ji))?$/i.test(normalizedNoPunct)) {
+    return "नमस्ते! मैं आपका एआई वॉइस असिस्टेंट हूँ। मैं आज आपकी क्या सहायता कर सकता हूँ?";
+  }
+  if (/^(धन्यवाद|शुक्रिया|बहुत अच्छा)$/i.test(rawCleanNoPunct) || /^(dhanyawad|shukriya)$/i.test(normalizedNoPunct)) {
+    return "आपका बहुत-बहुत स्वागत है! क्या मैं आपकी किसी अन्य चीज़ में सहायता कर सकता हूँ?";
+  }
+  if (/^(अलविदा|बाय|फिर मिलेंगे)$/i.test(rawCleanNoPunct)) {
+    return "धन्यवाद! आपका दिन शुभ हो, फिर मिलेंगे।";
+  }
+
+  // Strip leading greeting from real questions (e.g. "hey i want know about the courses" -> "i want know about the courses")
+  const effectiveClean = rawTrimmed.replace(/^(hi+|hello+|hey+|hii+|helo+|howdy|namaste|namaskar|नमस्कार|नमस्ते|हाय|हॅलो|हेलो)[,!.\s]+/i, '').trim() || rawTrimmed;
+  const lower = effectiveClean.toLowerCase();
+  const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'which', 'your', 'about', 'can', 'you', 'want', 'know', 'tell', 'give', 'please', 'does', 'provide', 'offer', 'hey', 'hello']);
+  const words = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
+  const stem = (w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) ? w.slice(0, -1) : w;
+
   if (/\b(who are you|what is your name|introduce yourself)\b/i.test(lower)) {
     return "I am your AI voice assistant, here to answer your questions and guide you. What would you like to know?";
   }
   if (/\b(what can you do|how can you help|help me)\b/i.test(lower)) {
     return "I can answer questions about our services, products, and policies, as well as have general everyday conversations. What's on your mind?";
   }
-  if (/\b(thank you|thanks|appreciate it)\b/i.test(lower)) {
-    return "You're very welcome! Let me know if there's anything else I can help with.";
-  }
-  if (/\b(bye|goodbye|see you|have a nice day)\b/i.test(lower)) {
-    return "Goodbye! Have a wonderful day ahead!";
-  }
-
-  // Marathi conversational queries
-  if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)/i.test(cleanMessage) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {
-    return "नमस्कार! मी आपला व्हॉइस असिस्टंट आहे. मी आपल्याला कशी मदत करू शकतो?";
-  }
-  if (/(तुम्ही कोण आहात|तुमचे नाव काय|ओळख द्या)/i.test(cleanMessage) || /\b(tumhi kon ahat)\b/i.test(lower)) {
+  if (/(तुम्ही कोण आहात|तुमचे नाव काय|ओळख द्या)/i.test(effectiveClean) || /\b(tumhi kon ahat)\b/i.test(lower)) {
     return "मी आपला अधिकृत एआय व्हॉइस असिस्टंट आहे. मी आपल्या सर्व प्रश्नांची उत्तरे देण्यासाठी उपलब्ध आहे.";
   }
-  if (/(तुम्ही काय करू शकता|मदत करा|सेवा|वैशिष्ट्ये)/i.test(cleanMessage) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
+  if (/(तुम्ही काय करू शकता|मदत करा|वैशिष्ट्ये)/i.test(effectiveClean) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
     return "मी आपल्या सेवांची माहिती देऊ शकतो आणि आपल्या सर्व शंकांचे निरसन करू शकतो. आपल्याला काय जाणून घ्यायचे आहे?";
   }
-  if (/(धन्यवाद|आभार|खूप छान)/i.test(cleanMessage) || /\b(dhanyavad|dhanyavaad|aabhar)\b/i.test(lower)) {
-    return "आपले मनःपूर्वक स्वागत आहे! मी आपल्याला आणखी काही मदत करू शकतो का?";
-  }
-  if (/(अलविदा|बाय|पुन्हा भेटू|काळजी घ्या)/i.test(cleanMessage)) {
-    return "धन्यवाद! काळजी घ्या आणि आपला दिवस चांगला जावो.";
-  }
-
-  // Hindi conversational queries
-  if (/(नमस्ते|प्रणाम|हेलो|हाय|कैसे हो|क्या हाल है|शुभ प्रभात)/i.test(cleanMessage) || /\b(namaste|kaise ho|kya haal)\b/i.test(lower)) {
-    return "नमस्ते! मैं आपका एआई वॉइस असिस्टेंट हूँ। मैं आज आपकी क्या सहायता कर सकता हूँ?";
-  }
-  if (/(आप कौन हैं|तुम्हारा नाम क्या|अपना परिचय)/i.test(cleanMessage) || /\b(aap kaun hain)\b/i.test(lower)) {
+  if (/(आप कौन हैं|तुम्हारा नाम क्या|अपना परिचय)/i.test(effectiveClean) || /\b(aap kaun hain)\b/i.test(lower)) {
     return "मैं आपकी वेबसाइट का आधिकारिक एआई वॉइस गाइड हूँ। मैं आपकी सभी पूछताछ में मदद कर सकता हूँ।";
   }
-  if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं|सेवाएं)/i.test(cleanMessage) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
+  if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं)/i.test(effectiveClean) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
     return "मैं आपको हमारी सेवाओं, उत्पादों और जानकारी के बारे में विस्तृत सहायता प्रदान कर सकता हूँ। आप क्या जानना चाहते हैं?";
-  }
-  if (/(धन्यवाद|शुक्रिया|बहुत अच्छा)/i.test(cleanMessage) || /\b(dhanyawad|shukriya)\b/i.test(lower)) {
-    return "आपका बहुत-बहुत स्वागत है! क्या मैं आपकी किसी अन्य चीज़ में सहायता कर सकता हूँ?";
-  }
-  if (/(अलविदा|बाय|फिर मिलेंगे)/i.test(cleanMessage)) {
-    return "धन्यवाद! आपका दिन शुभ हो, फिर मिलेंगे।";
   }
 
   // Platform & Embedding Capabilities FAQs
@@ -721,13 +726,14 @@ Your floating voice assistant widget will appear immediately on your site, with 
   // Check live database records first if provided
   if (Array.isArray(dbRecords) && dbRecords.length > 0) {
     const isAcademic = /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university)\b/i.test(promptText + ' ' + agentDisplayName);
-    const isCatalogQuery = /\b(what products|list products|what do you sell|all products|available products|show products|what models|what cars|what services|offerings|catalog|all courses|list of courses|what courses|admissions|admission details|all meds|list of all meds|medicines)\b/i.test(lower);
-    if (isCatalogQuery) {
+    const isCatalogQuery = /\b(what|which)\s+(all\s+)?(products?|items?|models?|cars?|vehicles?|services?|courses?|programs?|streams?|dishes?|foods?|plans?|tiers?|rooms?|suites?|properties|flats?|meds?|medicines?)\s*(do you|are|can you)?\s*(have|offer|provide|sell|serve|teach|available)?\b/i.test(lower) ||
+                           /\b(list of|list all|all|available|show|know about|tell me about)\s+(the\s+|your\s+|all\s+)?(products|items|models|cars|vehicles|services|courses|programs|streams|dishes|menu|plans|rooms|properties|meds|medicines|catalog|offerings|admissions)\b/i.test(lower);
+    if (isCatalogQuery && !/\b(in that|in this|for that|for this|for it)\b/i.test(lower)) {
       const summary = dbRecords.slice(0, 6).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
       if (isAcademic) {
         return `Our verified academic programs and courses include: ${summary}. Feel free to ask me for admission criteria, eligibility, or details on any course!`;
       }
-      return `Our verified database includes: ${summary}. You can ask me for real-time stock, pricing, or details on any item!`;
+      return `Our verified database includes: ${summary}. You can ask me for real-time availability, pricing, or details on any item!`;
     }
     const matchedRecord = dbRecords.find(r => {
       const rName = (r.name || '').toLowerCase().trim();
@@ -747,9 +753,10 @@ Your floating voice assistant widget will appear immediately on your site, with 
     }
   }
 
-  // Check products / offerings
-  if (/\b(what products|list products|what do you sell|all products|available products|show products|what models|what cars|what services|offerings|catalog)\b/i.test(lower)) {
-    const productEntry = kbList.find(k => /\b(what products|models do you offer|catalog|services do you offer)\b/i.test(k.q));
+  // Check products / courses / offerings in Knowledge Base
+  if (/\b(what|which)\s+(all\s+)?(products?|courses?|programs?|models?|cars?|services?|dishes?|plans?|rooms?|offerings?)\s*(do you|are)?\s*(have|offer|provide|sell|serve|available)?\b/i.test(lower) ||
+      /\b(list|all|available|know about|tell me about)\s+(the\s+|your\s+)?(products|courses|programs|models|cars|services|dishes|menu|plans|rooms|offerings|catalog)\b/i.test(lower)) {
+    const productEntry = kbList.find(k => /\b(what products|what courses|courses|models do you offer|catalog|services do you offer|programs|menu|plans|rooms)\b/i.test(k.q));
     if (productEntry && productEntry.a && !productEntry.a.includes('[')) {
       return productEntry.a;
     }
@@ -757,7 +764,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
       .map(k => k.q.replace(/^(?:what is|what are|tell me about)\s+/i, '').replace(/\?$/, '').trim())
       .filter(t => t.length > 2 && !/^(?:this website|main point|contact|support|hours|pricing)/i.test(t));
     if (productTitles.length > 0) {
-      return `Our flagship products and offerings include: ${productTitles.slice(0, 6).join(', ')}. Which would you like to explore in detail?`;
+      return `Our offerings include: ${productTitles.slice(0, 6).join(', ')}. Which would you like to explore in detail?`;
     }
   }
 
@@ -771,7 +778,10 @@ Your floating voice assistant widget will appear immediately on your site, with 
     if (lower.includes(qLower) || qLower.includes(lower)) {
       return item.a;
     }
-    const matchCount = words.filter(w => qLower.includes(w) || aLower.includes(w)).length;
+    const matchCount = words.filter(w => {
+      const s = stem(w);
+      return qLower.includes(w) || qLower.includes(s) || aLower.includes(w) || aLower.includes(s);
+    }).length;
     if (matchCount > highestScore) {
       highestScore = matchCount;
       bestMatch = item;

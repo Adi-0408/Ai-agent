@@ -1231,14 +1231,38 @@
     }
 
     function isCatalogListQuery(text) {
-      const lower = String(text || '').toLowerCase().trim();
-      return /\b(list of all|list all|give list|give me list|show list|all meds|all medicines|all products|all items|all services|all dishes|all plans|full list|catalog|catalogue|inventory|menu|what meds|what medicines|what products|what items|what do you sell|what do you have|what do you offer|what is available|available meds|available medicines|available products|available items|show inventory|inventory table|list inventory|see all|view all)\b/i.test(lower) ||
-             /\bwhat (plans|dishes|services|products|items|medicines|meds|models|food) (do you have|are available|do you offer)\b/i.test(lower) ||
-             /\b(list of (the )?(meds|medicines|products|items|plans|dishes|services|inventory))\b/i.test(lower) ||
-             /\b(what are (the|your) (products|items|medicines|meds|services|plans|dishes))\b/i.test(lower) ||
-             /\b(all (items|products|meds|medicines|dishes|plans|services) list)\b/i.test(lower) ||
-             /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू|सर्व सेवा|मेन्यू)/i.test(text) ||
-             /(सभी दवा|दवाइयों की लिस्ट|सारे प्रोडक्ट्स|कैटलॉग|क्या क्या उपलब्ध|लिस्ट दो|सूची दो|सारे आइटम|मेन्यू दिखाओ)/i.test(text);
+      const lower = String(text || '')
+        .toLowerCase()
+        .replace(/^(hi+|hello+|hey+|howdy|namaste|namaskar)[,!.\s]+/i, '')
+        .trim();
+      if (!lower) return false;
+
+      // Never treat a pronoun follow-up ("what subjects are in that", "what features in this") as a full catalog list query
+      if (/\b(in that|in this|in it|for that|for this|for it|of that|of this|about that|about this|about it)\b/i.test(lower)) {
+        return false;
+      }
+
+      const nouns = '(?:meds?|medicines?|drugs?|products?|items?|goods|services?|dishes?|foods?|meals?|drinks?|menu|plans?|tiers?|subscriptions?|packages?|courses?|programs?|programmes?|streams?|classes?|degrees?|diplomas?|subjects?|branches?|departments?|rooms?|suites?|stays?|villas?|vehicles?|cars?|bikes?|models?|properties|property|flats?|apartments?|plots?|listings?|loans?|policies|accounts?|treatments?|tests?|offerings?|options?|catalog|catalogue|inventory)';
+      const pluralOrCategoryNouns = '(?:meds|medicines|drugs|products|items|goods|services|dishes|foods|meals|drinks|menu|plans|tiers|subscriptions|packages|courses|programs|programmes|streams|classes|degrees|diplomas|subjects|branches|departments|rooms|suites|stays|villas|vehicles|cars|bikes|models|properties|flats|apartments|plots|listings|loans|policies|accounts|treatments|tests|offerings|options|catalog|catalogue|inventory)';
+
+      const rxList = new RegExp(`\\b(list of (all |the |your )?${nouns}|list all|give (me )?(a )?list|show (me )?(the |all |your )?(list|${pluralOrCategoryNouns})|all ${pluralOrCategoryNouns}|available ${pluralOrCategoryNouns}|full list|catalog|catalogue|inventory|menu|see all|view all)\\b`, 'i');
+      const rxWhatWhichVerb = new RegExp(`\\b(what|which)\\s+(all\\s+)?(${nouns})\\s+(do you|are|can you|you)\\s+(have|offer|provide|sell|serve|teach|run|support|give|available)\\b`, 'i');
+      const rxWhatWhichBare = new RegExp(`^(what|which)\\s+(all\\s+)?${pluralOrCategoryNouns}\\s*[?.!]*$`, 'i');
+      const rxWhatAre = new RegExp(`\\b(what|which)\\s+are\\s+(the|your|all)\\s+${pluralOrCategoryNouns}\\b`, 'i');
+      const rxWhatDoYou = /\b(what|which)\s+(all\s+)?do\s+you\s+(sell|have|offer|provide|serve|teach|run)\b/i;
+      const rxKnowAbout = new RegExp(`\\b(want\\s+(to\\s+)?know|know|tell\\s+me|info|information|details|learn|ask|inquire|enquire)\\s+(more\\s+)?(about|on|of|regarding)\\s+(the\\s+|your\\s+|all\\s+|available\\s+)?${pluralOrCategoryNouns}\\s*[?.!]*$`, 'i');
+      const rxAllList = new RegExp(`\\b(all\\s+${nouns}\\s+list|${nouns}\\s+list)\\b`, 'i');
+
+      return rxList.test(lower) ||
+             rxWhatWhichVerb.test(lower) ||
+             rxWhatWhichBare.test(lower) ||
+             rxWhatAre.test(lower) ||
+             rxWhatDoYou.test(lower) ||
+             rxKnowAbout.test(lower) ||
+             rxAllList.test(lower) ||
+             /\b(what is available|show inventory|inventory table|list inventory)\b/i.test(lower) ||
+             /(सर्व औषध|औषधांची यादी|सर्व प्रॉडक्ट|कॅटलॉग|काय काय उपलब्ध|सर्व वस्तू|सर्व सेवा|मेन्यू|कोणते कोर्स|कोणते अभ्यासक्रम|अभ्यासक्रमांची माहिती|कोर्सची यादी|कोर्सेस बद्दल)/i.test(text) ||
+             /(सभी दवा|दवाइयों की लिस्ट|सारे प्रोडक्ट्स|कैटलॉग|क्या क्या उपलब्ध|लिस्ट दो|सूची दो|सारे आइटम|मेन्यू दिखाओ|कौन से कोर्स|कोर्स की जानकारी|कोर्स की लिस्ट|सभी कोर्स)/i.test(text);
     }
 
     function isSectionNavigationQuery(text) {
@@ -1273,11 +1297,11 @@
       const t = String(topic || '').toLowerCase().trim();
 
       const idCandidates = [];
-      if (/\b(med|medicine|drug|pharmacy|pill|tablet|prescription|inventory|stock|product|catalog|item|shop|store|menu)\b/i.test(t)) {
-        idCandidates.push('inventory-section', 'inventory', 'medicines', 'meds', 'products', 'catalog', 'shop', 'store', 'menu', 'inventory-table-container', 'inventory-tbody');
+      if (/\b(med|medicine|medicines|drug|pharmacy|pill|tablet|prescription|inventory|stock|product|products|catalog|item|items|shop|store|menu|course|courses|program|programs|stream|streams|admission|admissions|room|rooms|vehicle|vehicles|car|cars|property|properties|service|services)\b/i.test(t)) {
+        idCandidates.push('inventory-section', 'inventory', 'medicines', 'meds', 'products', 'catalog', 'shop', 'store', 'menu', 'courses', 'programs', 'admissions', 'rooms', 'vehicles', 'properties', 'services', 'inventory-table-container', 'inventory-tbody');
       }
-      if (/\b(price|pricing|plan|cost|rate|subscription)\b/i.test(t)) {
-        idCandidates.push('pricing-section', 'pricing', 'plans', 'costs', 'rates', 'pricing-table');
+      if (/\b(price|pricing|plan|plans|cost|rate|subscription|fee|fees)\b/i.test(t)) {
+        idCandidates.push('pricing-section', 'pricing', 'plans', 'costs', 'rates', 'fees', 'pricing-table');
       }
       if (/\b(how it works|guide|demo|integration|setup|features|overview)\b/i.test(t)) {
         idCandidates.push('how-it-works-section', 'how-it-works', 'guide', 'features', 'overview', 'demo');
@@ -1299,8 +1323,8 @@
       const headings = document.querySelectorAll('h1, h2, h3, h4');
       for (const h of headings) {
         const hText = (h.textContent || '').toLowerCase();
-        if (/\b(med|medicine|inventory|stock|product|catalog|shop|menu)\b/i.test(t) &&
-            /\b(inventory|medicine|medicines|product|products|catalog|stock|menu|shop)\b/i.test(hText)) {
+        if (/\b(med|medicine|medicines|inventory|stock|product|products|catalog|shop|menu|course|courses|program|programs|admission|admissions|room|rooms|vehicle|vehicles|property|properties)\b/i.test(t) &&
+            /\b(inventory|medicine|medicines|product|products|catalog|stock|menu|shop|course|courses|program|programs|streams|admissions|rooms|vehicles|properties)\b/i.test(hText)) {
           const container = h.closest('.card, section, article, div[class*="section"], div[class*="container"]') || h;
           return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
         }
@@ -1309,7 +1333,7 @@
           const container = h.closest('.card, section, article, div[class*="section"]') || h;
           return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
         }
-        if (/\b(pricing|price|plans)\b/i.test(t) && /\b(pricing|price|plans)\b/i.test(hText)) {
+        if (/\b(pricing|price|plans|fees)\b/i.test(t) && /\b(pricing|price|plans|fees)\b/i.test(hText)) {
           const container = h.closest('.card, section, article, div[class*="section"]') || h;
           return { element: container, id: container.id || '', label: h.textContent.trim().replace(/^[^\w]+/, '') };
         }
@@ -1320,8 +1344,8 @@
       }
 
       // Universal fallback to any table or product container if looking for catalog/inventory
-      if (/\b(med|medicine|inventory|stock|product|catalog|item|menu)\b/i.test(t)) {
-        const table = document.querySelector('#inventory-tbody, table, .inventory, .products-grid, .menu-grid');
+      if (/\b(med|medicine|inventory|stock|product|catalog|item|menu|course|courses|program|room|vehicle)\b/i.test(t)) {
+        const table = document.querySelector('#inventory-tbody, table, .inventory, .products-grid, .menu-grid, .courses-grid');
         if (table) {
           const container = table.closest('.card, section, article') || table;
           return { element: container, id: container.id || '', label: 'Live Catalog Table' };
@@ -1335,9 +1359,14 @@
       if (/inventory/i.test(id)) return 'Live Inventory Table';
       if (/medicine|meds/i.test(id)) return 'Medicines Catalog';
       if (/product/i.test(id)) return 'Products Catalog';
+      if (/course|program|stream/i.test(id)) return 'Courses & Programs';
+      if (/admission/i.test(id)) return 'Admissions Section';
+      if (/room/i.test(id)) return 'Rooms & Stays';
+      if (/vehicle|car/i.test(id)) return 'Vehicles Showroom';
+      if (/propert/i.test(id)) return 'Property Listings';
       if (/menu/i.test(id)) return 'Menu Section';
       if (/how-it-works/i.test(id)) return 'How It Works Guide';
-      if (/pricing|plan/i.test(id)) return 'Pricing & Plans';
+      if (/pricing|plan|fee/i.test(id)) return 'Pricing & Plans';
       if (/contact/i.test(id)) return 'Contact & Support';
       if (/appointment/i.test(id)) return 'Appointments & Booking';
       return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -1627,7 +1656,7 @@
               const entries = Array.isArray(parsed) ? parsed : (parsed['@graph'] || [parsed]);
               entries.forEach(entry => {
                 const type = entry['@type'];
-                if (type === 'Product' || type === 'IndividualProduct' || type === 'MenuItem' || type === 'Service') {
+                if (type === 'Product' || type === 'IndividualProduct' || type === 'MenuItem' || type === 'Service' || type === 'Course' || type === 'EducationalOccupationalProgram' || type === 'HotelRoom' || type === 'Vehicle') {
                   const offer = Array.isArray(entry.offers) ? entry.offers[0] : entry.offers;
                   const price = offer ? (offer.price ? `${offer.priceCurrency || '$'}${offer.price}` : '') : '';
                   const avail = offer?.availability || '';
@@ -1786,14 +1815,14 @@
           });
         });
 
-        // B. Card / Grid / List items scraper
-        const cardElements = document.querySelectorAll('.product-card, .item-card, .shop-item, .product-item, .medicine-item, [data-product], .menu-item, article.product, .pricing-card, .plan-card, [class*="product-card"], [class*="menu-item"], div[role="row"]');
+        // B. Card / Grid / List items scraper (Universal across ALL website archetypes)
+        const cardElements = document.querySelectorAll('.product-card, .item-card, .shop-item, .product-item, .medicine-item, [data-product], .menu-item, article.product, .pricing-card, .plan-card, .course-card, .program-card, .stream-card, .room-card, .service-card, .vehicle-card, .car-card, .property-card, [class*="product-card"], [class*="menu-item"], [class*="course-card"], [class*="program-card"], [class*="plan-card"], [class*="pricing-card"], [class*="room-card"], [class*="service-card"], div[role="row"]');
         cardElements.forEach(card => {
           const titleEl = card.querySelector('.name, .title, [class*="name"], [class*="title"], h2, h3, h4, h5, [data-title], a[class*="title"], a[class*="name"]');
           const rawTitle = titleEl ? titleEl.textContent.trim() : (card.getAttribute('data-product') || card.getAttribute('data-name') || '');
-          const priceEl = card.querySelector('.price, [data-price], .cost, .amount, [class*="price"]');
+          const priceEl = card.querySelector('.price, [data-price], .cost, .amount, .fee, [class*="price"], [class*="fee"]');
           const priceMatch = priceEl ? priceEl.textContent.trim() : (card.getAttribute('data-price') || '');
-          const stockEl = card.querySelector('.stock, [data-stock], .quantity, .availability, [class*="stock"]');
+          const stockEl = card.querySelector('.stock, [data-stock], .quantity, .availability, .seats, [class*="stock"], [class*="seat"]');
           const stockText = stockEl ? stockEl.textContent.trim() : (card.getAttribute('data-stock') || '');
           const m = stockText.match(/^(\d+)\s*([a-zA-Z]+)?/);
 
@@ -1802,12 +1831,35 @@
             addItem({
               name: cleaned.name || rawTitle,
               price: priceMatch,
-              stock: m ? parseInt(m[1], 10) : (/in stock/i.test(stockText) ? 100 : (/out of stock/i.test(stockText) ? 0 : null)),
+              stock: m ? parseInt(m[1], 10) : (/in stock|open|available/i.test(stockText) ? 100 : (/out of stock|closed|full/i.test(stockText) ? 0 : null)),
               unit: m && m[2] ? m[2] : 'units',
               description: cleaned.desc || ''
             });
           }
         });
+
+        // C. Form <select> dropdown scraper for admission/booking/service portals (only if catalog is still empty)
+        if (items.length === 0) {
+          const selects = document.querySelectorAll('select');
+          selects.forEach(sel => {
+            const labelEl = sel.id ? document.querySelector(`label[for="${sel.id}"]`) : sel.closest('label');
+            const metaText = `${sel.id || ''} ${sel.name || ''} ${sel.getAttribute('aria-label') || ''} ${labelEl ? labelEl.textContent : ''}`.toLowerCase();
+            if (/\b(course|courses|program|programme|stream|class|standard|std|branch|degree|department|subject|admission|service|plan|room|vehicle|model|package)\b/i.test(metaText)) {
+              Array.from(sel.options || []).forEach(opt => {
+                const label = (opt.textContent || '').replace(/\s+/g, ' ').trim();
+                const val = (opt.value || '').trim();
+                if (!label || !val || /^(-+|select|choose|none|please|--)/i.test(label)) return;
+                addItem({
+                  name: label,
+                  price: '',
+                  stock: null,
+                  unit: 'seats',
+                  description: ''
+                });
+              });
+            }
+          });
+        }
       }
 
       // STRICT ACCURACY: Never fabricate fake catalog items from FAQs or general text.
@@ -1815,17 +1867,48 @@
       return items;
     }
 
-    // Conversational & Greeting Filter: Never search catalog for small-talk or greetings
+    // Strip leading conversational greeting when followed by a real question (e.g. "hey i want know about the courses" -> "i want know about the courses")
+    function stripLeadingGreeting(text) {
+      return String(text || '')
+        .trim()
+        .replace(/^(hi+|hello+|hey+|hii+|helo+|howdy|greetings|yo|sup|hola|good\s*(?:morning|afternoon|evening|day)|namaste|namaskar|pranam|नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|हेलो)(?:\s+(?:there|everyone|sir|ma'?am|mam|bot|assistant|team))?[,!.\s]+/i, '')
+        .trim();
+    }
+
+    // Conversational & Greeting Filter: ONLY returns true for STANDALONE greetings / small-talk / thanks / farewells!
+    // Never swallows messages that begin with "hey" / "hi" / "hello" followed by an actual customer question!
     function isGreetingOrConversational(text) {
-      const t = String(text || '').trim().toLowerCase();
+      const raw = String(text || '').trim();
+      if (!raw) return false;
+      const t = raw.toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
       if (!t) return false;
-      return /^(hi|hello|hey|howdy|greetings|good\s*(morning|afternoon|evening|day)|namaste|namaskar|kasa\s*ahes|kase\s*ahat|kaise\s*ho|whats?\s*up|sup|hola|thank\s*you|thanks|dhanyavad|shukriya|bye|goodbye|alvida)\b/i.test(t) ||
-             /^(नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|शुभ प्रभात|शुभ दुपार|शुभ संध्याकाळ|धन्यवाद|आभार|बाय|अलविदा)(?:\s|$|[.,!?])/i.test(t);
+
+      // Exact standalone English greetings / small talk / thanks / farewells
+      if (/^(hi+|hello+|hey+|hii+|helo+|howdy|greetings|yo|sup|hola|good\s*(morning|afternoon|evening|day|night))(\s+(there|everyone|all|team|sir|ma'?am|mam|bot|assistant|agent|friend|guys))?$/i.test(t)) {
+        return true;
+      }
+      if (/^(how\s+are\s+you|how\s+is\s+it\s+going|whats?\s*up|how\s+do\s+you\s+do|thank\s*you|thanks|thx|ty|many\s+thanks|thanks\s+a\s+lot|ok\s+thanks|bye+|goodbye|see\s+you|take\s+care|ok\s*bye)$/i.test(t)) {
+        return true;
+      }
+      // Exact standalone Hinglish / Marathish greetings / thanks / farewells
+      if (/^(namaste|namaskar|pranam|ram\s*ram|kasa\s*ahes|kase\s*ahat|kaise\s*ho|kya\s*haal(\s*hai)?|dhanyavad|dhanyavaad|aabhar|shukriya|alvida)(\s+(sir|ji|mam|bot))?$/i.test(t)) {
+        return true;
+      }
+      // Exact standalone Devanagari greetings / thanks / farewells
+      const rawClean = raw.replace(/[!?.,।;:]+$/g, '').replace(/\s+/g, ' ').trim();
+      if (/^(नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|हेलो|शुभ\s*प्रभात|शुभ\s*सकाळ|शुभ\s*दुपार|शुभ\s*संध्याकाळ|कसे\s*आहात|कसा\s*आहेस|कैसे\s*हो|क्या\s*हाल\s*है|धन्यवाद|आभार|शुक्रिया|बाय|अलविदा)(\s+(जी|सर|मॅडम))?$/i.test(rawClean)) {
+        return true;
+      }
+
+      return false;
     }
 
     function extractTargetItem(text, history = [], context = null, catalogItems = null) {
-      let cleaned = String(text || '').trim()
-        .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number|forget that|instead of that|instead of it|what about|how about)\b/gi, ' ')
+      const strippedInput = isGreetingOrConversational(text) ? '' : (stripLeadingGreeting(text) || String(text || '').trim());
+      if (!strippedInput) return '';
+
+      let cleaned = strippedInput
+        .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|i want to know about|i want know about|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number|forget that|instead of that|instead of it|what about|how about)\b/gi, ' ')
         .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
         .replace(/[?!.,;]/g, '')
         .trim();
@@ -1837,7 +1920,9 @@
       }
 
       // 0. Context-Switch First: If user explicitly names a DIFFERENT item from the catalog (e.g. "forget that, what about Commerce?" or "instead of it, Adidas Ultraboost"), switch immediately!
-      const liveCatalog = Array.isArray(catalogItems) && catalogItems.length > 0 ? catalogItems : getAllCatalogItems(agentConfig);
+      const liveCatalog = Array.isArray(catalogItems) && catalogItems.length > 0
+        ? catalogItems
+        : (typeof getAllCatalogItems === 'function' && typeof agentConfig !== 'undefined' ? getAllCatalogItems(agentConfig) : []);
       if (liveCatalog.length > 0 && cleaned.length >= 3) {
         const cleanedNoPronouns = cleaned
           .replace(/\b(in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|in it|this|that|it|these|those|the|and|or|but|with|also|please)\b/gi, ' ')
@@ -2011,8 +2096,10 @@
       const cleanTitle = name.split(/[\(\n,]/)[0].trim() || name;
       const stock = itemData.stock !== undefined ? itemData.stock : (itemData.quantity !== undefined ? itemData.quantity : null);
       const price = itemData.price ? (typeof itemData.price === 'number' ? `₹${itemData.price}` : String(itemData.price).trim()) : '';
-      const currentArchetype = detectCurrentArchetype(agentConfig);
-      const profile = getArchetypeProfile(currentArchetype);
+      const currentArchetype = (typeof detectCurrentArchetype === 'function' && typeof agentConfig !== 'undefined') ? detectCurrentArchetype(agentConfig) : 'general';
+      const profile = (typeof getArchetypeProfile === 'function')
+        ? getArchetypeProfile(currentArchetype)
+        : { itemUnit: 'units', priceLabelEn: 'price', priceLabelHi: 'कीमत', priceLabelMr: 'किंमत', defaultDesc: 'high quality offerings and support' };
       const unit = itemData.unit || profile.itemUnit || 'units';
       const rx = itemData.rx || itemData.prescriptionRequired;
 
@@ -2107,13 +2194,14 @@
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
     async function resolveDatabaseBridge(query, agentConfig, context = null) {
       if (!query || isGreetingOrConversational(query)) {
-        return null; // NEVER query database for conversational greetings or small talk!
+        return null; // NEVER query database for standalone conversational greetings or small talk!
       }
 
-      const isList = isCatalogListQuery(query);
-      const isNav = isSectionNavigationQuery(query);
+      const effectiveQuery = stripLeadingGreeting(query) || String(query).trim();
+      const isList = isCatalogListQuery(effectiveQuery);
+      const isNav = isSectionNavigationQuery(effectiveQuery);
 
-      // 1. Handle Catalog List query (e.g. "give list of all meds", "show menu", "what products do you sell")
+      // 1. Handle Catalog List query (e.g. "hey i want know about the courses", "which courses do you provide", "give list of all meds", "show menu", "what products do you sell")
       if (isList) {
         const allItems = getAllCatalogItems(agentConfig);
         const scriptEl = getWidgetScript();
@@ -2701,14 +2789,23 @@ ${cleanFaqBlock}`;
     // Autonomous Zero-API-Key Local Reasoning Engine with Conversational Memory & Context
     async function inferLocalAgentResponse(userText, bridgeResult = null, history = [], context = null) {
       const text = userText.trim();
-      const lower = text.toLowerCase();
-      const cleanWords = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
-      const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'your', 'about', 'can', 'you']);
-      const meaningfulWords = cleanWords.filter(w => !stopWords.has(w));
       const queryLang = detectTextLanguage(text);
 
-      // 0. Immediate Greeting & Small Talk Handler (English, Hindi, Marathi)
+      // 0. Immediate STANDALONE Greeting, Gratitude & Farewell Handler (English, Hindi, Marathi)
+      // Never triggers when user writes a greeting followed by an actual question (e.g. "hey i want know about the courses")
       if (isGreetingOrConversational(text)) {
+        const lowerRaw = text.toLowerCase();
+        if (/\b(thank\s*you|thanks|thx|ty|dhanyavad|dhanyavaad|aabhar|shukriya)\b/i.test(lowerRaw) || /(धन्यवाद|आभार|शुक्रिया)/i.test(text)) {
+          if (queryLang === 'mr-IN') return 'आपले मनःपूर्वक स्वागत आहे! मी आपल्याला आणखी काही मदत करू शकतो का?';
+          if (queryLang === 'hi-IN') return 'आपका बहुत-बहुत स्वागत है! क्या मैं आपकी किसी अन्य चीज़ में सहायता कर सकता हूँ?';
+          return "You're very welcome! Let me know if there's anything else I can help you with.";
+        }
+        if (/\b(bye+|goodbye|see\s+you|take\s+care|alvida)\b/i.test(lowerRaw) || /(अलविदा|बाय)/i.test(text)) {
+          if (queryLang === 'mr-IN') return 'धन्यवाद! काळजी घ्या आणि आपला दिवस चांगला जावो.';
+          if (queryLang === 'hi-IN') return 'धन्यवाद! आपका दिन शुभ हो, फिर मिलेंगे।';
+          return 'Goodbye! Have a great day, and feel free to reach out anytime.';
+        }
+
         const currentArchetype = detectCurrentArchetype(agentConfig);
         const profile = getArchetypeProfile(currentArchetype);
 
@@ -2720,6 +2817,20 @@ ${cleanFaqBlock}`;
           return `Hello! Welcome to ${agentConfig.name}. How can I assist you with ${profile.nounEn} today?`;
         }
       }
+
+      const effectiveText = stripLeadingGreeting(text) || text;
+      const lower = effectiveText.toLowerCase();
+      const cleanWords = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
+      const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'which', 'your', 'about', 'can', 'you', 'want', 'know', 'tell', 'give', 'please', 'does', 'will', 'would', 'could', 'there', 'provide', 'offer', 'hey', 'hello', 'just', 'some', 'more', 'here', 'need', 'how']);
+      const meaningfulWords = cleanWords.filter(w => !stopWords.has(w));
+      const stemWord = (w) => {
+        if (!w || w.length <= 3) return w;
+        if (w.endsWith('ies') && w.length > 4) return w.slice(0, -3) + 'y';
+        if (w.endsWith('es') && w.length > 4 && /(ch|sh|x|s|z|o)es$/.test(w)) return w.slice(0, -2);
+        if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+        return w;
+      };
+      const stemmedWords = meaningfulWords.map(stemWord);
 
       // 0.1 Universal Context-Aware Follow-Up Query Handler (Works across ALL website types & agents)
       if (context && context.activeItem) {
@@ -2836,11 +2947,11 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // 1. Direct Catalog List Query Handler (e.g. "give list of all meds", "show all products", "show menu")
+      // 1. Direct Catalog List Query Handler (e.g. "hey i want know about the courses", "which courses do you provide", "give list of all meds", "show all products", "show menu")
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig, context);
       if (bridge && bridge.status === 'FOUND_CATALOG_LIST') {
         const allItems = Array.isArray(bridge.data) && bridge.data.length > 0 ? bridge.data : getAllCatalogItems(agentConfig);
-        const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
+        const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
 
         const currentArchetype = detectCurrentArchetype(agentConfig);
@@ -2851,6 +2962,7 @@ ${cleanFaqBlock}`;
 
         let replyText = '';
         if (allItems.length > 0) {
+          if (context) context.activeTopic = 'catalog_list';
           const displayedItems = allItems.slice(0, 5);
           const itemSummary = displayedItems.map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
           const moreSuffixEn = allItems.length > 5 ? `, and ${allItems.length - 5} more` : '';
@@ -2860,13 +2972,38 @@ ${cleanFaqBlock}`;
           if (queryLang === 'mr-IN') {
             replyText = `आमच्याकडे सध्या ${allItems.length} ${nounMr} उपलब्ध आहेत: ${itemSummary}${moreSuffixMr}. आपल्याला अधिक माहिती हवी असल्यास नक्की सांगा!`;
           } else if (queryLang === 'hi-IN') {
-            replyText = `हमारे पास अभी ${allItems.length} ${nounHi} उपलब्ध हैं: ${itemSummary}${moreSuffixHi}। किसी भी आइटम के बारे में और जानने के लिए मुझे बताएं!`;
+            replyText = `हमारे पास अभी ${allItems.length} ${nounHi} उपलब्ध हैं: ${itemSummary}${moreSuffixHi}। किसी भी विकल्प के बारे में और जानने के लिए मुझे बताएं!`;
           } else {
             replyText = `We currently have ${allItems.length} ${nounEn} available: ${itemSummary}${moreSuffixEn}. Let me know if you would like details on any of these!`;
           }
         } else {
+          // Check Agent Knowledge Base & Host FAQs BEFORE falling back to generic message
           const hk = extractHostPageKnowledge();
-          if (hk.services && hk.services.length > 0) {
+          const catalogKb = [...(agentConfig.knowledgeBase || []), ...hk.faqs].filter(item => isCustomerSafeFaq(item.q, item.a));
+          let bestCatalogKb = null;
+          let bestCatalogScore = 0;
+          for (const item of catalogKb) {
+            const qL = (item.q || '').toLowerCase();
+            const aL = (item.a || '').toLowerCase();
+            let sc = 0;
+            if (lower.includes(qL) || qL.includes(lower)) sc += 80;
+            for (const sw of stemmedWords) {
+              if (qL.includes(sw)) sc += 20;
+              if (aL.includes(sw)) sc += 8;
+            }
+            if (/\b(course|courses|program|programs|product|products|menu|dish|dishes|plan|plans|room|rooms|service|services|offer|provide|catalog|list)\b/i.test(qL)) {
+              sc += 10;
+            }
+            if (sc > bestCatalogScore) {
+              bestCatalogScore = sc;
+              bestCatalogKb = item;
+            }
+          }
+
+          if (bestCatalogKb && bestCatalogScore >= 20) {
+            if (context) context.activeTopic = bestCatalogKb.q;
+            replyText = bestCatalogKb.a;
+          } else if (hk.services && hk.services.length > 0) {
             const servList = hk.services.slice(0, 5).join(', ');
             replyText = `We offer: ${servList}.${sec ? ` I have scrolled your screen down to our ${sec.label}!` : ''}`;
           } else if (sec) {
@@ -2881,9 +3018,9 @@ ${cleanFaqBlock}`;
             if (queryLang === 'mr-IN') {
               replyText = `मी डेटाबेस तपासला, परंतु सध्या या कॅटलॉगमध्ये कोणत्याही वस्तूंची नोंद नाही. आपण आमच्या सेवांबद्दल विचारू शकता.`;
             } else if (queryLang === 'hi-IN') {
-              replyText = `मैंने डेटाबेस चेक किया, लेकिन इस कैटलॉग में कोई उत्पाद रिकॉर्ड दर्ज नहीं है। यदि आप अन्य सेवाओं के बारे में जानना चाहते हैं, तो कृपया पूछें।`;
+              replyText = `मैंने डेटाबेस चेक किया, लेकिन इस कैटलॉग में कोई रिकॉर्ड दर्ज नहीं है। यदि आप अन्य सेवाओं के बारे में जानना चाहते हैं, तो कृपया पूछें।`;
             } else {
-              replyText = `I checked our database, but no ${nounEn} are currently loaded in this catalog. If you would like to know about our services or features, please let me know!`;
+              replyText = `I checked our database, but no ${nounEn} are currently loaded in this catalog. If you would like to know about our ${profile.followUpEn}, please let me know!`;
             }
           }
         }
@@ -3008,43 +3145,20 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // Marathi Conversational Queries
-      if (/(नमस्कार|कसे आहात|काय चाललंय|हाय|हॅलो|शुभ सकाळ|शुभ संध्याकाळ)/i.test(text) || /\b(kasa ahes|kase ahat|namaskar)\b/i.test(lower)) {
-        return `नमस्कार! मी ${agentConfig.name} आहे, आपला व्हॉइस असिस्टंट. मी आपल्याला कशी मदत करू शकतो?`;
-      }
+      // Marathi Identity & Capability Queries (standalone greetings already handled at Step 0)
       if (/(तुम्ही कोण आहात|तुमचे नाव काय|ओळख द्या)/i.test(text) || /\b(tumhi kon ahat)\b/i.test(lower)) {
         return `मी ${agentConfig.name} आहे, या वेबसाइटचा अधिकृत एआय व्हॉइस असिस्टंट.`;
       }
-      if (/(तुम्ही काय करू शकता|मदत करा|सेवा|वैशिष्ट्ये)/i.test(text) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
+      if (/(तुम्ही काय करू शकता|मदत करा|वैशिष्ट्ये)/i.test(text) || /\b(tumhi kay karu shakta|madat kara)\b/i.test(lower)) {
         return "मी आपल्या सर्व शंकांचे निरसन करू शकतो आणि आमच्या सेवांबद्दल माहिती देऊ शकतो. आपल्याला काय जाणून घ्यायचे आहे?";
       }
-      if (/(धन्यवाद|आभार|खूप छान)/i.test(text) || /\b(dhanyavad|dhanyavaad|aabhar)\b/i.test(lower)) {
-        return "आपले मनःपूर्वक स्वागत आहे! मी आपल्याला आणखी काही मदत करू शकतो का?";
-      }
-      if (/(अलविदा|बाय|पुन्हा भेटू|काळजी घ्या)/i.test(text)) {
-        return "धन्यवाद! काळजी घ्या आणि आपला दिवस चांगला जावो.";
-      }
 
-      // Hindi Conversational Queries
-      if (/(नमस्ते|प्रणाम|हेलो|हाय|कैसे हो|क्या हाल है|शुभ प्रभात)/i.test(text) || /\b(namaste|kaise ho|kya haal)\b/i.test(lower)) {
-        return `नमस्ते! मैं ${agentConfig.name} हूँ, आपका एआई वॉइस गाइड। मैं आज आपकी क्या सहायता कर सकता हूँ?`;
-      }
+      // Hindi Identity & Capability Queries (standalone greetings already handled at Step 0)
       if (/(आप कौन हैं|तुम्हारा नाम क्या|अपना परिचय)/i.test(text) || /\b(aap kaun hain)\b/i.test(lower)) {
         return `मैं ${agentConfig.name} हूँ, आपकी वेबसाइट का आधिकारिक एआई वॉइस गाइड।`;
       }
-      if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं|सेवाएं)/i.test(text) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
+      if (/(आप क्या कर सकते हैं|मदद करो|सुविधाएं)/i.test(text) || /\b(aap kya kar sakte hain|madad karo)\b/i.test(lower)) {
         return "मैं आपको हमारी सेवाओं, उत्पादों और जानकारी के बारे में विस्तृत सहायता प्रदान कर सकता हूँ। आप क्या जानना चाहते हैं?";
-      }
-      if (/(धन्यवाद|शुक्रिया|बहुत अच्छा)/i.test(text) || /\b(dhanyawad|shukriya)\b/i.test(lower)) {
-        return "आपका बहुत-बहुत स्वागत है! क्या मैं आपकी किसी अन्य चीज़ में सहायता कर सकता हूँ?";
-      }
-      if (/(अलविदा|बाय|फिर मिलेंगे)/i.test(text)) {
-        return "धन्यवाद! आपका दिन शुभ हो, फिर मिलेंगे।";
-      }
-
-      // 1. Common English Conversational Greetings
-      if (/^(hi|hello|hey|good\s(morning|afternoon|evening)|howdy)\b/i.test(lower)) {
-        return agentConfig.greeting || `Hello! I'm ${agentConfig.name}, your ${agentConfig.role || 'assistant'}. How can I assist you today?`;
       }
 
       // 2. Identity & Role Inquiries
@@ -3055,23 +3169,15 @@ ${cleanFaqBlock}`;
       }
 
       // 3. Capabilities & Help Inquiries
-      if (/\b(what can you do|help me|features|services|capabilities|options)\b/i.test(lower)) {
+      if (/\b(what can you do|help me|capabilities)\b/i.test(lower)) {
         const hk = extractHostPageKnowledge();
         const servSummary = hk.services.length > 0 ? `including ${hk.services.slice(0, 4).join(', ')}. ` : '';
         return `I can guide you through our services ${servSummary}and check our live database catalog for availability and pricing. What would you like to explore?`;
       }
 
-      // 4. Gratitude & Farewells
-      if (/\b(thank you|thanks|appreciate it)\b/i.test(lower)) {
-        return "You're very welcome! Let me know if there's anything else I can help you with.";
-      }
-      if (/\b(bye|goodbye|see you|have a good day)\b/i.test(lower)) {
-        return "Goodbye! Have a great day, and feel free to reach out anytime.";
-      }
-
       // 4.1 Technical/Developer Query Protection (Customer Assistant Boundary)
       if (/\b(?:(?:how\s+(?:do\s+i|can\s+i|to)\s+)?(?:get|find|obtain|create|generate|acquire|setup|add|enter|use)\s+.*(?:api\s*key|groq\s*key|gemini\s*key|google\s*key|key)|(?:where|how)\s+(?:do\s+i|can\s+i|to)\s+(?:get|find|obtain|create)\s+.*key|(?:groq|gemini|google)\s+(?:api\s*)?key|api\s*key\s*(?:of|for|from)\s*(?:google|groq|gemini)|key\s+(?:of|for|from)\s*(?:the\s*)?(?:google|groq|gemini)|embed|integrate|script tag|widget\.js)\b/i.test(lower)) {
-        return `I am ${agentConfig.name}, your live customer support assistant. How can I assist you with our catalog, services, or placing an order today?`;
+        return `I am ${agentConfig.name}, your live customer support assistant. How can I assist you with our catalog, services, or inquiries today?`;
       }
 
       // 5. Backend Action Tool Intent Matching
@@ -3084,7 +3190,7 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // 6. Semantic Knowledge Base & On-Page FAQ Matching
+      // 6. Semantic Knowledge Base & On-Page FAQ Matching (Plural-Normalized & Context-Aware)
       const hostKnowledge = extractHostPageKnowledge();
       const combinedKb = [...(agentConfig.knowledgeBase || []), ...hostKnowledge.faqs];
       const kb = combinedKb.filter(item => isCustomerSafeFaq(item.q, item.a));
@@ -3100,9 +3206,11 @@ ${cleanFaqBlock}`;
           score += 80;
         }
 
-        for (const word of meaningfulWords) {
-          if (qLower.includes(word)) score += 15;
-          if (aLower.includes(word)) score += 5;
+        for (let i = 0; i < meaningfulWords.length; i++) {
+          const word = meaningfulWords[i];
+          const stem = stemmedWords[i] || word;
+          if (qLower.includes(word) || qLower.includes(stem)) score += 20;
+          if (aLower.includes(word) || aLower.includes(stem)) score += 8;
         }
 
         if (score > highestScore && isCustomerSafeFaq(item.q, item.a)) {
@@ -3111,15 +3219,16 @@ ${cleanFaqBlock}`;
         }
       }
 
-      if (bestItem && highestScore >= 25 && isCustomerSafeFaq(bestItem.q, bestItem.a)) {
+      if (bestItem && highestScore >= 20 && isCustomerSafeFaq(bestItem.q, bestItem.a)) {
+        if (context) context.activeTopic = bestItem.q;
         return bestItem.a;
       }
 
-      // 7. Polite Universal Catalog Guidance Fallback
+      // 7. Polite Universal Catalog Guidance Fallback (Plural-Safe Across All 10 Website Archetypes)
       const allItems = getAllCatalogItems(agentConfig);
-      if (allItems.length > 0 && /\b(medicine|med|product|item|drug|table|catalog|stock|price|dish|food|pizza|burger|menu|plan|service|course|room|booking)\b/i.test(lower)) {
-        const itemSummary = allItems.slice(0, 4).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
-        const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
+      if (allItems.length > 0 && /\b(medicines?|meds?|products?|items?|drugs?|tables?|catalogs?|catalogues?|stocks?|prices?|dishes?|foods?|pizzas?|burgers?|menus?|plans?|tiers?|services?|courses?|programs?|programmes?|streams?|classes?|degrees?|admissions?|rooms?|suites?|bookings?|vehicles?|cars?|bikes?|properties|property|flats?|apartments?|loans?|packages?)\b/i.test(lower)) {
+        const itemSummary = allItems.slice(0, 5).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+        const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
         let catReply = `In our live database, we currently offer: ${itemSummary}.${sec ? ` I have scrolled your screen down to the ${sec.label}!` : ''}`;
         if (queryLang === 'mr-IN') {
