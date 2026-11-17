@@ -398,6 +398,11 @@ export function isCustomerSafeFaq(question, answer) {
     /\bapi[_\s]?key\b/i,
     /\bproject[_\s]?id\b/i,
     /\bauth[_\s]?domain\b/i,
+    /\bstorage[_\s]?bucket\b/i,
+    /\bmessaging[_\s]?sender[_\s]?id\b/i,
+    /\bapp[_\s]?id\b/i,
+    /\bmeasurement[_\s]?id\b/i,
+    /\bdatabase[_\s]?url\b/i,
     /\btoken\b/i,
     /\bcredentials\b/i,
     /\bport\b/i,
@@ -428,6 +433,8 @@ export function isCustomerSafeFaq(question, answer) {
     /\bpublic\s+(static\s+)?(void|int|string)\b/i,         // public void
     /\[Binary File:/i,                                     // [Binary File:
     /\bnull\s*;|\bundefined\s*;/i,
+    /: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i, // Firebase raw credentials
+    /\b(storagebucket|messagingsenderid|appid|measurementid|databaseurl|dotenv)\b/i,
     /\b(id|created_at|updated_at|supplier_id|deleted_at|hash|password|secret|salt)\s*:\s*/i // Database internal dumps
   ];
 
@@ -469,9 +476,18 @@ export function analyzeDatabaseFile(fileName, content) {
     if (!rec) return;
     const name = String(rec.name || rec.product || rec.title || rec.item || '').trim();
     if (!name || name.length < 2 || name.length > 70) return;
+
+    // Strict block on credentials, environment variables, and developer configs
+    if (/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender[_-]?id|sender[_-]?id|app[_-]?id|measurement[_-]?id|database[_-]?url|token|secret|client[_-]?id|client[_-]?secret|password|bearer|authorization|cookie|session|jwt|dotenv|config|options|settings|environment|env)\b/i.test(name)) return;
+    if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(name)) return;
+
+    // Strict block on programming code lines, loops, function signatures, syntax tokens
+    if (/^(console\.|function\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|throw\b|new\s|window\.|document\.)/i.test(name)) return;
+    if (name.includes('=>') || name.includes('();') || name.includes('===') || name.includes('!==') || name.includes('++') || name.includes('${') || name.includes('for (const') || name.includes('console.log')) return;
+    if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('CREATE TABLE')) return;
+
     if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|test\b|sample\b|untitled\b|sr\.?no\b|action\b|features?\b|services?\b|welcome\b|about\b)/i.test(name)) return;
-    if (name.includes('?') || name.includes('{') || name.includes('CREATE TABLE')) return;
-    if (name.split(/\s+/).length > 8) return;
+    if (name.includes('?') || name.split(/\s+/).length > 8) return;
 
     const price = rec.price !== undefined ? (typeof rec.price === 'number' ? `₹${rec.price}` : String(rec.price).trim()) : '';
     const stock = rec.stock !== undefined ? Number(rec.stock) : (rec.quantity !== undefined ? Number(rec.quantity) : (rec.qty !== undefined ? Number(rec.qty) : null));
@@ -658,9 +674,10 @@ export function analyzeDatabaseFile(fileName, content) {
     }
   }
 
-  // Case 4: JavaScript / TypeScript Data Objects & Dictionaries
-  else if (fileName.toLowerCase().endsWith('.js') || fileName.toLowerCase().endsWith('.ts') || content.includes('const ') || content.includes('let ')) {
-    const objRegex = /(?:const|let|var)\s+([A-Za-z0-9_]+)\s*=\s*(\{[\s\S]*?\n\s*\};)/g;
+  // Case 4: JavaScript / TypeScript Data Objects & Dictionaries (Only explicit data collections!)
+  else if (fileName.toLowerCase().endsWith('.js') || fileName.toLowerCase().endsWith('.ts')) {
+    // Only target explicit catalog variables (courses, programs, products, catalog, inventory, items, medicines, menu, dishes, services, plans)
+    const objRegex = /(?:const|let|var)\s+(courses|programs|subjects|products|catalog|inventory|items|medicines|dishes|menu|services|plans|pricing|fleet|models)\s*=\s*(\[[\s\S]*?\]|\{[\s\S]*?\n\s*\};)/gi;
     let match;
     while ((match = objRegex.exec(content)) !== null) {
       const varName = match[1];
@@ -668,7 +685,14 @@ export function analyzeDatabaseFile(fileName, content) {
       try {
         const fn = new Function('return ' + code.replace(/;\s*$/, ''));
         const obj = fn();
-        if (typeof obj === 'object' && obj !== null) {
+        if (Array.isArray(obj)) {
+          obj.forEach(item => {
+            if (typeof item === 'object' && item !== null) {
+              recordsCount++;
+              addDatabaseRecord(item);
+            }
+          });
+        } else if (typeof obj === 'object' && obj !== null) {
           schema.push(varName);
           for (const [key, val] of Object.entries(obj)) {
             if (typeof val === 'object' && val !== null) {
@@ -782,6 +806,11 @@ export function analyzeDatabaseFile(fileName, content) {
       if (kvMatch) {
         const key = kvMatch[1].trim();
         const val = kvMatch[2].trim();
+
+        // Skip credentials, environment variables, technical config keys
+        if (/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender[_-]?id|sender[_-]?id|app[_-]?id|measurement[_-]?id|database[_-]?url|token|secret|client[_-]?id|password|port|host|db[_-]|private[_-]?key|jwt|cookie|session|ssl|cors)/i.test(key)) continue;
+        if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(val)) continue;
+
         const q = `What is the ${key.toLowerCase()}?`;
         const a = `${key}: ${val}`;
         if (val.length > 3 && !line.startsWith('http') && isCustomerSafeFaq(q, a)) {
@@ -944,5 +973,123 @@ export function analyzeFullStackFiles(fileList = []) {
 
   result.summary = `Analyzed ${fileList.length} files (${feCount} Frontend, ${beCount} Backend, ${dbCount} Database). Indexed ${totalDbRecords} live database records, discovered ${totalTools} backend API tools, and extracted ${totalKb} verified knowledge points across products, services, and specifications.`;
 
+  // Detect Website Archetype
+  const detectedSiteTitle = result.frontend[0]?.siteTitle || '';
+  result.archetype = detectWebsiteArchetype(detectedSiteTitle, result.summary, result.databaseRecords, result.combinedKnowledge);
+  result.archetypeMetadata = getArchetypeMetadata(result.archetype, detectedSiteTitle || 'our website');
+
   return result;
+}
+
+/**
+ * Detect the business/domain archetype of a website or database.
+ * Supports: 'academic' | 'healthcare' | 'food' | 'hospitality' | 'saas' | 'general'
+ */
+export function detectWebsiteArchetype(siteTitle = '', summary = '', sampleRecords = [], sampleKb = []) {
+  const recordsText = (sampleRecords || []).map(r => `${r.name || ''} ${r.category || ''} ${r.description || ''}`).join(' ');
+  const kbText = (sampleKb || []).map(k => `${k.q || ''} ${k.a || ''}`).join(' ');
+  const combined = `${siteTitle} ${summary} ${recordsText} ${kbText}`.toLowerCase();
+
+  if (/\b(admission|admissions|school|college|university|academy|academic|student|students|course|courses|degree|diploma|syllabus|faculty|tuition|shikshan|sanstha|vidyalaya|curriculum|exam|campus|hall\s*ticket|scholarship|standard\s*\d+|std\s*\d+|grade\s*\d+)\b/i.test(combined)) {
+    return 'academic';
+  }
+  if (/\b(pharmacy|medicine|medicines|drug|drugs|pill|pills|tablet|tablets|prescription|capsule|syrup|dosage|clinic|hospital|patient|doctor|pharma|wellness)\b/i.test(combined)) {
+    return 'healthcare';
+  }
+  if (/\b(restaurant|cafe|dining|food|dish|dishes|menu|bakery|pizza|burger|meal|kitchen|cuisine|dessert|beverage|chef|order\s*food)\b/i.test(combined)) {
+    return 'food';
+  }
+  if (/\b(hotel|resort|room|rooms|stay|suite|check-in|check-out|booking|villa|hostel|vacation)\b/i.test(combined)) {
+    return 'hospitality';
+  }
+  if (/\b(software|saas|api|subscription|pricing\s*tier|starter\s*plan|pro\s*plan|enterprise\s*plan|cloud|platform|developer\s*tools)\b/i.test(combined)) {
+    return 'saas';
+  }
+  return 'general';
+}
+
+/**
+ * Returns localized nouns and role descriptors based on archetype
+ */
+export function getArchetypeMetadata(archetype = 'general', brandName = 'our website') {
+  switch (archetype) {
+    case 'academic':
+      return {
+        archetype: 'academic',
+        roleTitle: 'Academic Admissions & Student Support Guide',
+        catalogHeading: 'Verified Academic Programs, Courses & Admissions Database',
+        nouns: {
+          en: 'courses / programs',
+          hi: 'कोर्स / कार्यक्रम',
+          mr: 'अभ्यासक्रम / कोर्सेस'
+        },
+        greeting: `Hello! Welcome to ${brandName}. I am your academic admissions and student support assistant. How can I help you with our courses, admissions, eligibility, or application process today?`,
+        consumerClarification: 'I am here to assist students and parents with our academic admissions, courses, fees, eligibility criteria, and campus guidance. How can I help your application today?'
+      };
+    case 'healthcare':
+      return {
+        archetype: 'healthcare',
+        roleTitle: 'Healthcare & Pharmacy Customer Specialist',
+        catalogHeading: 'Verified Medicines & Healthcare Catalog Database',
+        nouns: {
+          en: 'medicines / products',
+          hi: 'दवाइयां / उत्पाद',
+          mr: 'औषधे / उत्पादने'
+        },
+        greeting: `Hello! Welcome to ${brandName}. I am your customer support guide for medicines, available stock, and healthcare products. How can I assist your health and wellness needs today?`,
+        consumerClarification: 'I am here to help customers with our products, prices, stock availability, and store services. What item would you like to know about?'
+      };
+    case 'food':
+      return {
+        archetype: 'food',
+        roleTitle: 'Menu & Dining Experience Guide',
+        catalogHeading: 'Verified Restaurant Menu & Cuisine Database',
+        nouns: {
+          en: 'dishes / menu items',
+          hi: 'व्यंजन / मेनू',
+          mr: 'पदार्थ / मेनू'
+        },
+        greeting: `Hello! Welcome to ${brandName}. I am your dining assistant. How can I assist you with our menu, specials, or dining inquiries today?`,
+        consumerClarification: 'I am here to help you explore our menu dishes, ingredients, prices, and dining options. What can I get started for you?'
+      };
+    case 'hospitality':
+      return {
+        archetype: 'hospitality',
+        roleTitle: 'Guest Experience & Reservations Guide',
+        catalogHeading: 'Verified Room Types, Suites & Amenities Database',
+        nouns: {
+          en: 'rooms / suites',
+          hi: 'कमरे / सुइट्स',
+          mr: 'खोल्या / सुइट्स'
+        },
+        greeting: `Hello! Welcome to ${brandName}. I am your guest assistance guide. How can I assist your stay, room reservations, or amenities today?`,
+        consumerClarification: 'I am here to help guests with room bookings, amenities, rates, and stay inquiries. How can I assist your visit?'
+      };
+    case 'saas':
+      return {
+        archetype: 'saas',
+        roleTitle: 'Product & Solutions Specialist',
+        catalogHeading: 'Verified Software Solutions & Subscription Plans',
+        nouns: {
+          en: 'plans / solutions',
+          hi: 'प्लान्स / सेवाएं',
+          mr: 'प्लॅन्स / सेवा'
+        },
+        greeting: `Hello! Welcome to ${brandName}. I am your product and solutions specialist. How can I assist you with our features, pricing, or integrations today?`,
+        consumerClarification: 'I am here to help you learn about our software features, plans, and technical capabilities. What solution are you looking for?'
+      };
+    default:
+      return {
+        archetype: 'general',
+        roleTitle: 'Customer Support & Help Desk Assistant',
+        catalogHeading: 'Verified Store Catalog & Product Database',
+        nouns: {
+          en: 'products / services',
+          hi: 'उत्पाद / सेवाएं',
+          mr: 'उत्पादने / सेवा'
+        },
+        greeting: `Hello! Welcome to ${brandName}. I am your customer support guide. How can I assist you with our products, services, or inquiries today?`,
+        consumerClarification: 'I am here to help you with our products, prices, stock availability, and customer services. How can I assist you today?'
+      };
+  }
 }

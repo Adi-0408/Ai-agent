@@ -110,120 +110,169 @@
     </div>
   </div>
 
-  <!-- Real-Time Website Inventory Hook for Voice Assistant -->
-  <script>
-    window.EchoAIData = {
-      type: 'pharmacy',
-      storeName: 'Apollo & Wellness Pharmacy',
-      liveInventory: {
-        "augmentin 625 duo tablet": {
-          name: "Augmentin 625 Duo Tablet",
-          stock: 42,
-          unit: "strips (10 tablets per strip)",
-          price: "₹185.50",
-          available: true,
-          rx: true,
-          category: "Antibiotic",
-          dosage: "Amoxicillin (500mg) + Clavulanic Acid (125mg)"
-        },
-        "azithromycin 500mg": {
-          name: "Azithromycin 500mg Tablet",
-          stock: 18,
-          unit: "strips (3 tablets per strip)",
-          price: "₹120.00",
-          available: true,
-          rx: true,
-          category: "Antibiotic"
-        },
-        "paracetamol 650mg": {
-          name: "Dolo 650 / Paracetamol 650mg",
-          stock: 150,
-          unit: "strips",
-          price: "₹32.00",
-          available: true,
-          rx: false,
-          category: "Antipyretic / Pain Relief"
-        },
-        "pan d capsule": {
-          name: "Pan D Capsule",
-          stock: 65,
-          unit: "strips",
-          price: "₹195.00",
-          available: true,
-          rx: true,
-          category: "Antacid / Gastro"
-        }
-      },
-      queryDatabase: async function(query) {
-        const q = String(query).toLowerCase();
-        for (const [key, item] of Object.entries(window.EchoAIData.liveInventory)) {
-          const itemLower = (item.name || '').toLowerCase();
-          const keyLower = key.toLowerCase();
-          if (q.includes(keyLower) || keyLower.includes(q) || q.includes(itemLower) || itemLower.includes(q)) {
-            return item;
-          }
-        }
-        return null;
-      }
-    };
-
-    function renderInventoryTable() {
-      const tbody = document.getElementById('inventory-tbody');
-      if (!tbody) return;
-      tbody.innerHTML = '';
-      for (const [key, item] of Object.entries(window.EchoAIData.liveInventory)) {
-        const tr = document.createElement('tr');
-        tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
-        tr.innerHTML = `
-          <td style="padding: 10px 8px; font-weight: 600; color: #f8fafc;">${item.name}</td>
-          <td style="padding: 10px 8px; color: #34d399; font-weight: 600;">${item.price}</td>
-          <td style="padding: 10px 8px;"><span id="stock-${key}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-weight: bold;">${item.stock}</span> <span style="font-size: 11px; color: #94a3b8;">${item.unit}</span></td>
-          <td style="padding: 10px 8px; font-size: 11.5px; color: ${item.rx ? '#f59e0b' : '#94a3b8'};">${item.rx ? '⚠️ Rx Required' : 'OTC'}</td>
-          <td style="padding: 10px 8px; text-align: right;">
-            <button onclick="changeStock('${key}', -1)" style="padding: 3px 8px; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; border-radius: 5px; cursor: pointer; font-size: 11px; margin-right: 4px;">-1 Sell</button>
-            <button onclick="changeStock('${key}', 10)" style="padding: 3px 8px; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; border-radius: 5px; cursor: pointer; font-size: 11px;">+10 Stock</button>
-          </td>
-        `;
-        tbody.appendChild(tr);
-      }
-    }
-
-    window.changeStock = function(key, delta) {
-      if (window.EchoAIData.liveInventory[key]) {
-        window.EchoAIData.liveInventory[key].stock = Math.max(0, window.EchoAIData.liveInventory[key].stock + delta);
-        const el = document.getElementById('stock-' + key);
-        if (el) el.textContent = window.EchoAIData.liveInventory[key].stock;
-      }
-    };
-
-    window.addEventListener('DOMContentLoaded', renderInventoryTable);
-  </script>
-
-  <!-- The Embeddable Voice Help Desk Widget -->
+  <!-- Dynamic Real-Time Website Database Bridge for Voice Assistant -->
   <script>
     (async function() {
       const urlParams = new URLSearchParams(window.location.search);
-      let agentId = urlParams.get('agent');
+      let agentId = urlParams.get('agent') || '';
       const apiKey = urlParams.get('key') || '';
       const voice = urlParams.get('voice') || '';
 
-      if (!agentId) {
+      const FIREBASE_PROJECT_ID = 'ai-agent-11df2';
+      let agentData = null;
+
+      // 1. Fetch exact agent config from Firestore if available
+      if (agentId) {
         try {
-          const res = await fetch('https://firestore.googleapis.com/v1/projects/ai-agent-11df2/databases/(default)/documents/agents');
-          if (res.ok) {
-            const data = await res.json();
-            if (data.documents && data.documents.length > 0) {
-              const firstDoc = data.documents[0];
-              agentId = firstDoc.fields?.name?.stringValue || firstDoc.name.split('/').pop();
+          const directRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents/${encodeURIComponent(agentId)}`);
+          if (directRes.ok) {
+            agentData = await directRes.json();
+          } else {
+            const listRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents`);
+            if (listRes.ok) {
+              const listJson = await listRes.json();
+              const targetLower = agentId.toLowerCase().trim();
+              const match = (listJson.documents || []).find(d => {
+                const dName = (d.fields?.name?.stringValue || '').toLowerCase().trim();
+                const dId = (d.fields?.id?.stringValue || '').toLowerCase().trim();
+                return dName === targetLower || dId === targetLower || d.name.endsWith('/' + encodeURIComponent(agentId));
+              });
+              if (match) agentData = match;
             }
           }
         } catch (e) {}
       }
-      agentId = agentId || 'help desk';
 
+      const agentName = agentData?.fields?.name?.stringValue || agentId || 'Help Desk';
+      const agentRole = agentData?.fields?.role?.stringValue || '';
+      const agentPrompt = agentData?.fields?.prompt?.stringValue || '';
+      const agentSite = agentData?.fields?.websiteName?.stringValue || '';
+
+      const combinedText = `${agentName} ${agentRole} ${agentPrompt} ${agentSite}`.toLowerCase();
+      const isAcademic = /\b(admission|admissions|academic|school|college|university|academy|tuition|shikshan|sanstha|course|student|curriculum)\b/i.test(combinedText);
+      const isFood = !isAcademic && /\b(restaurant|cafe|dining|food|dish|menu|pizza|burger|bakery)\b/i.test(combinedText);
+      const isPharma = !isAcademic && !isFood && (/\b(pharmacy|medicine|medicines|drug|pill|tablet|clinic|rx|hospital)\b/i.test(combinedText) || !agentId);
+
+      // Parse agent's real database records if present
+      let rawDb = [];
+      if (agentData?.fields?.databaseRecords?.arrayValue?.values) {
+        rawDb = agentData.fields.databaseRecords.arrayValue.values.map(v => {
+          const f = v.mapValue?.fields || {};
+          return {
+            name: f.name?.stringValue || '',
+            price: f.price?.stringValue || '',
+            stock: f.stock?.integerValue !== undefined ? Number(f.stock.integerValue) : 50,
+            unit: f.unit?.stringValue || (isAcademic ? 'seats' : 'units'),
+            category: f.category?.stringValue || '',
+            description: f.description?.stringValue || '',
+            rx: f.rx?.booleanValue || false
+          };
+        }).filter(r => r.name && !/^(api[_-]?key|auth[_-]?domain|project[_-]?id|token|secret)/i.test(r.name) && !/: AIza/i.test(r.name));
+      }
+
+      // Archetype-aware UI updates
+      const demoHeading = document.getElementById('inventory-heading');
+      const tableHeaders = document.querySelector('thead tr');
+      const headerTitle = document.querySelector('header h1');
+      const headerDesc = document.querySelector('header p');
+
+      if (isAcademic) {
+        document.title = `${agentName} | Academic Admissions & Student Portal`;
+        if (headerTitle) headerTitle.textContent = `${agentName} - Admissions & Student Portal`;
+        if (headerDesc) headerDesc.textContent = `Live academic integration demo. Experience how ${agentName} assists students and parents with courses, admissions, eligibility, and fees.`;
+        if (demoHeading) demoHeading.textContent = '⚡ Live Academic Course Catalog & Admissions Bridge';
+        if (tableHeaders) {
+          tableHeaders.innerHTML = `
+            <th style="padding: 8px;">Course / Program</th>
+            <th style="padding: 8px;">Tuition / Fee</th>
+            <th style="padding: 8px;">Available Seats</th>
+            <th style="padding: 8px;">Category / Eligibility</th>
+            <th style="padding: 8px; text-align: right;">Simulate Live Change</th>
+          `;
+        }
+      }
+
+      // Build live inventory object
+      const liveInventory = {};
+      if (rawDb.length > 0) {
+        rawDb.slice(0, 10).forEach(r => {
+          const key = r.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          liveInventory[key] = {
+            name: r.name,
+            price: r.price || (isAcademic ? 'Details on request' : '₹100'),
+            stock: r.stock !== null && r.stock !== undefined ? r.stock : 25,
+            unit: r.unit || (isAcademic ? 'seats' : 'units'),
+            category: r.category || (isAcademic ? 'Admissions' : 'General'),
+            rx: Boolean(r.rx)
+          };
+        });
+      } else if (isAcademic) {
+        liveInventory['btech_cs'] = { name: 'B.Tech Computer Science & Engineering', price: '₹85,000 / year', stock: 12, unit: 'seats available', category: 'Engineering (10+2 PCM with 50%)', rx: false };
+        liveInventory['diploma_it'] = { name: 'Diploma in Information Technology', price: '₹45,000 / year', stock: 24, unit: 'seats available', category: 'Polytechnic (10th Pass with 45%)', rx: false };
+        liveInventory['primary_adm'] = { name: 'Primary & Secondary School Admission (Std 1st - 10th)', price: '₹28,000 / year', stock: 35, unit: 'seats available', category: 'General Board (Age 6+)', rx: false };
+        liveInventory['junior_college_sci'] = { name: 'Senior Secondary Science (Std 11th - 12th)', price: '₹35,000 / year', stock: 18, unit: 'seats available', category: 'Science Stream (10th Pass)', rx: false };
+      } else if (isPharma) {
+        liveInventory['augmentin_625'] = { name: 'Augmentin 625 Duo Tablet', price: '₹185.50', stock: 42, unit: 'strips', category: 'Antibiotic', rx: true };
+        liveInventory['azithromycin_500'] = { name: 'Azithromycin 500mg Tablet', price: '₹120.00', stock: 18, unit: 'strips', category: 'Antibiotic', rx: true };
+        liveInventory['dolo_650'] = { name: 'Dolo 650 / Paracetamol 650mg', price: '₹32.00', stock: 150, unit: 'strips', category: 'Pain Relief', rx: false };
+        liveInventory['pan_d'] = { name: 'Pan D Capsule', price: '₹195.00', stock: 65, unit: 'strips', category: 'Antacid', rx: true };
+      } else {
+        liveInventory['starter_plan'] = { name: 'Starter Support Plan', price: '₹999 / mo', stock: 100, unit: 'licenses', category: 'Basic Tier', rx: false };
+        liveInventory['pro_plan'] = { name: 'Professional Enterprise Suite', price: '₹2,999 / mo', stock: 50, unit: 'licenses', category: 'Pro Tier', rx: false };
+      }
+
+      window.EchoAIData = {
+        type: isAcademic ? 'academic' : (isPharma ? 'pharmacy' : (isFood ? 'restaurant' : 'general')),
+        storeName: agentName,
+        liveInventory: liveInventory,
+        queryDatabase: async function(query) {
+          const q = String(query).toLowerCase();
+          for (const [key, item] of Object.entries(window.EchoAIData.liveInventory)) {
+            const itemLower = (item.name || '').toLowerCase();
+            const keyLower = key.toLowerCase();
+            if (q.includes(keyLower) || keyLower.includes(q) || q.includes(itemLower) || itemLower.includes(q)) {
+              return item;
+            }
+          }
+          return null;
+        }
+      };
+
+      function renderInventoryTable() {
+        const tbody = document.getElementById('inventory-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        for (const [key, item] of Object.entries(window.EchoAIData.liveInventory)) {
+          const tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+          tr.innerHTML = `
+            <td style="padding: 10px 8px; font-weight: 600; color: #f8fafc;">${item.name}</td>
+            <td style="padding: 10px 8px; color: #34d399; font-weight: 600;">${item.price}</td>
+            <td style="padding: 10px 8px;"><span id="stock-${key}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-weight: bold;">${item.stock}</span> <span style="font-size: 11px; color: #94a3b8;">${item.unit}</span></td>
+            <td style="padding: 10px 8px; font-size: 11.5px; color: ${item.rx ? '#f59e0b' : '#38bdf8'};">${item.category || (item.rx ? '⚠️ Special' : 'Open')}</td>
+            <td style="padding: 10px 8px; text-align: right;">
+              <button onclick="changeStock('${key}', -1)" style="padding: 3px 8px; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; border-radius: 5px; cursor: pointer; font-size: 11px; margin-right: 4px;">-1 ${isAcademic ? 'Enroll' : 'Sell'}</button>
+              <button onclick="changeStock('${key}', 5)" style="padding: 3px 8px; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; border-radius: 5px; cursor: pointer; font-size: 11px;">+5 ${isAcademic ? 'Seats' : 'Stock'}</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        }
+      }
+
+      window.changeStock = function(key, delta) {
+        if (window.EchoAIData.liveInventory[key]) {
+          window.EchoAIData.liveInventory[key].stock = Math.max(0, window.EchoAIData.liveInventory[key].stock + delta);
+          const el = document.getElementById('stock-' + key);
+          if (el) el.textContent = window.EchoAIData.liveInventory[key].stock;
+        }
+      };
+
+      renderInventoryTable();
+
+      // 2. Inject widget script
       const script = document.createElement('script');
       script.src = './widget.js';
-      script.setAttribute('data-agent-id', agentId);
+      script.setAttribute('data-agent-id', agentName);
       if (voice) script.setAttribute('data-voice', voice);
       if (apiKey) script.setAttribute('data-api-key', apiKey);
       script.defer = true;

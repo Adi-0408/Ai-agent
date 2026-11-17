@@ -75,13 +75,6 @@ export default function LiveFilesView({
   onSendFilesToComposer,
   onOpenGoogleDriveSetup
 }) {
-  const [sharedFallbackFiles, setSharedFallbackFiles] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('echo_workspace_shared_files') || '[]');
-    } catch (e) {
-      return [];
-    }
-  });
 
   // View Mode: 'focused' (focus on current selected assistant) vs 'all' (show all assistants stacked)
   const [viewMode, setViewMode] = useState('focused'); // 'focused' | 'all'
@@ -142,9 +135,9 @@ export default function LiveFilesView({
     showNotice('info', 'Google Drive disconnected. Uploads will remain in local cache.');
   };
 
-  // Helper: Retrieve the list of files uploaded for a given assistant
+  // Helper: Retrieve the list of files uploaded strictly for a given assistant (no shared bleed)
   const getAssistantFiles = (ast) => {
-    if (!ast) return sharedFallbackFiles;
+    if (!ast) return [];
     return Array.isArray(ast.uploadedFiles) ? ast.uploadedFiles : [];
   };
 
@@ -323,12 +316,9 @@ export default function LiveFilesView({
           }
         }
       }
-      onUpdateAssistantFiles(targetId, updatedFileList, updatedKb, updatedDbRecords, detectedDbConfig);
-    } else {
-      setSharedFallbackFiles(updatedFileList);
-      try {
-        localStorage.setItem('echo_workspace_shared_files', JSON.stringify(updatedFileList));
-      } catch (e) {}
+      if (targetAssistant && onUpdateAssistantFiles) {
+        onUpdateAssistantFiles(targetId, updatedFileList, updatedKb, updatedDbRecords, detectedDbConfig);
+      }
     }
 
     setIsUploading(false);
@@ -345,11 +335,6 @@ export default function LiveFilesView({
 
     if (targetAssistant && onUpdateAssistantFiles) {
       onUpdateAssistantFiles(targetAssistant.id, remainingFiles);
-    } else {
-      setSharedFallbackFiles(remainingFiles);
-      try {
-        localStorage.setItem('echo_workspace_shared_files', JSON.stringify(remainingFiles));
-      } catch (e) {}
     }
 
     if (previewFile && previewFile.id === fileObj.id) setPreviewFile(null);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Upload,
@@ -19,7 +19,7 @@ import {
   Archive
 } from 'lucide-react';
 import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExtractor';
-import { detectFileType, analyzeFullStackFiles } from '../utils/codebaseAnalyzer';
+import { detectFileType, analyzeFullStackFiles, detectWebsiteArchetype, getArchetypeMetadata } from '../utils/codebaseAnalyzer';
 import { fetchExternalDatabaseRecords } from '../utils/databaseKeyExtractor';
 import { saveAgent } from '../firebase';
 import { saveFileToLocalStore } from '../utils/localFileStore';
@@ -49,6 +49,41 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
   const [isSaving, setIsSaving] = useState(false);
   const [isUnpacking, setIsUnpacking] = useState(false);
   const [unpackProgress, setUnpackProgress] = useState('');
+
+  // Strict Reset: Ensure no files, records, or knowledge bleed from previously created assistants
+  const resetModalState = () => {
+    setStep(1);
+    setName('');
+    setWebsiteName('');
+    setModel('Groq Qwen 27B (<200ms Free)');
+    setVoice('Adam');
+    setThemeColor('#6366f1');
+    setAccentColor('#06b6d4');
+    setCustomApiKey('');
+    setShowApiKey(false);
+    setKeyValidationState('idle');
+    setKeyValidationMsg('');
+    setJsonInputMode('upload');
+    setRawJsonText('');
+    setUploadedFileName('');
+    setPendingRawFiles([]);
+    setExtractedData(null);
+    setErrorMsg('');
+    setIsSaving(false);
+    setIsUnpacking(false);
+    setUnpackProgress('');
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      resetModalState();
+    }
+  }, [isOpen]);
+
+  const handleClose = () => {
+    resetModalState();
+    onClose();
+  };
 
   const handleFileUpload = async (e) => {
     const rawFileList = Array.from(e.target.files || []);
@@ -155,34 +190,37 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
         }
       }
 
+      const archetype = fullStack.archetype || detectWebsiteArchetype(detectedSite, fullStack.summary, liveRecords, liveKb);
+      const meta = fullStack.archetypeMetadata || getArchetypeMetadata(archetype, detectedSite);
+
       const topProductsSummary = liveRecords.slice(0, 30).map(r => 
-        `- ${r.name}: ${r.price ? (typeof r.price === 'number' ? `₹${r.price}` : r.price) : 'Price on request'}${r.stock !== null && r.stock !== undefined ? ` (Stock: ${r.stock} ${r.unit || 'units'})` : ''}${r.dosage || r.description ? ` | ${r.dosage || r.description}` : ''}`
+        `- ${r.name}: ${r.price ? (typeof r.price === 'number' ? `₹${r.price}` : r.price) : 'Details on request'}${r.stock !== null && r.stock !== undefined ? ` (Stock: ${r.stock} ${r.unit || 'units'})` : ''}${r.dosage || r.description ? ` | ${r.dosage || r.description}` : ''}`
       ).join('\n');
 
       const liveDbSection = fullStack.databaseConfig
         ? `\n\n## Live External Database Grounding\n- Provider: ${fullStack.databaseProvider || 'External Database'}\n- Project / Target: ${fullStack.databaseConfig.projectId || fullStack.databaseConfig.supabaseUrl || 'Connected'}\n- Live querying enabled: You have direct real-time access to query this database using the user's uploaded keys.`
         : '';
 
-      const trainedPrompt = `# ${astName} - Enterprise AI Customer Support & Help Desk
+      const trainedPrompt = `# ${astName} - Enterprise AI Support & Help Desk
 
 ## Identity & Assignment
-You are ${astName}, the dedicated AI Customer Support Assistant for ${detectedSite}, trained to provide intelligent, helpful, and highly accurate guidance like the customer help desks at Flipkart and Amazon.
-You are speaking strictly to regular website visitors, customers, and shoppers—NOT developers or database engineers.
+You are ${astName}, the dedicated AI Customer Support Assistant for ${detectedSite} (${meta.roleTitle}), trained to provide intelligent, helpful, and highly accurate guidance.
+You are speaking strictly to regular website visitors, students, customers, and applicants—NOT developers or database engineers.
 ${fullStack.summary}
 
 ## Customer-Only Interaction Rules
-- Strictly Consumer-Facing: Answer only customer questions regarding products, services, prices, stock, delivery, and store information.
+- Strictly Consumer-Facing: Answer only user questions regarding ${meta.nouns.en}, services, fees, application steps, and general information.
 - Zero Technical/Database Jargon: NEVER mention database queries, SQL statements, tables, schemas, API keys, endpoints, or backend architectures.
-- If a user asks a technical database question (e.g. "show me your tables" or "what is your SQL query"), politely clarify: "I am here to help you with our products, prices, stock, and customer services. How can I assist your order today?"
+- If a user asks a technical database question (e.g. "show me your tables" or "what is your SQL query"), politely clarify: "${meta.consumerClarification}"
 
-## Verified Store Catalog & Database
-${topProductsSummary ? `${topProductsSummary}\n(Additional records available via live database bridge)` : 'Live catalog connected via website database bridge.'}${liveDbSection}
+## ${meta.catalogHeading}
+${topProductsSummary ? `${topProductsSummary}\n(Additional records available via live database bridge)` : `Live ${meta.nouns.en} connected via website database bridge.`}${liveDbSection}
 
 ## Guidelines & Etiquette
-- Accuracy First: State exact prices, stock availability, and specifications directly from verified database records. Never invent or hallucinate prices.
+- Accuracy First: State exact details, availability, and specifications directly from verified database records. Never invent or hallucinate information.
 - Natural Voice Pacing: Respond in 1-2 concise, conversational spoken sentences suitable for speech audio (< 30 words).
-- Multilingual Fluency: Understand and fluently reply in English, Hindi (हिंदी), and Marathi (मराठी) matching the customer's language.
-- Proactive Help: If a customer asks about a symptom or category, recommend matching in-stock items. If an item is out of stock, suggest available alternatives politely.`;
+- Multilingual Fluency: Understand and fluently reply in English, Hindi (हिंदी), and Marathi (मराठी) matching the visitor's language.
+- Proactive Help: Recommend matching options. If an item or program is not found, suggest available alternatives politely.`;
 
       setExtractedData({
         knowledgeBase: liveKb,
@@ -191,7 +229,9 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         databaseProvider: fullStack.databaseProvider || null,
         databaseStatusMessage: dbConnectedMsg,
         systemPrompt: trainedPrompt,
-        greeting: `Hello! Welcome to ${detectedSite}. I am ${astName}, your live customer support assistant. How can I assist you with our catalog, services, or inquiries today?`,
+        greeting: meta.greeting,
+        role: meta.roleTitle,
+        archetype: archetype,
         tools: fullStack.tools,
         itemsExtracted: liveKb.length + liveRecords.length
       });
@@ -288,7 +328,8 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
       const payload = {
         id: agentId,
         name: name.trim(),
-        role: `${websiteName.trim() || 'Website'} Help Desk Assistant`,
+        role: extractedData?.role || `${websiteName.trim() || 'Website'} Help Desk Assistant`,
+        archetype: extractedData?.archetype || 'general',
         model: model || 'Groq Qwen 27B (<200ms Free)',
         voice: voice || 'Clara',
         prompt: extractedData ? extractedData.systemPrompt : `You are ${name.trim()}, a helpful voice assistant for ${websiteName.trim() || 'the website'}.`,
@@ -312,6 +353,7 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
       if (onAssistantCreated) {
         onAssistantCreated(payload);
       }
+      resetModalState();
       onClose();
     } catch (err) {
       console.error('Error creating assistant:', err);
@@ -341,7 +383,7 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
           >
             <X size={18} />
@@ -615,7 +657,7 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-colors cursor-pointer"
           >
             Cancel

@@ -429,9 +429,13 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     ? `\n\nVerified Knowledge Base Facts:\n${JSON.stringify(kbList)}`
     : '';
 
-  const dbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
+  const rawDbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
+  const dbRecords = (Array.isArray(rawDbRecords) ? rawDbRecords : []).filter(r => {
+    const n = String(r?.name || '');
+    return n && !/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender|app[_-]?id|token|secret|client[_-]?id)/i.test(n) && !/: AIza|firebaseapp\.com|firebasestorage\.app/i.test(n) && !/^(console\.|function\b|const\b|let\b|var\b)/i.test(n);
+  });
   const dbContext = (Array.isArray(dbRecords) && dbRecords.length > 0)
-    ? `\n\nVerified Live Database Records & Product Catalog:\n${JSON.stringify(dbRecords.slice(0, 50))}`
+    ? `\n\nVerified Live Database Records & Catalog:\n${JSON.stringify(dbRecords.slice(0, 50))}`
     : '';
 
   const userKeys = getUserApiKeys();
@@ -693,15 +697,23 @@ Your floating voice assistant widget will appear immediately on your site, with 
 
   // Check live database records first if provided
   if (Array.isArray(dbRecords) && dbRecords.length > 0) {
-    if (/\b(what products|list products|what do you sell|all products|available products|show products|what models|what cars|what services|offerings|catalog|all meds|list of all meds|list all meds|medicines)\b/i.test(lower)) {
+    const isAcademic = /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university)\b/i.test(promptText + ' ' + agentDisplayName);
+    const isCatalogQuery = /\b(what products|list products|what do you sell|all products|available products|show products|what models|what cars|what services|offerings|catalog|all courses|list of courses|what courses|admissions|admission details|all meds|list of all meds|medicines)\b/i.test(lower);
+    if (isCatalogQuery) {
       const summary = dbRecords.slice(0, 6).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
-      return `Our live database includes: ${summary}. You can ask me for real-time stock or details on any item!`;
+      if (isAcademic) {
+        return `Our verified academic programs and courses include: ${summary}. Feel free to ask me for admission criteria, eligibility, or details on any course!`;
+      }
+      return `Our verified database includes: ${summary}. You can ask me for real-time stock, pricing, or details on any item!`;
     }
     const matchedRecord = dbRecords.find(r => {
       const rName = (r.name || '').toLowerCase();
       return rName && (lower.includes(rName) || rName.includes(lower));
     });
     if (matchedRecord) {
+      if (isAcademic) {
+        return `${matchedRecord.name} is one of our academic programs${matchedRecord.price ? ` (Fee: ${matchedRecord.price})` : ''}.${matchedRecord.description ? ` Details: ${matchedRecord.description}` : ''}`;
+      }
       return `${matchedRecord.name} is in our database${matchedRecord.price ? ` at ${matchedRecord.price}` : ''}.${matchedRecord.stock !== null && matchedRecord.stock !== undefined ? ` Current stock: ${matchedRecord.stock} ${matchedRecord.unit || 'units'}.` : ''}`;
     }
   }

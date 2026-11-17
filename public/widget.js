@@ -35,8 +35,12 @@
   cleanInitialName = cleanInitialName.replace(/\//g, '-').trim() || 'Help Desk';
 
   const FIREBASE_PROJECT_ID = 'ai-agent-11df2';
-  const CACHE_KEY = `vhd_agent_${cleanInitialName.toLowerCase().replace(/\s+/g, '_')}`;
-  const DELETED_KEY = `vhd_deleted_${cleanInitialName.toLowerCase().replace(/\s+/g, '_')}`;
+  const hostDomain = (typeof window !== 'undefined' && window.location && window.location.hostname)
+    ? window.location.hostname.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    : 'site';
+  const agentKeySegment = encodeURIComponent(agentId || cleanInitialName).toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
+  const CACHE_KEY = `vhd_agent_${agentKeySegment}_${hostDomain}`;
+  const DELETED_KEY = `vhd_deleted_${agentKeySegment}_${hostDomain}`;
   const CACHE_TTL_MS = 15 * 1000; // 15 second cache so edits reflect quickly
   let isAgentActive = false;
 
@@ -56,6 +60,30 @@
       { q: 'contact', a: 'You can email us or submit an inquiry through our website anytime.' }
     ]
   };
+
+  // Domain archetype detector: ensures strict contextual isolation (academic vs pharmacy vs food vs saas)
+  function detectCurrentArchetype(cfg = agentConfig) {
+    const pageTitle = (typeof document !== 'undefined' && document.title) ? document.title : '';
+    const bodySnippet = (typeof document !== 'undefined' && document.body) ? (document.body.innerText || '').slice(0, 1500) : '';
+    const text = `${cfg?.archetype || ''} ${cfg?.name || ''} ${cfg?.role || ''} ${cfg?.prompt || ''} ${pageTitle} ${bodySnippet}`.toLowerCase();
+
+    if (/\b(admission|admissions|school|college|university|academy|academic|student|students|course|courses|degree|diploma|syllabus|faculty|tuition|shikshan|sanstha|vidyalaya|curriculum|exam|campus)\b/i.test(text)) {
+      return 'academic';
+    }
+    if (/\b(pharmacy|medicine|medicines|drug|drugs|pill|pills|tablet|tablets|prescription|capsule|syrup|dosage|clinic|hospital|patient|doctor|pharma)\b/i.test(text)) {
+      return 'healthcare';
+    }
+    if (/\b(restaurant|cafe|dining|food|dish|dishes|menu|bakery|pizza|burger|meal|kitchen|cuisine|dessert)\b/i.test(text)) {
+      return 'food';
+    }
+    if (/\b(hotel|resort|room|rooms|stay|suite|check-in|check-out|booking|villa|hostel)\b/i.test(text)) {
+      return 'hospitality';
+    }
+    if (/\b(software|saas|api|subscription|pricing\s*tier|starter\s*plan|pro\s*plan|cloud)\b/i.test(text)) {
+      return 'saas';
+    }
+    return 'general';
+  }
 
   // Fetch Agent Config from Firestore REST API (with strict deletion check & verification)
   async function fetchAgentConfig() {
@@ -128,7 +156,15 @@
         const finalName = customName && customName !== 'Help Desk' ? customName : (pageTitle || 'AI Assistant');
         
         agentConfig.name = finalName;
-        agentConfig.greeting = `Hello! Welcome to ${pageTitle || 'our website'}. I am ${finalName}, your live customer support assistant. How can I assist you with our catalog, services, or inquiries today?`;
+        agentConfig.databaseRecords = []; // Strictly ensure clean empty array: no cross-agent pollution!
+        const autoArchetype = detectCurrentArchetype(agentConfig);
+        agentConfig.archetype = autoArchetype;
+        if (autoArchetype === 'academic') {
+          agentConfig.role = 'Academic Admissions & Student Support Guide';
+          agentConfig.greeting = `Hello! Welcome to ${pageTitle || 'our institution'}. I am ${finalName}, your academic admissions assistant. How can I help you with courses, admissions, eligibility, or applications today?`;
+        } else {
+          agentConfig.greeting = `Hello! Welcome to ${pageTitle || 'our website'}. I am ${finalName}, your live customer support assistant. How can I assist you with our services, catalog, or inquiries today?`;
+        }
         return true;
       }
 
@@ -1342,7 +1378,11 @@
         if (!rawName || rawName.length < 2 || rawName.length > 70) return;
         if (/^(what\b|tell me\b|how\b|why\b|who\b|can you\b|action\b|sr\.?no\b|name\b|product\b|item\b|price\b|stock\b|total\b|status\b|select\b|features?\b|services?\b|welcome\b|about\b)/i.test(rawName)) return;
         if (/\b(tell me about|how to|what is|why do|can you|about us|contact us|privacy policy|terms of service|faq|features? overview|welcome to)\b/i.test(rawName)) return;
-        if (rawName.includes('?') || rawName.includes('{') || rawName.includes('CREATE TABLE')) return;
+        if (rawName.includes('?') || rawName.includes('{') || rawName.includes('}') || rawName.includes(';') || rawName.includes('CREATE TABLE')) return;
+        if (/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender|app[_-]?id|database[_-]?url|token|secret|client[_-]?id|password|bearer|cookie|jwt)/i.test(rawName)) return;
+        if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(rawName)) return;
+        if (/^(console\.|function\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b)/i.test(rawName)) return;
+        if (rawName.includes('=>') || rawName.includes('();') || rawName.includes('===') || rawName.includes('for (const') || rawName.includes('console.log')) return;
         if (rawName.split(/\s+/).length > 8) return;
 
         const rawDesc = String(it.description || it.details || it.desc || '').trim();
@@ -1373,23 +1413,29 @@
       // Tier 1: Host Page JavaScript Database State (window.EchoAIData / window.echoLiveInventory / window.EchoInventory / window.products / window.inventory)
       if (typeof window !== 'undefined') {
         const hostObj = window.EchoAIData || window.echoLiveInventory || window.EchoInventory || window.productsData || window.catalogData;
-        const inv = hostObj?.liveInventory || hostObj?.inventory || hostObj?.products || hostObj?.database || hostObj?.items || hostObj?.catalog || hostObj?.menu;
-        if (inv) {
-          if (Array.isArray(inv)) {
-            inv.forEach(addItem);
-          } else if (typeof inv === 'object') {
-            for (const [key, val] of Object.entries(inv)) {
-              if (val && typeof val === 'object') {
-                addItem({ name: val.name || val.title || key, ...val });
-              } else if (val !== undefined) {
-                addItem({ name: key, stock: val });
+        const currentArch = detectCurrentArchetype(agentConfig);
+        const isPharmaHost = hostObj && (hostObj.type === 'pharmacy' || /pharmacy/i.test(hostObj.storeName || ''));
+        // If current agent is academic, DO NOT inject pharmacy items from demo or other sites!
+        if (!(currentArch === 'academic' && isPharmaHost)) {
+          const inv = hostObj?.liveInventory || hostObj?.inventory || hostObj?.products || hostObj?.database || hostObj?.items || hostObj?.catalog || hostObj?.menu || hostObj?.courses;
+          if (inv) {
+            if (Array.isArray(inv)) {
+              inv.forEach(addItem);
+            } else if (typeof inv === 'object') {
+              for (const [key, val] of Object.entries(inv)) {
+                if (val && typeof val === 'object') {
+                  addItem({ name: val.name || val.title || key, ...val });
+                } else if (val !== undefined) {
+                  addItem({ name: key, stock: val });
+                }
               }
             }
           }
+          if (Array.isArray(window.products)) window.products.forEach(addItem);
+          if (Array.isArray(window.inventory)) window.inventory.forEach(addItem);
+          if (Array.isArray(window.catalog)) window.catalog.forEach(addItem);
+          if (Array.isArray(window.courses)) window.courses.forEach(addItem);
         }
-        if (Array.isArray(window.products)) window.products.forEach(addItem);
-        if (Array.isArray(window.inventory)) window.inventory.forEach(addItem);
-        if (Array.isArray(window.catalog)) window.catalog.forEach(addItem);
       }
 
       // Tier 2: Agent's Structured Database Records from Firestore
@@ -2127,21 +2173,36 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         ? `[LIVE_DATABASE_INTEGRATION]\nCONNECTED_PROVIDER: ${agentConfig.databaseProvider || agentConfig.databaseConfig.type || 'Cloud Database'}\nPROJECT: ${agentConfig.databaseConfig.projectId || agentConfig.databaseConfig.supabaseUrl || 'Connected'}\nAUTHORITY: You have direct real-time database access using the store's verified database credentials.\n\n`
         : '';
 
-      return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website, trained with the accuracy, deep database grounding, and professionalism of Flipkart and Amazon customer support specialists. You are speaking directly to a customer browsing the website.
+      const currentArch = detectCurrentArchetype(agentConfig);
+      const isAcademic = currentArch === 'academic';
+      const roleDescription = isAcademic
+        ? `the official academic admissions & student support assistant for ${businessName}`
+        : `the official live customer support voice & chat assistant embedded on ${businessName}'s website`;
+      const audienceDescription = isAcademic
+        ? `students, parents, and applicants exploring courses, admissions, eligibility, and fees`
+        : `customers and website shoppers`;
+      const consumerDeclineText = isAcademic
+        ? `"I can help you with our courses, admissions, eligibility, and academic guidance. How can I assist your application today?"`
+        : `"I can help you with our products, prices, stock availability, and store services. What item would you like to know about?"`;
+      const catalogSectionLabel = isAcademic
+        ? `[VERIFIED_COURSES_AND_PROGRAMS_DATABASE]`
+        : `[VERIFIED_DATABASE_RECORDS]`;
+
+      return `You are ${roleDescription}, trained with accuracy, deep database grounding, and professionalism. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
-- AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to customers and website shoppers, NOT developers. Only answer customer questions (products, pricing, stock availability, store hours, location, ordering). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: "I can help you with our products, prices, stock availability, and store services. What item would you like to know about?"
-- Answer strictly using the injected [LIVE_BRIDGE_DATA], [VERIFIED_DATABASE_RECORDS], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
-- If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability (e.g., '42 strips available at ₹185.50'), state the exact numbers directly, naturally, and concisely in 1-2 spoken-friendly sentences.
-- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize the available catalog products/items with prices concisely in 1-2 sentences and confirm you have opened them.
-- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the customer that the requested item is not currently listed in our live catalog, mention available alternatives if present, and offer to show the catalog.
-- Keep responses plain-text, conversational, professional (like Flipkart/Amazon support), and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
+- AUDIENCE IS CONSUMER / VISITOR ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${isAcademic ? 'courses, admissions, fees, eligibility, syllabus, campus guidelines' : 'products, pricing, stock availability, store hours, location, ordering'}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
+- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
+- If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
+- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items/programs concisely in 1-2 sentences and confirm you have opened them.
+- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item/program is not currently listed, mention available options if present, and offer guidance.
+- Keep responses plain-text, conversational, professional, and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
 - LANGUAGE: ${langDirective}
 
 ${liveDbBlock}[LIVE_BRIDGE_DATA]
 ${bridgeBlock}
 
-[VERIFIED_DATABASE_RECORDS]
+${catalogSectionLabel}
 ${catalogSummary || 'Catalog empty or not loaded.'}
 
 [LIVE_HOST_WEBSITE_CONTEXT]
@@ -2302,17 +2363,21 @@ ${cleanFaqBlock}`;
         const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
 
-        const isMed = /\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
-                      allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || ''))) ||
-                      /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || '');
+        const currentArchetype = detectCurrentArchetype(agentConfig);
+        const isAcademic = currentArchetype === 'academic' ||
+                           /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university|curriculum|exam)\b/i.test(text) ||
+                           /\b(admission|admissions|academy|academic|school|college|university|tuition|shikshan|sanstha)\b/i.test(agentConfig?.role || agentConfig?.name || (typeof document !== 'undefined' ? document.title : ''));
+        const isMed = !isAcademic && (/\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
+                      (currentArchetype === 'healthcare' && allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || '')))) ||
+                      /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || ''));
         const isFood = /\b(menu|dish|food|pizza|burger|eat|drink|restaurant|cafe)\b/i.test(text) ||
                        /\b(restaurant|cafe|food|dining|bakery)\b/i.test(agentConfig?.description || agentConfig?.name || '');
         const isPlan = /\b(plan|tier|subscription|pricing)\b/i.test(text);
         const isService = /\b(service|services|consultation)\b/i.test(text);
 
-        const nounEn = isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'products';
-        const nounHi = isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद';
-        const nounMr = isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने';
+        const nounEn = isAcademic ? 'courses / programs' : (isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'items');
+        const nounHi = isAcademic ? 'कोर्स / कार्यक्रम' : (isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद');
+        const nounMr = isAcademic ? 'अभ्यासक्रम / कोर्सेस' : (isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने');
 
         let replyText = '';
         if (allItems.length > 0) {
@@ -2398,17 +2463,21 @@ ${cleanFaqBlock}`;
         const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
 
-        const isMed = /\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
-                      allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || ''))) ||
-                      /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || '');
+        const currentArchetype = detectCurrentArchetype(agentConfig);
+        const isAcademic = currentArchetype === 'academic' ||
+                           /\b(admission|admissions|course|courses|program|programs|degree|diploma|syllabus|tuition|academy|school|college|university|curriculum|exam)\b/i.test(text) ||
+                           /\b(admission|admissions|academy|academic|school|college|university|tuition|shikshan|sanstha)\b/i.test(agentConfig?.role || agentConfig?.name || (typeof document !== 'undefined' ? document.title : ''));
+        const isMed = !isAcademic && (/\b(med|medicine|tablet|capsule|pill|drug|rx|pharmacy|clinic)\b/i.test(text) ||
+                      (currentArchetype === 'healthcare' && allItems.some(i => i.dosage || i.rx || /tablet|capsule|syrup|mg|duo|strips/i.test(i.name + ' ' + (i.unit || '')))) ||
+                      /\b(pharmacy|medicine|meds|clinic)\b/i.test(agentConfig?.description || agentConfig?.name || ''));
         const isFood = /\b(menu|dish|food|pizza|burger|eat|drink|restaurant|cafe)\b/i.test(text) ||
                        /\b(restaurant|cafe|food|dining|bakery)\b/i.test(agentConfig?.description || agentConfig?.name || '');
         const isPlan = /\b(plan|tier|subscription|pricing)\b/i.test(text);
         const isService = /\b(service|services|consultation)\b/i.test(text);
 
-        const nounEn = isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'products';
-        const nounHi = isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद';
-        const nounMr = isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने';
+        const nounEn = isAcademic ? 'courses / programs' : (isMed ? 'medicines' : isFood ? 'dishes' : isPlan ? 'plans' : isService ? 'services' : 'items');
+        const nounHi = isAcademic ? 'कोर्स / कार्यक्रम' : (isMed ? 'दवाइयां' : isFood ? 'व्यंजन' : isPlan ? 'प्लान्स' : isService ? 'सेवाएं' : 'उत्पाद');
+        const nounMr = isAcademic ? 'अभ्यासक्रम / कोर्सेस' : (isMed ? 'औषधे' : isFood ? 'पदार्थ' : isPlan ? 'प्लॅन्स' : isService ? 'सेवा' : 'उत्पादने');
 
         let replyText = '';
         if (queryLang === 'mr-IN') {
