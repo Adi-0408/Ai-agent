@@ -171,10 +171,10 @@ export function analyzeFrontendFile(fileName, content) {
   // 5. Discover Product Names & Flagship Fleet Items
   const discoveredProducts = [];
   for (const heading of rawHeadings) {
-    // Detect products/models: contains keywords like car, model, edition, gt, apex, ev, v8, v12, pro, plus, plan, suite, service
+    // Detect products/models/offerings: contains keywords like product, service, course, program, plan, model, item, class, tier
     if (
-      /zenith|gt|apex|ev|turbo|hybrid|v12|v8|motor|chassis|suspension|brake|exhaust|telemetry|model|edition|package|studio|atelier|customizer/i.test(heading) &&
-      !/anatomy|fleet|navigation|menu|footer|header|welcome/i.test(heading)
+      /\b(product|service|course|program|plan|package|model|edition|item|class|standard|degree|tier|feature|offering|solution|suite|consultation|medicine|catalog)\b/i.test(heading) &&
+      !/anatomy|fleet|navigation|menu|footer|header|welcome|copyright|terms|privacy|home|about us|contact/i.test(heading)
     ) {
       if (!discoveredProducts.includes(heading)) {
         discoveredProducts.push(heading);
@@ -438,6 +438,9 @@ export function isCustomerSafeFaq(question, answer) {
     /\bpublic\s+(static\s+)?(void|int|string)\b/i,         // public void
     /\[Binary File:/i,                                     // [Binary File:
     /\bnull\s*;|\bundefined\s*;/i,
+    /^#!/,                                                 // Shebangs (e.g. #!/usr/bin/env bash)
+    /\b(bash|powershell|cmd\.exe|node_modules|chmod\s+\+x|chown|npm\s+(?:run|install|build)|git\s+(?:commit|push|checkout)|apt-get|brew\s+install)\b/i, // Developer scripts
+    /\b(BEGIN PRIVATE KEY|BEGIN RSA PRIVATE KEY|bearer\s+[a-z0-9_\-\.]{20,})\b/i, // Sensitive secrets
     /: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i, // Firebase raw credentials
     /\b(storagebucket|messagingsenderid|appid|measurementid|databaseurl|dotenv)\b/i,
     /\b(id|created_at|updated_at|supplier_id|deleted_at|hash|password|secret|salt)\s*:\s*/i // Database internal dumps

@@ -17,20 +17,16 @@ export default function AutoDevelopModal({
   currentAssistant,
   onApplyDevelopedAgent
 }) {
-  const [briefInput, setBriefInput] = useState(
-    currentAssistant?.name?.toLowerCase().includes('zenith')
-      ? 'Zenith Motors luxury hypercar engineering advisor and VIP circuit appointments'
-      : ''
-  );
+  const [briefInput, setBriefInput] = useState('');
   const [isDeveloping, setIsDeveloping] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
 
   const quickSamples = [
-    { label: '🏎️ Zenith / Luxury Hypercar', prompt: 'Zenith Motors luxury hypercar engineering advisor and VIP circuit appointments' },
-    { label: '📈 Financial / Smitash Advisory', prompt: 'Smitash Financial Consultancy services for income tax returns, GST, loans, and wealth advisory' },
+    { label: '🎓 Academic & Admissions', prompt: 'Academic admissions counselor helping students with course eligibility, fee structure, and document submission' },
     { label: '🛍️ E-Commerce & Retail', prompt: 'Online store customer support handling order tracking, shipping, and 30-day refunds' },
-    { label: '💼 Tech / SaaS Platform', prompt: 'Technical support specialist troubleshooting API integration, subscriptions, and billing' },
-    { label: '🏥 Dental & Medical Clinic', prompt: 'Medical clinic patient coordinator scheduling doctor visits and office hours' }
+    { label: '🏥 Healthcare Clinic', prompt: 'Medical clinic patient coordinator scheduling doctor visits, consultations, and office hours' },
+    { label: '📈 Financial Advisory', prompt: 'Financial consultancy services for tax filing, GST compliance, loans, and wealth advisory' },
+    { label: '💼 Tech / SaaS Platform', prompt: 'Technical support specialist troubleshooting API integration, subscriptions, and billing' }
   ];
 
   const handleDevelop = async () => {
@@ -102,7 +98,7 @@ export default function AutoDevelopModal({
                   rows={3}
                   value={briefInput}
                   onChange={(e) => setBriefInput(e.target.value)}
-                  placeholder="e.g. Zenith Motors luxury sports cars & track appointments, or Online sneaker store with 30-day returns"
+                  placeholder="e.g. Academic admissions advisor for science and commerce, or Online store with 30-day returns"
                   className="w-full p-3.5 bg-white border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none transition-colors shadow-2xs"
                 />
               </div>

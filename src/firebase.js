@@ -143,8 +143,10 @@ export async function logoutUser() {
 }
 
 // Collection References
-const AGENTS_COLLECTION = 'agents';
-const CONVERSATIONS_COLLECTION = 'conversations';
+export const AGENTS_COLLECTION = 'agents';
+export const AGENT_INFO_COLLECTION = 'agent_info';
+export const USER_INFO_COLLECTION = 'user_info';
+export const CONVERSATIONS_COLLECTION = 'conversations';
 
 /**
 /**
@@ -276,18 +278,32 @@ function sanitizeForFirestore(obj) {
 export async function saveAgent(agent) {
   const titleId = getCleanTitleId(agent.name || agent.title || agent.id);
   const agentRef = doc(db, AGENTS_COLLECTION, titleId);
+  const agentInfoRef = doc(db, AGENT_INFO_COLLECTION, titleId);
+
+  const kbCount = Array.isArray(agent.knowledgeBase) ? agent.knowledgeBase.length : 0;
+  const dbCount = Array.isArray(agent.databaseRecords) ? agent.databaseRecords.length : 0;
 
   const rawPayload = {
     ...agent,
     id: titleId,
+    agentId: titleId,
     name: agent.name || titleId,
+    title: agent.title || agent.name || titleId,
+    status: agent.status || 'Active',
+    totalKnowledgeEntries: kbCount,
+    totalDatabaseRecords: dbCount,
+    lastActiveAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     createdAt: agent.createdAt || serverTimestamp(),
   };
 
   const payload = sanitizeForFirestore(rawPayload);
 
-  await setDoc(agentRef, payload, { merge: true });
+  // Dual-write to both 'agents' (backward compatibility) and 'agent_info' (direct Firestore visibility)
+  await Promise.all([
+    setDoc(agentRef, payload, { merge: true }),
+    setDoc(agentInfoRef, payload, { merge: true })
+  ]);
 
   // Clean cache and purge any legacy encrypted ID document
   try {
@@ -295,6 +311,7 @@ export async function saveAgent(agent) {
     if (agent.id && agent.id !== titleId) {
       localStorage.removeItem(`agent_cache_${agent.id}`);
       deleteDoc(doc(db, AGENTS_COLLECTION, agent.id)).catch(() => {});
+      deleteDoc(doc(db, AGENT_INFO_COLLECTION, agent.id)).catch(() => {});
     }
     // Remove tombstone if it was previously marked deleted
     deleteDoc(doc(db, 'deleted_agents', titleId)).catch(() => {});
@@ -322,13 +339,22 @@ export async function deleteAgent(nameOrId) {
   const titleId = getCleanTitleId(rawId);
   const nameId = agentObj.name ? getCleanTitleId(agentObj.name) : '';
 
-  // 1. Delete from agents collection
-  await deleteDoc(doc(db, AGENTS_COLLECTION, titleId)).catch(() => {});
+  // 1. Delete from agents and agent_info collections
+  await Promise.all([
+    deleteDoc(doc(db, AGENTS_COLLECTION, titleId)).catch(() => {}),
+    deleteDoc(doc(db, AGENT_INFO_COLLECTION, titleId)).catch(() => {})
+  ]);
   if (rawId && rawId !== titleId) {
-    await deleteDoc(doc(db, AGENTS_COLLECTION, rawId)).catch(() => {});
+    await Promise.all([
+      deleteDoc(doc(db, AGENTS_COLLECTION, rawId)).catch(() => {}),
+      deleteDoc(doc(db, AGENT_INFO_COLLECTION, rawId)).catch(() => {})
+    ]);
   }
   if (nameId && nameId !== titleId && nameId !== rawId) {
-    await deleteDoc(doc(db, AGENTS_COLLECTION, nameId)).catch(() => {});
+    await Promise.all([
+      deleteDoc(doc(db, AGENTS_COLLECTION, nameId)).catch(() => {}),
+      deleteDoc(doc(db, AGENT_INFO_COLLECTION, nameId)).catch(() => {})
+    ]);
   }
 
   // 2. Mark in deleted_agents tombstone collection so any embedded widgets immediately deactivate
@@ -522,11 +548,90 @@ export async function saveConversationSession(conversation) {
   // 2. Persist directly to single agent document in Firestore (NO encrypted ID!)
   try {
     await setDoc(convDocRef, updatedPayload, { merge: true });
+
+    // 3. Update agent_info collection stats
+    const agentInfoRef = doc(db, AGENT_INFO_COLLECTION, agentTitle);
+    setDoc(agentInfoRef, {
+      id: agentTitle,
+      agentId: agentTitle,
+      totalConversations: updatedSessions.length,
+      totalMessagesHandled: overallConversation.length,
+      lastActiveAt: serverTimestamp(),
+      status: 'Active'
+    }, { merge: true }).catch(() => {});
+
+    // 4. Update user_info collection for this visitor
+    const rawCaller = conversation.caller || 'Visitor #3072';
+    const cleanVisitorId = rawCaller.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const userDocRef = doc(db, USER_INFO_COLLECTION, `${agentTitle}_${cleanVisitorId}`);
+    setDoc(userDocRef, {
+      id: `${agentTitle}_${cleanVisitorId}`,
+      visitorId: rawCaller,
+      caller: rawCaller,
+      name: conversation.userName || rawCaller,
+      agentId: agentTitle,
+      agentName: agentTitle,
+      userType: 'website_visitor',
+      lastActiveAt: serverTimestamp(),
+      sessionDuration: conversation.duration || `${Math.max(15, newMessages.length * 10)}s`,
+      totalMessagesSent: overallConversation.filter(m => m.role === 'user').length,
+      lastInquiryTopic: conversation.summary || newMessages[newMessages.length - 1]?.text?.substring(0, 85) || 'General Inquiry',
+      lastUserMessage: (newMessages.filter(m => m.role === 'user').pop()?.text || '').substring(0, 150),
+      lastAgentReply: (newMessages.filter(m => m.role === 'agent' || m.role === 'assistant').pop()?.text || '').substring(0, 150),
+      leadStatus: 'Active Inquiry',
+      conversationRef: `conversations/${agentTitle}`
+    }, { merge: true }).catch(() => {});
+
     return agentTitle;
   } catch (error) {
     console.warn("Firestore save to agent conversation document failed, cached locally:", error);
     return agentTitle;
   }
+}
+
+/**
+ * Save / Update visitor profile in user_info collection
+ */
+export async function saveVisitorUserInfo(visitorData) {
+  if (!visitorData) return;
+  const caller = visitorData.caller || visitorData.visitorId || 'Website Visitor';
+  const cleanId = (visitorData.id || caller).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const userRef = doc(db, USER_INFO_COLLECTION, cleanId);
+  const payload = sanitizeForFirestore({
+    ...visitorData,
+    id: cleanId,
+    lastActiveAt: serverTimestamp()
+  });
+  await setDoc(userRef, payload, { merge: true }).catch(() => {});
+}
+
+/**
+ * Fetch all documents in user_info collection
+ */
+export async function getUserInfoList() {
+  try {
+    const snap = await getDocs(collection(db, USER_INFO_COLLECTION));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.warn("Could not fetch user_info list from Firestore:", err);
+    return [];
+  }
+}
+
+/**
+ * Fetch agent profile from agent_info collection
+ */
+export async function getAgentInfo(agentId) {
+  try {
+    const cleanId = getCleanTitleId(agentId);
+    const docSnap = await getDoc(doc(db, AGENT_INFO_COLLECTION, cleanId));
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() };
+    }
+  } catch (err) {
+    console.warn("Could not fetch agent_info from Firestore:", err);
+  }
+  return null;
 }
 
 /**

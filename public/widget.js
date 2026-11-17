@@ -1642,7 +1642,7 @@
              /^(नमस्कार|नमस्ते|प्रणाम|हाय|हॅलो|शुभ प्रभात|शुभ दुपार|शुभ संध्याकाळ|धन्यवाद|आभार|बाय|अलविदा)(?:\s|$|[.,!?])/i.test(t);
     }
 
-    function extractTargetItem(text, history = []) {
+    function extractTargetItem(text, history = [], context = null) {
       let cleaned = String(text || '').trim()
         .replace(/\b(available stock|current stock number|stock number|avilable stock|available|avilable|stock|in stock|out of stock|is there any|is there|do you have|do you sell|can i get|i want to buy|looking for|tell me about|details of|info on|do you carry|any|what is the price of|price of|price|how much for|how much is|give me|just give me|check|tell me|show me|status of|order|current|number)\b/gi, ' ')
         .replace(/(ची किंमत काय आहे|काय किंमत आहे|भाव काय आहे|दर काय आहे|कीमत क्या है|क्या कीमत है|दाम क्या है|रेट क्या है)/gi, ' ')
@@ -1653,6 +1653,28 @@
       // Never treat conversational greetings as a catalog search item
       if (isGreetingOrConversational(cleaned)) {
         return '';
+      }
+
+      // 1. Follow-up pronoun & reference phrase resolution (e.g. "what do you provide in that", "fees for this", "details of it")
+      const isReferenceQuery = /\b(in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|in it|this|that|it|these|those|the course|the program|the item|the medicine|the product|the school|the college)\b/i.test(cleaned);
+      if (isReferenceQuery) {
+        if (context && context.activeItem) {
+          return context.activeItem.name || context.activeItem.title || '';
+        }
+        if (Array.isArray(history) && history.length > 0) {
+          for (let i = history.length - 1; i >= 0; i--) {
+            const hText = history[i]?.content || history[i]?.text || '';
+            if (hText && hText !== text) {
+              const hClean = hText
+                .replace(/\b(is currently in stock|seats available at|available stock|current stock|we have|give me details of|details of|tell me about)\b/gi, ' ')
+                .replace(/[?!.,;]/g, '')
+                .trim();
+              if (hClean.length >= 3 && !isGreetingOrConversational(hClean)) {
+                return hClean;
+              }
+            }
+          }
+        }
       }
 
       // If user said e.g. "just give me current stock number", resolve item from previous user messages
@@ -1794,8 +1816,23 @@
       const rx = itemData.rx || itemData.prescriptionRequired;
 
       const lowerQ = String(queryText || '').toLowerCase();
-      const isPriceQuery = /\b(price|cost|rate|rates|how much|fee|mrp|charges)\b/i.test(lowerQ) || /(किंमत|भाव|दर|कीमत|दाम)/i.test(lowerQ);
-      const isStockQuery = /\b(stock|available|quantity|how many|count|units)\b/i.test(lowerQ) || /(साठा|शिल्लक|स्टॉक|उपलब्ध)/i.test(lowerQ);
+      const isPriceQuery = /\b(price|cost|rate|rates|how much|fee|fees|mrp|charges)\b/i.test(lowerQ) || /(किंमत|भाव|दर|कीमत|दाम)/i.test(lowerQ);
+      const isStockQuery = /\b(stock|available|quantity|how many|count|units|seats)\b/i.test(lowerQ) || /(साठा|शिल्लक|स्टॉक|जागा|उपलब्ध)/i.test(lowerQ);
+      const isDetailsQuery = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|what about|in that|for that)\b/i.test(lowerQ);
+
+      // 0. Specific Course / Product Details Intent
+      if (isDetailsQuery) {
+        const desc = itemData.description || itemData.dosage || itemData.details || 'comprehensive facilities, laboratory equipment, study materials, and experienced faculty mentorship';
+        const feeSuffix = price ? ` The annual fee is ${price}.` : '';
+        const stockSuffix = (stock !== null && stock > 0) ? ` Currently ${stock} ${unit} are available.` : '';
+        if (queryLang === 'mr-IN') {
+          return `${cleanTitle} मध्ये आम्ही प्रदान करतो: ${desc}.${feeSuffix}${stockSuffix}`;
+        }
+        if (queryLang === 'hi-IN') {
+          return `${cleanTitle} में हम प्रदान करते हैं: ${desc}।${feeSuffix}${stockSuffix}`;
+        }
+        return `In ${cleanTitle}, we provide: ${desc}.${feeSuffix}${stockSuffix}`;
+      }
 
       // 1. Specific Price Intent
       if (isPriceQuery) {
@@ -1843,7 +1880,7 @@
     }
 
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
-    async function resolveDatabaseBridge(query, agentConfig) {
+    async function resolveDatabaseBridge(query, agentConfig, context = null) {
       if (!query || isGreetingOrConversational(query)) {
         return null; // NEVER query database for conversational greetings or small talk!
       }
@@ -1902,7 +1939,7 @@
         };
       }
 
-      const targetItem = extractTargetItem(query, conversationHistory);
+      const targetItem = extractTargetItem(query, conversationHistory, context);
 
       // 3. Search all catalog sources (Live DOM Scraper, Host JS State, Firestore records, Webhooks)
       // Tier 1: Live DOM Table & Card Scraper (Direct access to webpage data)
@@ -1911,6 +1948,10 @@
         if (domItems.length > 0) {
           const match = matchInInventory(domItems, targetItem || query);
           if (match) {
+            if (context) {
+              context.activeItem = match;
+              context.turnCount = (context.turnCount || 0) + 1;
+            }
             return {
               status: 'FOUND_IN_HOST_STATE',
               item: targetItem,
@@ -1928,6 +1969,10 @@
             try {
               const hostResult = await hostObj.queryDatabase(query);
               if (hostResult) {
+                if (context) {
+                  context.activeItem = hostResult;
+                  context.turnCount = (context.turnCount || 0) + 1;
+                }
                 return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: hostResult };
               }
             } catch (err) {}
@@ -1936,21 +1981,43 @@
           if (inv) {
             const match = matchInInventory(inv, targetItem || query);
             if (match) {
+              if (context) {
+                context.activeItem = match;
+                context.turnCount = (context.turnCount || 0) + 1;
+              }
               return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
             }
           }
         }
         if (Array.isArray(window.products)) {
           const match = matchInInventory(window.products, targetItem || query);
-          if (match) return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+          if (match) {
+            if (context) {
+              context.activeItem = match;
+              context.turnCount = (context.turnCount || 0) + 1;
+            }
+            return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+          }
         }
         if (Array.isArray(window.inventory)) {
           const match = matchInInventory(window.inventory, targetItem || query);
-          if (match) return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+          if (match) {
+            if (context) {
+              context.activeItem = match;
+              context.turnCount = (context.turnCount || 0) + 1;
+            }
+            return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+          }
         }
         if (Array.isArray(window.catalog)) {
           const match = matchInInventory(window.catalog, targetItem || query);
-          if (match) return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+          if (match) {
+            if (context) {
+              context.activeItem = match;
+              context.turnCount = (context.turnCount || 0) + 1;
+            }
+            return { status: 'FOUND_IN_HOST_STATE', item: targetItem, data: match };
+          }
         }
       }
 
@@ -1958,6 +2025,10 @@
       if (agentConfig && Array.isArray(agentConfig.databaseRecords) && agentConfig.databaseRecords.length > 0) {
         const match = matchInInventory(agentConfig.databaseRecords, targetItem || query);
         if (match) {
+          if (context) {
+            context.activeItem = match;
+            context.turnCount = (context.turnCount || 0) + 1;
+          }
           return {
             status: 'FOUND_IN_HOST_STATE',
             item: targetItem,
@@ -2137,7 +2208,7 @@
     }
 
     // --- STRICT LIVE CUSTOMER SUPPORT SYSTEM PROMPT BUILDER ---
-    function buildCustomerSystemPrompt(agentConfig, bridgeResult, queryLang = 'en-US') {
+    function buildCustomerSystemPrompt(agentConfig, bridgeResult, queryLang = 'en-US', context = null) {
       const businessName = agentConfig.businessName || agentConfig.companyName || agentConfig.name || 'our store';
       const rawKb = agentConfig.knowledgeBase || [];
       const cleanFaqs = rawKb.filter(item => isCustomerSafeFaq(item.q, item.a)).slice(0, 25);
@@ -2152,7 +2223,7 @@
 ITEM_NAME: ${item.name || 'Unknown'}
 PRICE: ${item.price || 'Not listed'}
 STOCK: ${item.stock !== undefined && item.stock !== null ? item.stock : 'Available'} ${item.unit || 'units'}
-DETAILS: ${item.composition || item.details || item.dosage || 'Standard item'}
+DETAILS: ${item.composition || item.details || item.dosage || item.description || 'Standard item'}
 PRESCRIPTION_REQUIRED: ${item.rx ? 'Yes' : 'No'}`;
       } else if (bridgeResult && bridgeResult.status === 'FOUND_CATALOG_LIST') {
         bridgeBlock = `STATUS: FOUND_CATALOG_LIST
@@ -2170,6 +2241,18 @@ DETAILS: ${JSON.stringify(bridgeResult.data)}`;
 REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
       } else {
         bridgeBlock = `STATUS: NO_SPECIFIC_ITEM_FILTER`;
+      }
+
+      // Active Multi-Turn Conversation Context
+      let activeContextBlock = '';
+      if (context && context.activeItem) {
+        const it = context.activeItem;
+        activeContextBlock = `\n[ACTIVE_CONVERSATION_CONTEXT]
+CURRENTLY_DISCUSSED_ITEM: "${it.name || 'Current Item'}"
+PRICE: "${it.price || 'Available on request'}"
+SEATS_OR_STOCK: "${it.stock !== undefined && it.stock !== null ? it.stock : 'Available'} ${it.unit || 'units'}"
+DESCRIPTION_AND_SUBJECTS: "${it.description || it.dosage || it.details || 'Standard program'}"
+NOTE: If the customer asks "what do you provide in that", "fees for this", "details", or uses pronouns like "that/this/it", they are referring specifically to CURRENTLY_DISCUSSED_ITEM. Answer directly about this item!\n`;
       }
 
       let langDirective = 'Speak in clear, natural English.';
@@ -2218,7 +2301,9 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
 - AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${isAcademic ? 'courses, admissions, fees, eligibility, syllabus, campus guidelines' : 'products, pricing, stock availability, store hours, location, ordering'}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
-- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
+- STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
+- CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that course/item without asking what they mean.
+- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [ACTIVE_CONVERSATION_CONTEXT], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
 - If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items/programs concisely in 1-2 sentences and confirm you have opened them.
 - If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item/program is not currently listed, mention available options if present, and offer guidance.
@@ -2227,7 +2312,7 @@ CRITICAL RULES:
 
 ${liveDbBlock}[LIVE_BRIDGE_DATA]
 ${bridgeBlock}
-
+${activeContextBlock}
 ${catalogSectionLabel}
 ${catalogSummary || 'Catalog empty or not loaded.'}
 
@@ -2272,6 +2357,19 @@ ${cleanFaqBlock}`;
             else if (m.includes('mixtral')) targetModel = 'mixtral-8x7b-32768';
             else if (m.startsWith('llama-') || m.startsWith('mixtral-') || m.startsWith('gemma')) targetModel = model;
           }
+          const historySlice = conversationHistory.slice(-8);
+          const messagesPayload = [
+            { role: 'system', content: systemPrompt },
+            ...historySlice.map(m => ({
+              role: (m.role === 'assistant' || m.role === 'agent') ? 'assistant' : 'user',
+              content: m.content || m.text || ''
+            }))
+          ];
+          const lastMsg = historySlice[historySlice.length - 1];
+          if (!lastMsg || (lastMsg.content !== cleanUser && lastMsg.text !== cleanUser)) {
+            messagesPayload.push({ role: 'user', content: cleanUser });
+          }
+
           const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -2280,18 +2378,11 @@ ${cleanFaqBlock}`;
             },
             body: JSON.stringify({
               model: targetModel,
-              messages: [
-                { role: 'system', content: systemPrompt },
-                ...conversationHistory.slice(-6).map(m => ({
-                  role: (m.role === 'assistant' || m.role === 'agent') ? 'assistant' : 'user',
-                  content: m.content || m.text || ''
-                })),
-                { role: 'user', content: cleanUser }
-              ],
+              messages: messagesPayload,
               temperature: 0.2,
               max_tokens: 150
             }),
-            signal: AbortSignal.timeout(3500)
+            signal: AbortSignal.timeout(8000)
           });
 
           if (groqRes.ok) {
@@ -2312,16 +2403,15 @@ ${cleanFaqBlock}`;
           }
           const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${trimmedKey}`;
 
-          const contents = [
-            ...conversationHistory.slice(-4).map(m => ({
-              role: (m.role === 'assistant' || m.role === 'agent') ? 'model' : 'user',
-              parts: [{ text: m.content || m.text || '' }]
-            })),
-            {
-              role: 'user',
-              parts: [{ text: cleanUser }]
-            }
-          ];
+          const geminiHistory = conversationHistory.slice(-8);
+          const contents = geminiHistory.map(m => ({
+            role: (m.role === 'assistant' || m.role === 'agent') ? 'model' : 'user',
+            parts: [{ text: m.content || m.text || '' }]
+          }));
+          const lastGemini = geminiHistory[geminiHistory.length - 1];
+          if (!lastGemini || (lastGemini.content !== cleanUser && lastGemini.text !== cleanUser)) {
+            contents.push({ role: 'user', parts: [{ text: cleanUser }] });
+          }
 
           const geminiRes = await fetch(geminiUrl, {
             method: 'POST',
@@ -2336,7 +2426,7 @@ ${cleanFaqBlock}`;
                 maxOutputTokens: 150
               }
             }),
-            signal: AbortSignal.timeout(6000)
+            signal: AbortSignal.timeout(8000)
           });
 
           if (geminiRes.ok) {
@@ -2350,6 +2440,19 @@ ${cleanFaqBlock}`;
 
         // 3. OpenAI / Compatible Provider (sk-...)
         if (trimmedKey.startsWith('sk-')) {
+          const openAiHistory = conversationHistory.slice(-8);
+          const openAiMessages = [
+            { role: 'system', content: systemPrompt },
+            ...openAiHistory.map(m => ({
+              role: (m.role === 'assistant' || m.role === 'agent') ? 'assistant' : 'user',
+              content: m.content || m.text || ''
+            }))
+          ];
+          const lastOpenAi = openAiHistory[openAiHistory.length - 1];
+          if (!lastOpenAi || (lastOpenAi.content !== cleanUser && lastOpenAi.text !== cleanUser)) {
+            openAiMessages.push({ role: 'user', content: cleanUser });
+          }
+
           const openAiRes = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -2358,18 +2461,11 @@ ${cleanFaqBlock}`;
             },
             body: JSON.stringify({
               model: model || 'gpt-4o-mini',
-              messages: [
-                { role: 'system', content: systemPrompt },
-                ...conversationHistory.slice(-6).map(m => ({
-                  role: (m.role === 'assistant' || m.role === 'agent') ? 'assistant' : 'user',
-                  content: m.content || m.text || ''
-                })),
-                { role: 'user', content: cleanUser }
-              ],
+              messages: openAiMessages,
               temperature: 0.3,
               max_tokens: 150
             }),
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(8000)
           });
 
           if (openAiRes.ok) {
@@ -2385,8 +2481,8 @@ ${cleanFaqBlock}`;
       return null;
     }
 
-    // Autonomous Zero-API-Key Local Reasoning Engine
-    async function inferLocalAgentResponse(userText, bridgeResult = null) {
+    // Autonomous Zero-API-Key Local Reasoning Engine with Conversational Memory & Context
+    async function inferLocalAgentResponse(userText, bridgeResult = null, history = [], context = null) {
       const text = userText.trim();
       const lower = text.toLowerCase();
       const cleanWords = lower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
@@ -2410,8 +2506,71 @@ ${cleanFaqBlock}`;
         }
       }
 
+      // 0.1 Context-Aware Follow-Up Query Handler (e.g. "what do you provide in that", "fees for this", "details")
+      if (context && context.activeItem) {
+        const active = context.activeItem;
+        const isFollowUpDetails = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|what about|in that|for that|of that|in this|for this|of this)\b/i.test(lower);
+        const isFollowUpFee = /\b(price|cost|fee|fees|how much|charges|rate)\b/i.test(lower);
+        const isFollowUpEligibility = /\b(eligibility|criteria|requirements?|qualification|percentage|marks)\b/i.test(lower);
+        const isFollowUpApply = /\b(how to apply|admission process|steps|apply online|registration|enroll)\b/i.test(lower);
+        const isFollowUpDocs = /\b(documents?|papers?|certificates?|mark\s*sheet|lc|leaving certificate)\b/i.test(lower);
+
+        if (isFollowUpDetails && !isFollowUpFee && !isFollowUpEligibility && !isFollowUpApply && !isFollowUpDocs) {
+          const desc = active.description || active.details || 'comprehensive facilities, laboratory equipment, study materials, and experienced faculty mentorship';
+          const pricePart = active.price ? ` The annual fee is ${active.price}.` : '';
+          const stockPart = active.stock !== null && active.stock !== undefined ? ` We have ${active.stock} ${active.unit || 'seats'} available.` : '';
+          if (queryLang === 'mr-IN') {
+            return `${active.name} मध्ये आम्ही प्रदान करतो: ${desc}.${pricePart}${stockPart}`;
+          } else if (queryLang === 'hi-IN') {
+            return `${active.name} में हम प्रदान करते हैं: ${desc}।${pricePart}${stockPart}`;
+          } else {
+            return `In ${active.name}, we provide: ${desc}.${pricePart}${stockPart}`;
+          }
+        }
+
+        if (isFollowUpFee) {
+          if (queryLang === 'mr-IN') {
+            return `${active.name} ची वार्षिक फी ${active.price || 'उपलब्ध'} आहे.${active.stock ? ` (सध्या ${active.stock} जागा शिल्लक).` : ''}`;
+          } else if (queryLang === 'hi-IN') {
+            return `${active.name} की वार्षिक फीस ${active.price || 'उपलब्ध'} है।${active.stock ? ` (वर्तमान में ${active.stock} सीटें उपलब्ध)।` : ''}`;
+          } else {
+            return `The annual fee for ${active.name} is ${active.price || 'available on request'}.${active.stock ? ` Currently ${active.stock} ${active.unit || 'seats'} are available.` : ''}`;
+          }
+        }
+
+        if (isFollowUpEligibility) {
+          if (queryLang === 'mr-IN') {
+            return `${active.name} च्या प्रवेशासाठी १० वी परीक्षेत किमान ६०% गुण आवश्यक आहेत.`;
+          } else if (queryLang === 'hi-IN') {
+            return `${active.name} के एडमिशन के लिए 10वीं बोर्ड में न्यूनतम 60% अंक आवश्यक हैं।`;
+          } else {
+            return `For ${active.name} admission, candidates must have passed 10th Standard / SSC Board with minimum 60% marks including Science and Mathematics.`;
+          }
+        }
+
+        if (isFollowUpDocs) {
+          if (queryLang === 'mr-IN') {
+            return `${active.name} च्या प्रवेशासाठी लागणारी कागदपत्रे: १० वी मार्कशीट, मूळ शाळा सोडल्याचा दाखला (LC), आधार कार्ड, जातीचा दाखला आणि ३ फोटो.`;
+          } else if (queryLang === 'hi-IN') {
+            return `${active.name} के एडमिशन के लिए आवश्यक दस्तावेज: 10वीं की मार्कशीट, मूल स्कूल छोड़ने का प्रमाण पत्र (LC), आधार कार्ड और 3 पासपोर्ट साइज फोटो।`;
+          } else {
+            return `Required documents for ${active.name}: 10th Standard Marksheet, original School Leaving Certificate (LC), Aadhaar card copy, caste certificate (if applicable), and 3 passport photos.`;
+          }
+        }
+
+        if (isFollowUpApply) {
+          if (queryLang === 'mr-IN') {
+            return `${active.name} साठी अर्ज करण्यासाठी: आमच्या ऑनलाइन पोर्टलवर फॉर्म भरा, कागदपत्रे अपलोड करा आणि नोंदणी फी भरा.`;
+          } else if (queryLang === 'hi-IN') {
+            return `${active.name} के लिए आवेदन करने हेतु: पोर्टल पर ऑनलाइन फॉर्म भरें, दस्तावेज अपलोड करें और पंजीकरण शुल्क जमा करें।`;
+          } else {
+            return `To apply for ${active.name}: complete the online registration form on this portal, upload the required marksheets and certificates, and submit the application.`;
+          }
+        }
+      }
+
       // 1. Direct Catalog List Query Handler (e.g. "give list of all meds", "show all products", "show menu")
-      const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig);
+      const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig, context);
       if (bridge && bridge.status === 'FOUND_CATALOG_LIST') {
         const allItems = Array.isArray(bridge.data) && bridge.data.length > 0 ? bridge.data : getAllCatalogItems(agentConfig);
         const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
@@ -2727,6 +2886,17 @@ ${cleanFaqBlock}`;
         };
       }
 
+      if (history && history.length > 0) {
+        const itemContextName = context?.activeItem?.name ? ` regarding ${context.activeItem.name}` : '';
+        if (queryLang === 'mr-IN') {
+          return `मी आपल्या सेवेसाठी तत्पर आहे${itemContextName}. आपल्याला अभ्यासक्रम, फी किंवा प्रवेश प्रक्रियेबद्दल अधिक माहिती हवी आहे का?`;
+        }
+        if (queryLang === 'hi-IN') {
+          return `मैं आपकी सहायता के लिए उपस्थित हूँ${itemContextName}। क्या आप फीस, पात्रता या एडमिशन प्रक्रिया के बारे में और जानना चाहते हैं?`;
+        }
+        return `I am here to assist you${itemContextName}. Would you like to know more about the course details, fee structure, eligibility criteria, or admission procedure?`;
+      }
+
       if (queryLang === 'mr-IN') {
         return `मी ${agentConfig.name} आहे. मी आपल्या प्रश्नाचे स्वागत करतो. आपण आमच्या सेवा, कॅटलॉग, थेट डेटाबेस साठा, किंमती किंवा अपॉइंटमेंटबद्दल विचारू शकता. मी कशी मदत करू?`;
       }
@@ -2739,6 +2909,11 @@ ${cleanFaqBlock}`;
 
     // Maintain multi-turn conversation memory & session logs
     const conversationHistory = [];
+    const conversationContext = {
+      activeItem: null,
+      activeTopic: null,
+      turnCount: 0
+    };
     const visitorId = 'Visitor #' + Math.floor(1000 + Math.random() * 9000);
     const sessionStartTime = Date.now();
     const sessionLogMessages = [];
@@ -2842,6 +3017,49 @@ ${cleanFaqBlock}`;
         } catch (err) {
           // LocalStorage cache already secured
         }
+
+        // 3. Persist / Update visitor in user_info collection
+        try {
+          const cleanVis = visitorId.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const userDocId = `${cleanAgentTitle}_${cleanVis}`;
+          await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/user_info/${encodeURIComponent(userDocId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fields: {
+                id: { stringValue: userDocId },
+                visitorId: { stringValue: visitorId },
+                caller: { stringValue: visitorId },
+                name: { stringValue: visitorId },
+                agentId: { stringValue: cleanAgentTitle },
+                agentName: { stringValue: cleanAgentTitle },
+                userType: { stringValue: 'website_visitor' },
+                lastActiveAt: { timestampValue: new Date().toISOString() },
+                sessionDuration: { stringValue: durationStr },
+                totalMessagesSent: { integerValue: String(msgs.filter(m => m.role === 'user').length) },
+                lastInquiryTopic: { stringValue: summaryText.substring(0, 85) },
+                lastUserMessage: { stringValue: (msgs.filter(m => m.role === 'user').pop()?.text || '').substring(0, 150) },
+                lastAgentReply: { stringValue: (msgs.filter(m => m.role === 'agent' || m.role === 'assistant').pop()?.text || '').substring(0, 150) },
+                leadStatus: { stringValue: 'Active Inquiry' },
+                conversationRef: { stringValue: `conversations/${cleanAgentTitle}` }
+              }
+            })
+          });
+        } catch (_) {}
+
+        // 4. Update agent_info live metrics
+        try {
+          await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agent_info/${encodeURIComponent(cleanAgentTitle)}?updateMask.fieldPaths=lastActiveAt&updateMask.fieldPaths=status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fields: {
+                status: { stringValue: 'Online' },
+                lastActiveAt: { timestampValue: new Date().toISOString() }
+              }
+            })
+          });
+        } catch (_) {}
       }, 400);
     }
 
@@ -2874,7 +3092,7 @@ ${cleanFaqBlock}`;
                      '';
 
       // 1. Deterministically resolve Live Real-Time Website Database Bridge first
-      const bridgeResult = await resolveDatabaseBridge(userText, agentConfig);
+      const bridgeResult = await resolveDatabaseBridge(userText, agentConfig, conversationContext);
 
       // Determine interactive navigation or highlight action
       if (bridgeResult) {
@@ -2885,6 +3103,7 @@ ${cleanFaqBlock}`;
             navAction = { label: `Jump to ${sec.label}`, sectionInfo: sec };
           }
         } else if (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API') {
+          if (bridgeResult.data) conversationContext.activeItem = bridgeResult.data;
           const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
           if (sec) scrollToHostSection(sec);
           const cleanBtnName = cleanScrapedItemTitle(bridgeResult.data?.name || 'Item').name.substring(0, 25);
@@ -2898,13 +3117,13 @@ ${cleanFaqBlock}`;
 
       // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database & website context
       if (apiKey) {
-        const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang);
+        const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext);
         reply = await callLLMWithBYOK(userText, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
       }
 
       // 3. Fallback to Local Semantic Knowledge Reasoner ONLY if BYOK failed or API key missing
       if (!reply) {
-        const localRes = await inferLocalAgentResponse(userText, bridgeResult);
+        const localRes = await inferLocalAgentResponse(userText, bridgeResult, conversationHistory, conversationContext);
         if (typeof localRes === 'object' && localRes !== null) {
           reply = localRes.reply || '';
           if (!navAction) navAction = localRes.navAction || null;

@@ -82,7 +82,7 @@ ${backendExcerpts || 'None provided'}
 
 CRITICAL ARCHITECTURAL RULES:
 1. NEVER use generic placeholder text like "[specific service/product]", "[insert company]", or "[your product]". Always use the real names, products, and technical specifications extracted from the user's files.
-2. If the files describe a specific brand (e.g. Zenith Motors, Smitash Advisory, Aura Retail), name the assistant specifically (e.g. "Zenith Concierge", "Zenith Engineering Advisor") and write a tailored first greeting.
+2. If the files describe a specific brand (e.g. Sangli Shikshan Sanstha, Aura Retail, Horizon Care), name the assistant specifically (e.g. "Admissions Counselor", "Retail Concierge") and write a tailored first greeting.
 3. In "knowledgeBase", provide at least 8 to 12 accurate, realistic Q&As detailing:
    - What the website is about (grounded in the site title and description)
    - What products or services are offered (listing the actual products found)
@@ -93,8 +93,8 @@ CRITICAL ARCHITECTURAL RULES:
 
 Respond ONLY with a valid JSON object matching this structure (no markdown formatting, no backticks, just raw JSON):
 {
-  "name": "Concierge Name (e.g. Zenith Concierge)",
-  "role": "Concise role (e.g. VIP Hypercar & Engineering Advisor)",
+  "name": "Concierge Name (e.g. Admissions Counselor)",
+  "role": "Concise role (e.g. Student Admissions Counselor)",
   "greeting": "Friendly, spoken 1-sentence greeting welcoming visitors to the website",
   "voice": "Clara",
   "model": "Groq Qwen 27B (<200ms Free)",

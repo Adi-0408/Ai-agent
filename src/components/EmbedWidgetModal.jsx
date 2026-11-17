@@ -32,7 +32,7 @@ export default function EmbedWidgetModal({ isOpen, onClose, agent }) {
   const [isEditingKey, setIsEditingKey] = useState(false);
   const [keyInput, setKeyInput] = useState('');
 
-  const agentName = (agent?.name || agent?.title || 'Zenith Concierge').trim();
+  const agentName = (agent?.name || agent?.title || 'AI Assistant').trim();
   const agentId = agentName.replace(/\//g, '-');
   const widgetUrl = `${window.location.origin}/widget.js`;
 
