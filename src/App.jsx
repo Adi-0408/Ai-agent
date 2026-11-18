@@ -9,7 +9,6 @@ import LiveFilesView from './components/LiveFilesView';
 import LiveLogsView from './components/LiveLogsView';
 import GoogleDriveSetupModal from './components/GoogleDriveSetupModal';
 import ApiKeyModal from './components/ApiKeyModal';
-import VoiceTestModal from './components/VoiceTestModal';
 import { generateAIResponse, AI_KEYS, getUserApiKeys, hasValidUserApiKey, saveUserApiKeys, clearUserApiKeys } from './services/aiCompletionService';
 import {
   isDriveConnected,
@@ -178,7 +177,6 @@ export default function App() {
   const [testingGroqStatus, setTestingGroqStatus] = useState(null);
   const [isDriveSetupModalOpen, setIsDriveSetupModalOpen] = useState(false);
   const [driveStatus, setDriveStatus] = useState(() => getDriveConnectionStatus());
-  const [isVoiceTestModalOpen, setIsVoiceTestModalOpen] = useState(false);
   const [isComposerMicListening, setIsComposerMicListening] = useState(false);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const composerRecognitionRef = useRef(null);
@@ -747,17 +745,14 @@ export default function App() {
     const apiKey = target.apiKey || getUserApiKeys().activeKey || '';
     const voice = target.voice || selectedVoice || 'Adam';
 
-    // Open the full-featured interactive voice testing sandbox modal
-    setIsVoiceTestModalOpen(true);
-
-    // Also mount the floating widget in the corner with auto-open so it's ready
+    // Mount and auto-open the floating voice widget cleanly at the bottom-right corner
     try {
       const existingRoot = document.getElementById('voice-helpdesk-root');
       if (existingRoot) existingRoot.remove();
       document.querySelectorAll('script[src*="widget.js"]').forEach(s => s.remove());
 
       const script = document.createElement('script');
-      script.src = '/widget.js';
+      script.src = `/widget.js?t=${Date.now()}`;
       script.setAttribute('data-agent-id', cleanId);
       script.setAttribute('data-voice', voice);
       script.setAttribute('data-api-key', apiKey);
@@ -4030,15 +4025,6 @@ export default function App() {
           isOpen={isDriveSetupModalOpen}
           onClose={() => setIsDriveSetupModalOpen(false)}
           onConnected={(status) => setDriveStatus(status)}
-        />
-      )}
-
-      {/* Interactive Voice Sandbox & Microphone Test Modal */}
-      {isVoiceTestModalOpen && (
-        <VoiceTestModal
-          isOpen={isVoiceTestModalOpen}
-          onClose={() => setIsVoiceTestModalOpen(false)}
-          assistant={getActiveAgentData(currentAssistant)}
         />
       )}
     </div>
