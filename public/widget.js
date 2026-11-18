@@ -782,6 +782,11 @@
         display: inline-block;
         box-shadow: 0 0 8px #10b981;
       }
+      .vhd-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
       .vhd-close-btn {
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1225,7 +1230,10 @@
               <div class="vhd-agent-status">Online · Smart Voice &amp; Navigation Guide</div>
             </div>
           </div>
-          <button class="vhd-close-btn" id="vhd-close" title="Close">✕</button>
+          <div class="vhd-header-actions">
+            <button class="vhd-close-btn" id="vhd-reset" title="Start New Conversation">↺</button>
+            <button class="vhd-close-btn" id="vhd-close" title="Close">✕</button>
+          </div>
         </div>
         <div class="vhd-body" id="vhd-body">
           <div class="vhd-msg vhd-msg-agent">${agentConfig.greeting}</div>
@@ -1266,6 +1274,7 @@
     const launcher = shadow.getElementById('vhd-launcher');
     const panel = shadow.getElementById('vhd-panel');
     const closeBtn = shadow.getElementById('vhd-close');
+    const resetBtn = shadow.getElementById('vhd-reset');
     const orb = shadow.getElementById('vhd-orb');
     const voiceBtn = shadow.getElementById('vhd-voice-btn');
     const voiceLabel = shadow.getElementById('vhd-voice-label');
@@ -1495,9 +1504,12 @@
       voiceLabel.textContent = 'Voice not supported on this browser';
     }
 
-    // Toggle Panel
+    // Toggle Panel (persisted per device so changing pages never collapses or resets the widget!)
     launcher.addEventListener('click', () => {
       panel.classList.toggle('open');
+      if (typeof saveDeviceConversationState === 'function') {
+        saveDeviceConversationState({ isOpen: panel.classList.contains('open') });
+      }
     });
     closeBtn.addEventListener('click', () => {
       panel.classList.remove('open');
@@ -1514,7 +1526,22 @@
         activeStream.getTracks().forEach(track => track.stop());
         activeStream = null;
       }
+      if (typeof saveDeviceConversationState === 'function') {
+        saveDeviceConversationState({ isOpen: false });
+      }
     });
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        cancelAutoResumeTimer();
+        window.__vhdSpeechSessionId = (window.__vhdSpeechSessionId || 0) + 1;
+        if (window.speechSynthesis) {
+          try { window.speechSynthesis.cancel(); } catch (_) {}
+        }
+        if (typeof clearDeviceConversationState === 'function') {
+          clearDeviceConversationState();
+        }
+      });
+    }
 
     // Check auto-open
     if (currentScript && currentScript.getAttribute('data-auto-open') === 'true') {
@@ -1670,7 +1697,7 @@
       textNode.textContent = text;
       div.appendChild(textNode);
 
-      if (navAction && navAction.label && (navAction.sectionInfo || navAction.redirectTarget || navAction.redirectUrl)) {
+      if (navAction && navAction.label && (navAction.sectionInfo || navAction.redirectTarget || navAction.redirectUrl || navAction.sectionId)) {
         const navBtn = document.createElement('button');
         navBtn.type = 'button';
         navBtn.className = 'vhd-nav-pill-btn';
@@ -1688,6 +1715,14 @@
             try { window.location.assign(navAction.redirectUrl); } catch (_) {}
           } else if (navAction.sectionInfo) {
             scrollToHostSection(navAction.sectionInfo);
+          } else if (navAction.sectionId) {
+            const targetEl = document.getElementById(navAction.sectionId);
+            if (targetEl) {
+              scrollToHostSection({ element: targetEl, label: navAction.label });
+            } else {
+              const found = findHostSection(navAction.label);
+              if (found) scrollToHostSection(found);
+            }
           }
         };
         div.appendChild(navBtn);
@@ -2689,6 +2724,9 @@
         if (isExplicitNav && typeof window !== 'undefined' && window.location && typeof window.location.assign === 'function') {
           setTimeout(() => {
             try {
+              if (typeof saveDeviceConversationState === 'function') {
+                saveDeviceConversationState({ isOpen: true });
+              }
               window.location.assign(target.redirectUrl);
             } catch (_) {}
           }, 900);
@@ -6474,14 +6512,85 @@ ${cleanFaqBlock}`;
       return honestUnknown;
     }
 
-    // Maintain multi-turn conversation memory & session logs
+    // Maintain multi-turn conversation memory & session logs (persisted PER DEVICE across all pages on the integrated website!)
     if (typeof initDynamicFrontendObserver === 'function') {
       initDynamicFrontendObserver();
     }
+
+    const deviceAgentKey = String(agentConfig.name || agentId || 'voice_assistant')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '_') || 'voice_assistant';
+    const DEVICE_CONV_KEY = `vhd_device_conv_${deviceAgentKey}`;
+    const DEVICE_VISITOR_KEY = 'vhd_device_visitor_id';
+    const WINDOW_NAME_PREFIX = '__VHD_DEVICE_STATE__:';
+    const DEVICE_CONV_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days on this device
+
+    function getOrCreateDeviceVisitorId() {
+      try {
+        const existing = localStorage.getItem(DEVICE_VISITOR_KEY);
+        if (existing && existing.trim()) return existing.trim();
+        const fresh = 'Visitor #' + Math.floor(1000 + Math.random() * 9000);
+        localStorage.setItem(DEVICE_VISITOR_KEY, fresh);
+        return fresh;
+      } catch (_) {
+        return 'Visitor #' + Math.floor(1000 + Math.random() * 9000);
+      }
+    }
+
+    function serializeNavAction(nav) {
+      if (!nav || !nav.label) return null;
+      const sectionId =
+        nav.sectionId ||
+        nav.sectionInfo?.id ||
+        nav.sectionInfo?.element?.id ||
+        nav.redirectTarget?.id ||
+        nav.redirectTarget?.element?.id ||
+        '';
+      const redirectUrl = nav.redirectUrl || nav.redirectTarget?.redirectUrl || '';
+      if (!sectionId && !redirectUrl) return null;
+      return {
+        label: String(nav.label).slice(0, 60),
+        sectionId: sectionId ? String(sectionId) : '',
+        redirectUrl: redirectUrl ? String(redirectUrl) : '',
+        isCrossPage: Boolean(nav.isCrossPage || redirectUrl),
+        targetType: nav.targetType || 'section'
+      };
+    }
+
+    function readRawDeviceState() {
+      let best = null;
+      try {
+        const raw = localStorage.getItem(DEVICE_CONV_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') best = parsed;
+        }
+      } catch (_) {}
+
+      // Fallback mirror in window.name so even local file:// multi-page HTML sites never reset on page change!
+      try {
+        if (typeof window !== 'undefined' && typeof window.name === 'string' && window.name.startsWith(WINDOW_NAME_PREFIX)) {
+          const store = JSON.parse(window.name.slice(WINDOW_NAME_PREFIX.length));
+          const candidate = store && store[DEVICE_CONV_KEY];
+          if (candidate && (!best || Number(candidate.updatedAt || 0) > Number(best.updatedAt || 0))) {
+            best = candidate;
+          }
+        }
+      } catch (_) {}
+
+      if (best && best.updatedAt && (Date.now() - Number(best.updatedAt) > DEVICE_CONV_TTL_MS)) {
+        return null;
+      }
+      return best;
+    }
+
     const conversationHistory = [];
     const conversationContext = {
       activeItem: null,
       activeTopic: null,
+      activeLang: '',
+      resolvedTurnLang: '',
       lastDisplayedItems: [],
       catalogOffset: 0,
       lastIntent: null,
@@ -6490,10 +6599,159 @@ ${cleanFaqBlock}`;
       fallbackCount: 0,
       turnCount: 0
     };
-    const visitorId = 'Visitor #' + Math.floor(1000 + Math.random() * 9000);
-    const sessionStartTime = Date.now();
+    const savedDeviceState = readRawDeviceState();
+    const visitorId = (savedDeviceState && savedDeviceState.visitorId) || getOrCreateDeviceVisitorId();
+    const sessionStartTime = (savedDeviceState && Number(savedDeviceState.sessionStartTime)) || Date.now();
     const sessionLogMessages = [];
     let saveLogTimeout = null;
+
+    function buildPersistableDeviceState(overrides = {}) {
+      const safeContext = {
+        activeItem: conversationContext.activeItem || null,
+        activeTopic: conversationContext.activeTopic || null,
+        activeLang: conversationContext.activeLang || '',
+        resolvedTurnLang: conversationContext.resolvedTurnLang || '',
+        lastDisplayedItems: Array.isArray(conversationContext.lastDisplayedItems) ? conversationContext.lastDisplayedItems.slice(0, 25) : [],
+        catalogOffset: Number(conversationContext.catalogOffset || 0),
+        lastIntent: conversationContext.lastIntent || null,
+        lastReply: String(conversationContext.lastReply || ''),
+        recentReplies: Array.isArray(conversationContext.recentReplies) ? conversationContext.recentReplies.slice(-4) : [],
+        fallbackCount: Number(conversationContext.fallbackCount || 0),
+        turnCount: Number(conversationContext.turnCount || 0)
+      };
+      return {
+        version: 1,
+        agentKey: deviceAgentKey,
+        visitorId,
+        sessionStartTime,
+        isOpen: overrides.isOpen !== undefined ? Boolean(overrides.isOpen) : panel.classList.contains('open'),
+        messages: sessionLogMessages.slice(-60),
+        history: conversationHistory.slice(-30),
+        context: safeContext,
+        updatedAt: Date.now()
+      };
+    }
+
+    function saveDeviceConversationState(overrides = {}) {
+      try {
+        const snapshot = buildPersistableDeviceState(overrides);
+        try {
+          localStorage.setItem(DEVICE_CONV_KEY, JSON.stringify(snapshot));
+        } catch (_) {}
+        try {
+          if (typeof window !== 'undefined') {
+            let store = {};
+            if (typeof window.name === 'string' && window.name.startsWith(WINDOW_NAME_PREFIX)) {
+              store = JSON.parse(window.name.slice(WINDOW_NAME_PREFIX.length)) || {};
+            }
+            // Only write to window.name if it's empty or already owned by VHD
+            if (!window.name || window.name.startsWith(WINDOW_NAME_PREFIX)) {
+              store[DEVICE_CONV_KEY] = snapshot;
+              window.name = WINDOW_NAME_PREFIX + JSON.stringify(store);
+            }
+          }
+        } catch (_) {}
+      } catch (_) {}
+    }
+
+    function hydrateDeviceConversationUI(state) {
+      if (!state || typeof state !== 'object') return;
+      // Restore conversationContext
+      if (state.context && typeof state.context === 'object') {
+        Object.assign(conversationContext, state.context);
+      }
+      // Restore conversationHistory
+      conversationHistory.length = 0;
+      if (Array.isArray(state.history)) {
+        state.history.forEach(h => {
+          if (h && h.role && h.content) conversationHistory.push({ role: h.role, content: h.content });
+        });
+      }
+      // Restore rendered transcript in #vhd-body without duplicating greeting
+      sessionLogMessages.length = 0;
+      body.innerHTML = '';
+      const greetDiv = document.createElement('div');
+      greetDiv.className = 'vhd-msg vhd-msg-agent';
+      greetDiv.textContent = agentConfig.greeting;
+      body.appendChild(greetDiv);
+
+      if (Array.isArray(state.messages) && state.messages.length > 0) {
+        state.messages.forEach(m => {
+          if (!m || !m.text) return;
+          const sender = m.role === 'user' ? 'user' : 'agent';
+          sessionLogMessages.push({
+            role: sender,
+            text: m.text,
+            timestamp: m.timestamp || '',
+            navAction: m.navAction || null
+          });
+          appendMsg(m.text, sender, m.navAction || null);
+        });
+      }
+      // Restore open/closed panel state across page navigation (respecting data-auto-open)
+      const hasAutoOpenAttr = Boolean(currentScript && currentScript.getAttribute('data-auto-open') === 'true');
+      if (state.isOpen === true || hasAutoOpenAttr) {
+        panel.classList.add('open');
+      } else if (state.isOpen === false && !hasAutoOpenAttr) {
+        panel.classList.remove('open');
+      }
+    }
+
+    function clearDeviceConversationState() {
+      conversationHistory.length = 0;
+      sessionLogMessages.length = 0;
+      Object.assign(conversationContext, {
+        activeItem: null,
+        activeTopic: null,
+        activeLang: '',
+        resolvedTurnLang: '',
+        lastDisplayedItems: [],
+        catalogOffset: 0,
+        lastIntent: null,
+        lastReply: '',
+        recentReplies: [],
+        fallbackCount: 0,
+        turnCount: 0
+      });
+      body.innerHTML = '';
+      const greetDiv = document.createElement('div');
+      greetDiv.className = 'vhd-msg vhd-msg-agent';
+      greetDiv.textContent = agentConfig.greeting;
+      body.appendChild(greetDiv);
+      try {
+        localStorage.removeItem(DEVICE_CONV_KEY);
+      } catch (_) {}
+      try {
+        if (typeof window !== 'undefined' && typeof window.name === 'string' && window.name.startsWith(WINDOW_NAME_PREFIX)) {
+          const store = JSON.parse(window.name.slice(WINDOW_NAME_PREFIX.length)) || {};
+          delete store[DEVICE_CONV_KEY];
+          window.name = Object.keys(store).length > 0 ? (WINDOW_NAME_PREFIX + JSON.stringify(store)) : '';
+        }
+      } catch (_) {}
+      saveDeviceConversationState({ isOpen: panel.classList.contains('open') });
+    }
+
+    // Hydrate immediately from this device's saved conversation so page navigation NEVER resets the assistant!
+    if (savedDeviceState) {
+      hydrateDeviceConversationUI(savedDeviceState);
+    }
+
+    // Flush state before leaving the page & keep multiple tabs on this device synchronized
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      const flushOnLeave = () => saveDeviceConversationState();
+      window.addEventListener('pagehide', flushOnLeave);
+      window.addEventListener('beforeunload', flushOnLeave);
+      window.addEventListener('storage', (ev) => {
+        if (ev && ev.key === DEVICE_CONV_KEY && ev.newValue) {
+          try {
+            const incoming = JSON.parse(ev.newValue);
+            if (incoming && Array.isArray(incoming.messages) && incoming.messages.length !== sessionLogMessages.length) {
+              hydrateDeviceConversationUI(incoming);
+            }
+          } catch (_) {}
+        }
+      });
+    }
 
     function recordSessionLogToAgentFolder(msgs) {
       if (!msgs || msgs.length === 0) return;
@@ -6681,6 +6939,7 @@ ${cleanFaqBlock}`;
       appendMsg(cleanInput, 'user');
       conversationHistory.push({ role: 'user', content: cleanInput });
       sessionLogMessages.push({ role: 'user', text: cleanInput, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+      saveDeviceConversationState({ isOpen: true });
       orb.className = 'vhd-orb-btn listening';
       voiceLabel.textContent = detectedQueryLang === 'mr-IN' ? 'विचार करत आहे…' : detectedQueryLang === 'hi-IN' ? 'सोच रहा हूँ…' : 'Thinking…';
 
@@ -6784,7 +7043,13 @@ ${cleanFaqBlock}`;
         conversationContext.recentReplies = [...conversationContext.recentReplies.slice(-2), reply];
         conversationContext.turnCount = (conversationContext.turnCount || 0) + 1;
         conversationHistory.push({ role: 'assistant', content: reply });
-        sessionLogMessages.push({ role: 'agent', text: reply, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+        sessionLogMessages.push({
+          role: 'agent',
+          text: reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          navAction: serializeNavAction(navAction)
+        });
+        saveDeviceConversationState({ isOpen: true });
         recordSessionLogToAgentFolder(sessionLogMessages);
 
         orb.className = 'vhd-orb-btn speaking';

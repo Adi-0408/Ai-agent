@@ -928,9 +928,12 @@ export function generateStandaloneScriptContent(agent) {
             <div class="vhd-badge">Autonomous Keyless Agent</div>
           </div>
         </div>
-        <button class="vhd-close-btn" title="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button class="vhd-close-btn vhd-reset-btn" title="Start New Conversation">↺</button>
+          <button class="vhd-close-btn" title="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
       </div>
       <div class="vhd-messages" id="vhd-msg-list"></div>
       <div class="vhd-footer">
@@ -952,19 +955,60 @@ export function generateStandaloneScriptContent(agent) {
     shadow.appendChild(launcher);
     shadow.appendChild(panel);
 
-    const closeBtn = panel.querySelector('.vhd-close-btn');
+    const resetBtn = panel.querySelector('.vhd-reset-btn');
+    const closeBtn = panel.querySelector('.vhd-close-btn:not(.vhd-reset-btn)');
     const msgList = panel.querySelector('#vhd-msg-list');
     const orb = panel.querySelector('#vhd-orb');
     const voiceLabel = panel.querySelector('#vhd-voice-label');
     const form = panel.querySelector('#vhd-form');
     const textInput = panel.querySelector('#vhd-text-input');
 
+    // Device-scoped persistent conversation across ALL pages of the integrated website (localStorage + window.name fallback for file://)
+    const deviceAgentSlug = String(agentConfig.name || 'assistant').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_') || 'assistant';
+    const DEVICE_CONV_KEY = 'vhd_device_conv_' + deviceAgentSlug;
+    const WINDOW_NAME_PREFIX = '__VHD_DEVICE_STATE__:';
+    let persistedMessages = [];
+
+    function readDeviceConv() {
+      let best = null;
+      try {
+        const raw = localStorage.getItem(DEVICE_CONV_KEY);
+        if (raw) best = JSON.parse(raw);
+      } catch (_) {}
+      try {
+        if (typeof window.name === 'string' && window.name.startsWith(WINDOW_NAME_PREFIX)) {
+          const store = JSON.parse(window.name.slice(WINDOW_NAME_PREFIX.length));
+          const cand = store && store[DEVICE_CONV_KEY];
+          if (cand && (!best || Number(cand.updatedAt || 0) > Number(best.updatedAt || 0))) best = cand;
+        }
+      } catch (_) {}
+      return best;
+    }
+
+    function saveDeviceConv(isOpenOverride) {
+      const snap = {
+        isOpen: isOpenOverride !== undefined ? Boolean(isOpenOverride) : panel.classList.contains('open'),
+        activeLang: activeConversationLang || '',
+        messages: persistedMessages.slice(-60),
+        updatedAt: Date.now()
+      };
+      try { localStorage.setItem(DEVICE_CONV_KEY, JSON.stringify(snap)); } catch (_) {}
+      try {
+        if (!window.name || window.name.startsWith(WINDOW_NAME_PREFIX)) {
+          const store = window.name.startsWith(WINDOW_NAME_PREFIX) ? (JSON.parse(window.name.slice(WINDOW_NAME_PREFIX.length)) || {}) : {};
+          store[DEVICE_CONV_KEY] = snap;
+          window.name = WINDOW_NAME_PREFIX + JSON.stringify(store);
+        }
+      } catch (_) {}
+    }
+
     launcher.addEventListener('click', () => {
       panel.classList.toggle('open');
       if (panel.classList.contains('open') && msgList.children.length === 0) {
-        appendMsg(agentConfig.greeting, 'agent');
+        appendMsg(agentConfig.greeting, 'agent', { skipPersist: true });
         speakReply(agentConfig.greeting);
       }
+      saveDeviceConv(panel.classList.contains('open'));
     });
 
     let lastInputWasVoice = false;
@@ -994,15 +1038,51 @@ export function generateStandaloneScriptContent(agent) {
       if (recognition && isListening) {
         try { recognition.stop(); } catch (_) {}
       }
+      saveDeviceConv(false);
     });
 
-    function appendMsg(text, sender) {
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        cancelAutoResume();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        persistedMessages = [];
+        activeConversationLang = '';
+        msgList.innerHTML = '';
+        appendMsg(agentConfig.greeting, 'agent', { skipPersist: true });
+        try { localStorage.removeItem(DEVICE_CONV_KEY); } catch (_) {}
+        saveDeviceConv(panel.classList.contains('open'));
+      });
+    }
+
+    function appendMsg(text, sender, opts = {}) {
       const msg = document.createElement('div');
       msg.className = 'vhd-msg ' + sender;
       msg.textContent = text;
       msgList.appendChild(msg);
       msgList.scrollTop = msgList.scrollHeight;
+      if (!opts.skipPersist) {
+        persistedMessages.push({ role: sender, text: text });
+        saveDeviceConv();
+      }
     }
+
+    // Hydrate saved conversation on load so navigating between pages never resets the assistant!
+    const initialDeviceConv = readDeviceConv();
+    if (initialDeviceConv) {
+      if (initialDeviceConv.activeLang) activeConversationLang = initialDeviceConv.activeLang;
+      if (Array.isArray(initialDeviceConv.messages) && initialDeviceConv.messages.length > 0) {
+        appendMsg(agentConfig.greeting, 'agent', { skipPersist: true });
+        initialDeviceConv.messages.forEach(m => {
+          if (m && m.text) {
+            persistedMessages.push({ role: m.role === 'user' ? 'user' : 'agent', text: m.text });
+            appendMsg(m.text, m.role === 'user' ? 'user' : 'agent', { skipPersist: true });
+          }
+        });
+      }
+      if (initialDeviceConv.isOpen) panel.classList.add('open');
+    }
+    window.addEventListener('pagehide', () => saveDeviceConv());
+    window.addEventListener('beforeunload', () => saveDeviceConv());
 
     // Process Message through Autonomous Keyless Engine
     function handleUserMessage(userText, opts = {}) {
