@@ -291,7 +291,7 @@
       .replace(/\bv?\d+\.\d+[a-zA-Z]*\b/g, ' ');
     if (/\b[a-zA-Z_$][a-zA-Z0-9_$]*\.[a-zA-Z_$][a-zA-Z0-9_$]{1,}\b/.test(withoutSafeDots)) return false;
 
-    if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
+    if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\s+[A-Z_$][A-Za-z0-9_$]*\s*(?:\{|extends\b)|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
     if (/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|application\/json|text\/plain|content-type|utf-8|cors|null|undefined|true|false|nan)$/i.test(name)) return false;
 
     // Reject developer README/setup bullets & UI feature boilerplate
@@ -1745,7 +1745,8 @@
       if (minLen <= 2) return 0;
       if (minLen >= 4 && (b.startsWith(a) || a.startsWith(b)) && (maxLen - minLen) <= 4) return 3;
       if (minLen === 3) {
-        if (maxLen <= 4 && a[0] === b[0] && damerauLevenshtein(a, b) === 1) return 2;
+        if (a.length === 3 && b.length === 3) return 0;
+        if (maxLen === 4 && a[0] === b[0] && damerauLevenshtein(a, b) === 1) return 2;
         return 0;
       }
       const dist = Math.min(damerauLevenshtein(a, b), damerauLevenshtein(sa, sb));
@@ -1782,7 +1783,8 @@
       'overview', 'about', 'know', 'want', 'need', 'provide', 'offer', 'have', 'available', 'availability', 'stock',
       'sell', 'serve', 'teach', 'study', 'learn', 'eat', 'drink', 'browse', 'explore', 'options', 'catalog', 'catalogue', 'inventory',
       'price', 'prices', 'pricing', 'fee', 'fees', 'cost', 'costs', 'rate', 'rates', 'charge', 'charges', 'structure',
-      'tuition', 'pay', 'payment', 'money', 'budget', 'rent', 'tariff', 'mrp', 'amount', 'discount', 'expensive', 'cheap', 'much',
+      'tuition', 'pay', 'payment', 'money', 'budget', 'rent', 'tariff', 'mrp', 'amount', 'discount', 'expensive', 'cheap', 'cheapest', 'much',
+      'compare', 'comparison', 'versus', 'difference', 'differences', 'better', 'lowest', 'affordable', 'highest', 'costliest', 'under', 'below', 'above', 'between', 'average', 'range', 'total', 'many', 'count',
       'course', 'courses', 'program', 'programs', 'stream', 'streams', 'class', 'classes', 'subject', 'subjects', 'degree', 'diploma', 'syllabus', 'curriculum', 'college', 'school', 'academy',
       'product', 'products', 'item', 'items', 'shoes', 'sneakers', 'laptop', 'phone', 'watch', 'clothing',
       'medicine', 'medicines', 'drug', 'drugs', 'tablet', 'tablets', 'capsule', 'syrup', 'pharmacy', 'clinic', 'hospital', 'doctor',
@@ -1894,6 +1896,7 @@
 
       const tokens = str
         .toLowerCase()
+        .replace(/(\d),(?=\d)/g, '$1')
         .replace(/['’]/g, '')
         .replace(/[^a-z0-9\s-]/g, ' ')
         .replace(/-/g, ' ')
@@ -1901,11 +1904,12 @@
         .filter(Boolean);
 
       const out = tokens.map(rawTok => {
-        const tok = rawTok.replace(/(.)\1{2,}/g, '$1$1');
+        if (/^\d+$/.test(rawTok)) return rawTok;
+        const tok = rawTok.replace(/([a-z])\1{2,}/g, '$1$1');
         if (NLU_SHORTHAND_MAP[tok]) return NLU_SHORTHAND_MAP[tok];
         const collapsed = rawTok.replace(/(.)\1+/g, '$1');
         if (NLU_SHORTHAND_MAP[collapsed]) return NLU_SHORTHAND_MAP[collapsed];
-        if (vocabSet.has(tok) || NLU_GRAMMAR_STOPWORDS.has(tok) || /\d/.test(tok) || tok.length <= 2) return tok;
+        if (vocabSet.has(tok) || NLU_GRAMMAR_STOPWORDS.has(tok) || /\d/.test(tok) || tok.length <= 3) return tok;
         if (vocabSet.has(collapsed)) return collapsed;
 
         let bestWord = tok;
@@ -2671,8 +2675,47 @@
           seen.add(key);
           snippets.push({ heading, text: txt });
         });
+
+        // Harvest <dl><dt><dd> definition pairs
+        const dts = document.querySelectorAll('dl dt');
+        dts.forEach(dt => {
+          if (dt.closest('#voice-helpdesk-root')) return;
+          const dd = dt.nextElementSibling;
+          if (!dd || dd.tagName !== 'DD') return;
+          const term = (dt.textContent || '').replace(/\s+/g, ' ').trim();
+          const def = (dd.textContent || '').replace(/\s+/g, ' ').trim();
+          if (term.length >= 2 && def.length >= 4 && def.length <= 350) {
+            const key = `${term}:${def}`.slice(0, 80).toLowerCase();
+            if (!seen.has(key)) {
+              seen.add(key);
+              snippets.push({ heading: term, text: `${term}: ${def}` });
+            }
+          }
+        });
+
+        // Harvest grouped bullet lists (<ul>/<ol>) under headings for policies, eligibility, features
+        const lists = document.querySelectorAll('main ul, main ol, section ul, section ol, article ul, article ol');
+        lists.forEach(listEl => {
+          if (listEl.closest('#voice-helpdesk-root, nav, footer, header')) return;
+          const parentSec = listEl.closest('section, article, .card, div[id], div[class*="section"]');
+          const hEl = parentSec ? parentSec.querySelector('h1, h2, h3, h4') : null;
+          const heading = hEl ? (hEl.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+          if (!heading) return;
+          const items = Array.from(listEl.querySelectorAll('li'))
+            .map(li => (li.textContent || '').replace(/\s+/g, ' ').trim())
+            .filter(t => t.length >= 3 && t.length <= 140)
+            .slice(0, 7);
+          if (items.length >= 2) {
+            const combined = `${heading}: ${items.join('; ')}.`;
+            const key = combined.slice(0, 80).toLowerCase();
+            if (!seen.has(key)) {
+              seen.add(key);
+              snippets.push({ heading, text: combined });
+            }
+          }
+        });
       } catch (_) {}
-      _pageSnippetCache = { timestamp: now, snippets: snippets.slice(0, 60) };
+      _pageSnippetCache = { timestamp: now, snippets: snippets.slice(0, 80) };
       return _pageSnippetCache.snippets;
     }
 
@@ -3393,6 +3436,548 @@
       return `${cleanTitle} is available on our website.${price ? ` Price: ${price}.` : ''}`;
     }
 
+    // --- UNIVERSAL DETERMINISTIC DATA ANALYTICS, PRECISION-GATED RAG & HONEST UNCERTAINTY ENGINE ---
+    const GENERIC_DOMAIN_WORDS = new Set([
+      'course', 'courses', 'program', 'programs', 'programme', 'programmes', 'stream', 'streams', 'class', 'classes',
+      'product', 'products', 'item', 'items', 'good', 'goods', 'service', 'services', 'plan', 'plans', 'tier', 'tiers',
+      'room', 'rooms', 'dish', 'dishes', 'food', 'menu', 'medicine', 'medicines', 'drug', 'drugs', 'vehicle', 'vehicles',
+      'car', 'cars', 'property', 'properties', 'option', 'options', 'offering', 'offerings', 'package', 'packages',
+      'price', 'prices', 'pricing', 'fee', 'fees', 'cost', 'costs', 'rate', 'rates', 'charge', 'charges',
+      'detail', 'details', 'info', 'information', 'about', 'website', 'site', 'page', 'portal', 'store', 'shop',
+      'college', 'school', 'academy', 'clinic', 'hospital', 'restaurant', 'hotel', 'company', 'business', 'system',
+      'available', 'availability', 'provide', 'offer', 'have', 'give', 'show', 'tell', 'know', 'want', 'need',
+      'help', 'assist', 'support', 'question', 'answer', 'what', 'which', 'where', 'when', 'who', 'how', 'much', 'many'
+    ]);
+
+    function parseNumericPrice(rawPrice) {
+      if (rawPrice === null || rawPrice === undefined || rawPrice === '') return null;
+      if (typeof rawPrice === 'number') {
+        return isFinite(rawPrice) && rawPrice >= 0 ? { value: rawPrice, currency: '', period: '', raw: String(rawPrice) } : null;
+      }
+      const str = String(rawPrice).trim();
+      if (!str) return null;
+      if (/^\s*free\b/i.test(str)) return { value: 0, currency: '', period: '', raw: str };
+
+      let currency = '';
+      if (/₹|rs\.?|inr/i.test(str)) currency = '₹';
+      else if (/\$|usd/i.test(str)) currency = '$';
+      else if (/€|eur/i.test(str)) currency = '€';
+      else if (/£|gbp/i.test(str)) currency = '£';
+
+      const periodMatch = str.match(/\/\s*(yr|year|yr\.|mo|month|day|night|hr|hour|week|strip|unit|pack|seat|semester|sem)\b/i);
+      const period = periodMatch ? `/${periodMatch[1].toLowerCase()}` : '';
+
+      const numMatch = str.match(/(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|thousand|lakh|lakhs|lac|lacs|cr|crore|m|million)?\b/i);
+      if (!numMatch) return null;
+      let val = parseFloat(numMatch[1].replace(/,/g, ''));
+      if (!isFinite(val)) return null;
+      const mult = (numMatch[2] || '').toLowerCase();
+      if (mult === 'k' || mult === 'thousand') val *= 1000;
+      else if (mult === 'lakh' || mult === 'lakhs' || mult === 'lac' || mult === 'lacs') val *= 100000;
+      else if (mult === 'cr' || mult === 'crore') val *= 10000000;
+      else if (mult === 'm' || mult === 'million') val *= 1000000;
+      return { value: val, currency, period, raw: str };
+    }
+
+    function formatCurrencyAmount(value, currency = '') {
+      if (!isFinite(value)) return '';
+      const rounded = Math.round(value * 100) / 100;
+      const formatted = currency === '₹' ? rounded.toLocaleString('en-IN') : rounded.toLocaleString('en-US');
+      return currency ? `${currency}${formatted}` : formatted;
+    }
+
+    function parseBudgetThreshold(query) {
+      const str = String(query || '').trim();
+      if (!str) return null;
+      const parseAmt = (rawNum, multWord = '') => {
+        let v = parseFloat(String(rawNum || '').replace(/,/g, ''));
+        if (!isFinite(v)) return null;
+        const m = String(multWord || '').toLowerCase();
+        if (m === 'k' || m === 'thousand') v *= 1000;
+        else if (m === 'lakh' || m === 'lakhs' || m === 'lac' || m === 'lacs') v *= 100000;
+        else if (m === 'cr' || m === 'crore') v *= 10000000;
+        return v;
+      };
+      let currency = '';
+      if (/₹|rs\.?|inr|rupees?|रुपये|रुपए/i.test(str)) currency = '₹';
+      else if (/\$|usd|dollars?/i.test(str)) currency = '$';
+      else if (/€|eur|euros?/i.test(str)) currency = '€';
+      else if (/£|gbp|pounds?/i.test(str)) currency = '£';
+
+      const rangeMatch = str.match(/\b(?:between|from)\s*(?:₹|\$|€|£|rs\.?\s*)?(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|lakh|lac)?\s*(?:and|to|-|–)\s*(?:₹|\$|€|£|rs\.?\s*)?(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|lakh|lac)?\b/i);
+      if (rangeMatch) {
+        const a = parseAmt(rangeMatch[1], rangeMatch[2]);
+        const b = parseAmt(rangeMatch[3], rangeMatch[4]);
+        if (a !== null && b !== null) return { op: 'between', min: Math.min(a, b), max: Math.max(a, b), currency };
+      }
+      const lteMatch = str.match(/\b(?:under|below|less\s+than|within|up\s*to|upto|max(?:imum)?|budget(?:\s+of|\s+is)?|not\s+more\s+than|cheaper\s+than)\s*(?:₹|\$|€|£|rs\.?\s*)?(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|lakh|lac)?\b/i)
+        || str.match(/(?:₹|\$|€|£|rs\.?\s*)?(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|lakh|lac)?\s*(?:के\s*अंदर|से\s*कम|च्या\s*आत|पेक्षा\s*कमी)/i);
+      if (lteMatch) {
+        const val = parseAmt(lteMatch[1], lteMatch[2]);
+        if (val !== null) return { op: 'lte', max: val, currency };
+      }
+      const gteMatch = str.match(/\b(?:above|over|more\s+than|greater\s+than|at\s+least|min(?:imum)?|starting\s+from|expensive\s+than)\s*(?:₹|\$|€|£|rs\.?\s*)?(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|lakh|lac)?\b/i)
+        || str.match(/(?:₹|\$|€|£|rs\.?\s*)?(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|lakh|lac)?\s*(?:से\s*ज्यादा|से\s*अधिक|पेक्षा\s*जास्त)/i);
+      if (gteMatch) {
+        const val = parseAmt(gteMatch[1], gteMatch[2]);
+        if (val !== null) return { op: 'gte', min: val, currency };
+      }
+      return null;
+    }
+
+    function computeCatalogStats(catalogItems = []) {
+      const items = Array.isArray(catalogItems) ? catalogItems.filter(Boolean) : [];
+      const enriched = items.map(item => {
+        const parsed = parseNumericPrice(item.price);
+        const stockNum = (item.stock !== null && item.stock !== undefined && item.stock !== '' && !isNaN(Number(item.stock)))
+          ? Number(item.stock) : null;
+        return { item, priceValue: parsed ? parsed.value : null, currency: parsed ? parsed.currency : '', stockNum };
+      });
+      const priced = enriched.filter(e => e.priceValue !== null).sort((a, b) => a.priceValue - b.priceValue);
+      const withStock = enriched.filter(e => e.stockNum !== null);
+      const inStock = withStock.filter(e => e.stockNum > 0);
+      const outOfStock = withStock.filter(e => e.stockNum === 0);
+      const highestStock = [...withStock].sort((a, b) => b.stockNum - a.stockNum)[0] || null;
+      const avgPrice = priced.length > 0 ? Math.round((priced.reduce((s, x) => s + x.priceValue, 0) / priced.length) * 100) / 100 : null;
+      return {
+        count: items.length,
+        pricedCount: priced.length,
+        inStockCount: inStock.length,
+        outOfStockCount: outOfStock.length,
+        minPriceEntry: priced[0] || null,
+        maxPriceEntry: priced[priced.length - 1] || null,
+        avgPrice,
+        currency: priced.find(p => p.currency)?.currency || '',
+        highestStockEntry: highestStock,
+        inStockItems: inStock.map(x => x.item),
+        outOfStockItems: outOfStock.map(x => x.item),
+        pricedEntries: priced
+      };
+    }
+
+    function matchMultipleItems(catalogItems, query) {
+      if (!Array.isArray(catalogItems) || catalogItems.length < 2) return [];
+      const cleaned = String(query || '')
+        .replace(/\b(please|can you|could you|tell me|show me|what is|what are|the|compare|comparison|between|difference|differences|diff|which is better|better|choose|pick)\b/gi, ' ')
+        .replace(/[?!.,;]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const segments = cleaned
+        .split(/\s*(?:\bvs\.?\b|\bversus\b|\band\b|\bor\b|\bwith\b|,|&|\/)\s*/i)
+        .map(s => s.trim())
+        .filter(s => s.length >= 2);
+
+      const scoreSeg = (seg, item) => {
+        const segLower = seg.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        const nameLower = String(item?.name || item?.title || item?.product || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!segLower || !nameLower) return 0;
+        if (nameLower === segLower) return 100;
+        if (nameLower.includes(segLower) && segLower.length >= 3) return 60 + segLower.length;
+        const segToks = segLower.split(' ').filter(t => t.length >= 2 && !NLU_GRAMMAR_STOPWORDS.has(t) && !GENERIC_DOMAIN_WORDS.has(t));
+        const nameToks = nameLower.split(' ').filter(t => t.length >= 2);
+        if (segToks.length === 0) return 0;
+        let matched = 0;
+        let sc = 0;
+        for (const st of segToks) {
+          let best = 0;
+          for (const nt of nameToks) {
+            const m = fuzzyTokenMatch(st, nt);
+            if (m > best) best = m;
+          }
+          if (best >= 2) { matched++; sc += best * 5; }
+        }
+        return matched > 0 && (matched / segToks.length) >= 0.5 ? sc + Math.round((matched / segToks.length) * 15) : 0;
+      };
+
+      const matchedItems = [];
+      const seenNames = new Set();
+      for (const seg of segments) {
+        let bestItem = null;
+        let bestScore = 0;
+        for (const item of catalogItems) {
+          const sc = scoreSeg(seg, item);
+          if (sc > bestScore) { bestScore = sc; bestItem = item; }
+        }
+        if (bestItem && bestScore >= 10) {
+          const key = String(bestItem.name || bestItem.title || '').toLowerCase();
+          if (!seenNames.has(key)) { seenNames.add(key); matchedItems.push(bestItem); }
+        }
+      }
+      return matchedItems.slice(0, 3);
+    }
+
+    function detectAnalyticalIntent(query) {
+      const raw = String(query || '').trim();
+      const lower = raw.toLowerCase();
+      if (!lower) return null;
+      if (/\b(compare|comparison|versus|vs\.?|difference\s+between|differences\s+between|differ\s+from|which\s+is\s+better|better\s+between|side\s+by\s+side)\b/i.test(lower) ||
+          /(तुलना|फरक|अंतर|बेहतर कौन)/i.test(raw)) {
+        return { type: 'compare' };
+      }
+      const budget = parseBudgetThreshold(raw);
+      if (budget) return { type: 'budget_filter', budget };
+      if (/\b(cheapest|lowest\s+(?:price|fee|fees|cost|rate|priced)|most\s+affordable|least\s+expensive|minimum\s+(?:price|fee|cost)|budget[- ]friendly|best\s+price)\b/i.test(lower) ||
+          /(सबसे\s*सस्ता|सबसे\s*कम\s*(?:फीस|कीमत)|सर्वात\s*स्वस्त|सर्वात\s*कमी\s*(?:फी|किंमत))/i.test(raw)) {
+        return { type: 'cheapest' };
+      }
+      if (/\b(most\s+expensive|highest\s+(?:price|fee|fees|cost|rate|priced)|costliest|priciest|maximum\s+(?:price|fee|cost)|top[- ]tier\s+price)\b/i.test(lower) ||
+          /(सबसे\s*महंगा|सबसे\s*ज्यादा\s*(?:फीस|कीमत)|सर्वात\s*महाग|सर्वात\s*जास्त\s*(?:फी|किंमत))/i.test(raw)) {
+        return { type: 'most_expensive' };
+      }
+      if (/\b((?:most|highest|maximum)\s+(?:seats?|stock|units?|rooms?|slots?|availability|quantity))\b/i.test(lower)) {
+        return { type: 'highest_stock' };
+      }
+      if (/\b(which|what|list|show)\b[\s\S]{0,30}\b(out\s+of\s+stock|sold\s+out|unavailable|not\s+available|zero\s+stock)\b/i.test(lower) ||
+          /\b(out\s+of\s+stock|sold\s+out)\s+(?:items?|products?|medicines?|courses?|rooms?|dishes?)\b/i.test(lower)) {
+        return { type: 'out_of_stock_filter' };
+      }
+      if (/\b(which|what|list|show)\b[\s\S]{0,30}\b(in\s+stock|currently\s+available|available\s+right\s+now)\b/i.test(lower) && !/\b(how\s+many)\b/i.test(lower)) {
+        return { type: 'in_stock_filter' };
+      }
+      if (/\b(how\s+many|total\s+number\s+of|total\s+(?:courses?|programs?|products?|items?|medicines?|dishes?|plans?|rooms?|vehicles?|services?|options?)|count\s+of)\b/i.test(lower) ||
+          /(कितने\s*(?:कोर्स|प्रोडक्ट|आइटम|दवा)|किती\s*(?:कोर्स|अभ्यासक्रम|प्रॉडक्ट))/i.test(raw)) {
+        return { type: 'count' };
+      }
+      if (/\b(price\s+range|fee\s+range|cost\s+range|average\s+(?:price|fee|fees|cost|rate)|min\s+and\s+max\s+(?:price|fee))\b/i.test(lower)) {
+        return { type: 'price_summary' };
+      }
+      return null;
+    }
+
+    function analyzeCatalogQuery(query, catalogItems = [], profile = null, queryLang = 'en-US') {
+      const intent = detectAnalyticalIntent(query);
+      if (!intent) return null;
+      const items = Array.isArray(catalogItems) ? catalogItems.filter(Boolean) : [];
+      if (items.length === 0) return null;
+
+      const stats = computeCatalogStats(items);
+      const nounEn = (profile && profile.itemNounEn) ? profile.itemNounEn : 'options';
+      const nounHi = (profile && profile.itemNounHi) ? profile.itemNounHi : 'विकल्प';
+      const nounMr = (profile && profile.itemNounMr) ? profile.itemNounMr : 'पर्याय';
+      const priceLabelEn = (profile && profile.priceLabelEn) ? profile.priceLabelEn : 'price';
+      const unitDefault = (profile && profile.itemUnit) ? profile.itemUnit : 'units';
+
+      if (intent.type === 'compare') {
+        const matched = matchMultipleItems(items, query);
+        if (matched.length < 2) return null;
+        const details = matched.map(it => {
+          const p = parseNumericPrice(it.price);
+          return {
+            name: it.name,
+            price: it.price || 'Price on request',
+            priceValue: p ? p.value : null,
+            currency: p ? p.currency : stats.currency,
+            stock: it.stock,
+            unit: it.unit || unitDefault,
+            description: it.description || it.dosage || it.details || ''
+          };
+        });
+        const partsEn = details.map(d => {
+          const segs = [`${d.name} is ${d.price}`];
+          if (d.stock !== null && d.stock !== undefined) segs.push(`with ${d.stock} ${d.unit} available`);
+          if (d.description) segs.push(`covering ${d.description.replace(/\.+$/, '')}`);
+          return segs.join(', ');
+        });
+        let diffLineEn = '', diffLineHi = '', diffLineMr = '';
+        if (details.length === 2 && details[0].priceValue !== null && details[1].priceValue !== null) {
+          const diff = Math.abs(details[0].priceValue - details[1].priceValue);
+          const cur = details[0].currency || details[1].currency || stats.currency;
+          if (diff === 0) {
+            diffLineEn = ' Both are priced the same.';
+            diffLineHi = ' दोनों की कीमत समान है।';
+            diffLineMr = ' दोघांची किंमत सारखीच आहे.';
+          } else {
+            const cheaper = details[0].priceValue < details[1].priceValue ? details[0] : details[1];
+            const fmtDiff = formatCurrencyAmount(diff, cur);
+            diffLineEn = ` ${cheaper.name} is more affordable by ${fmtDiff}.`;
+            diffLineHi = ` ${cheaper.name} की कीमत ${fmtDiff} कम है।`;
+            diffLineMr = ` ${cheaper.name} हे ${fmtDiff} ने अधिक परवडणारे आहे.`;
+          }
+        }
+        let summaryText = `Here is a quick comparison: ${partsEn.join('; while ')}.${diffLineEn} Let me know which one suits you best!`;
+        if (queryLang === 'mr-IN') {
+          const partsMr = details.map(d => `${d.name} (${d.price}${d.description ? ` — ${d.description.replace(/\.+$/, '')}` : ''})`);
+          summaryText = `येथे तुलना दिली आहे: ${partsMr.join(' आणि ')}.${diffLineMr} तुम्हाला यापैकी कोणता पर्याय योग्य वाटतो?`;
+        } else if (queryLang === 'hi-IN') {
+          const partsHi = details.map(d => `${d.name} (${d.price}${d.description ? ` — ${d.description.replace(/\.+$/, '')}` : ''})`);
+          summaryText = `यहाँ तुलना दी गई है: ${partsHi.join(' और ')}।${diffLineHi} बताएं इनमें से कौन सा विकल्प आपके लिए बेहतर रहेगा?`;
+        }
+        return { status: 'ANALYTICAL_RESULT', analysisType: 'comparison', summaryText, computedData: { compared: details }, matchedItems: matched };
+      }
+
+      if (intent.type === 'cheapest') {
+        if (!stats.minPriceEntry) return null;
+        const minVal = stats.minPriceEntry.priceValue;
+        const tied = stats.pricedEntries.filter(e => e.priceValue === minVal);
+        const names = tied.map(e => `${e.item.name} at ${e.item.price}`).join(' and ');
+        const summaryText = queryLang === 'mr-IN'
+          ? `आमचा सर्वात परवडणारा पर्याय आहे ${names}. याबद्दल अधिक तपशील हवा असल्यास नक्की विचारा!`
+          : queryLang === 'hi-IN'
+            ? `हमारा सबसे किफायती विकल्प है ${names}। यदि आप इसके बारे में अधिक जानकारी चाहते हैं तो कृपया पूछें!`
+            : `Our most affordable option is ${names}.${tied[0].item.description ? ` It includes ${tied[0].item.description.replace(/\.+$/, '')}.` : ''} Please let me know if you would like more details!`;
+        return { status: 'ANALYTICAL_RESULT', analysisType: 'cheapest', summaryText, computedData: { cheapest: tied.map(t => ({ name: t.item.name, price: t.item.price, value: t.priceValue })), totalPriced: stats.pricedCount }, matchedItems: tied.map(t => t.item) };
+      }
+
+      if (intent.type === 'most_expensive') {
+        if (!stats.maxPriceEntry) return null;
+        const maxVal = stats.maxPriceEntry.priceValue;
+        const tied = stats.pricedEntries.filter(e => e.priceValue === maxVal);
+        const names = tied.map(e => `${e.item.name} at ${e.item.price}`).join(' and ');
+        const summaryText = queryLang === 'mr-IN'
+          ? `आमचा सर्वाधिक प्रीमियम पर्याय आहे ${names}. याबद्दल अधिक माहिती हवी असल्यास सांगा!`
+          : queryLang === 'hi-IN'
+            ? `हमारा सबसे प्रीमियम विकल्प है ${names}। इसके बारे में अधिक जानकारी के लिए कृपया पूछें!`
+            : `Our highest-priced option is ${names}.${tied[0].item.description ? ` It includes ${tied[0].item.description.replace(/\.+$/, '')}.` : ''} Would you like full details on it?`;
+        return { status: 'ANALYTICAL_RESULT', analysisType: 'most_expensive', summaryText, computedData: { mostExpensive: tied.map(t => ({ name: t.item.name, price: t.item.price, value: t.priceValue })), totalPriced: stats.pricedCount }, matchedItems: tied.map(t => t.item) };
+      }
+
+      if (intent.type === 'highest_stock') {
+        if (!stats.highestStockEntry) return null;
+        const top = stats.highestStockEntry;
+        const u = top.item.unit || unitDefault;
+        return {
+          status: 'ANALYTICAL_RESULT',
+          analysisType: 'highest_stock',
+          summaryText: `The option with the highest availability right now is ${top.item.name} with ${top.stockNum} ${u} available${top.item.price ? ` at ${top.item.price}` : ''}.`,
+          computedData: { highestStock: { name: top.item.name, stock: top.stockNum, unit: u, price: top.item.price || '' } },
+          matchedItems: [top.item]
+        };
+      }
+
+      if (intent.type === 'budget_filter' && intent.budget) {
+        if (stats.pricedEntries.length === 0) return null;
+        const b = intent.budget;
+        const cur = b.currency || stats.currency;
+        let filtered = [];
+        let criteriaLabel = '';
+        if (b.op === 'lte') {
+          filtered = stats.pricedEntries.filter(e => e.priceValue <= b.max);
+          criteriaLabel = `under ${formatCurrencyAmount(b.max, cur)}`;
+        } else if (b.op === 'gte') {
+          filtered = stats.pricedEntries.filter(e => e.priceValue >= b.min);
+          criteriaLabel = `above ${formatCurrencyAmount(b.min, cur)}`;
+        } else if (b.op === 'between') {
+          filtered = stats.pricedEntries.filter(e => e.priceValue >= b.min && e.priceValue <= b.max);
+          criteriaLabel = `between ${formatCurrencyAmount(b.min, cur)} and ${formatCurrencyAmount(b.max, cur)}`;
+        }
+        if (filtered.length > 0) {
+          const listStr = filtered.slice(0, 6).map(e => `${e.item.name} (${e.item.price})`).join(', ');
+          const more = filtered.length > 6 ? `, and ${filtered.length - 6} more` : '';
+          const summaryText = queryLang === 'mr-IN'
+            ? `${criteriaLabel} मध्ये आमच्याकडे ${filtered.length} ${nounMr} उपलब्ध आहेत: ${listStr}. कोणत्या पर्यायाबद्दल अधिक माहिती हवी आहे?`
+            : queryLang === 'hi-IN'
+              ? `${criteriaLabel} में हमारे पास ${filtered.length} ${nounHi} उपलब्ध हैं: ${listStr}। आप किस विकल्प के बारे में विस्तार से जानना चाहेंगे?`
+              : `We have ${filtered.length} ${filtered.length === 1 ? 'option' : nounEn} ${criteriaLabel}: ${listStr}${more}. Please let me know which one you would like more details on!`;
+          return { status: 'ANALYTICAL_RESULT', analysisType: 'budget_filter', summaryText, computedData: { criteria: criteriaLabel, count: filtered.length, matches: filtered.map(e => ({ name: e.item.name, price: e.item.price })) }, matchedItems: filtered.map(e => e.item) };
+        }
+        const closest = stats.minPriceEntry;
+        const summaryText = queryLang === 'mr-IN'
+          ? `क्षमस्व, सध्या ${criteriaLabel} मध्ये कोणतेही ${nounMr} उपलब्ध नाहीत. आमचा सर्वात जवळचा परवडणारा पर्याय ${closest.item.name} (${closest.item.price}) आहे.`
+          : queryLang === 'hi-IN'
+            ? `क्षमा करें, अभी ${criteriaLabel} में कोई ${nounHi} उपलब्ध नहीं है। हमारा सबसे किफायती विकल्प ${closest.item.name} (${closest.item.price}) है।`
+            : `I checked our catalog and we do not currently have any ${nounEn} ${criteriaLabel}. Our closest affordable option is ${closest.item.name} at ${closest.item.price}. Would you like details on it?`;
+        return { status: 'ANALYTICAL_RESULT', analysisType: 'budget_filter_empty', summaryText, computedData: { criteria: criteriaLabel, count: 0, closestOption: { name: closest.item.name, price: closest.item.price } }, matchedItems: [closest.item] };
+      }
+
+      if (intent.type === 'out_of_stock_filter') {
+        if (stats.outOfStockItems.length > 0) {
+          const names = stats.outOfStockItems.slice(0, 6).map(i => i.name).join(', ');
+          return { status: 'ANALYTICAL_RESULT', analysisType: 'out_of_stock_filter', summaryText: `Currently ${stats.outOfStockItems.length} ${stats.outOfStockItems.length === 1 ? 'item is' : 'items are'} out of stock: ${names}. All other listed ${nounEn} are available!`, computedData: { outOfStockCount: stats.outOfStockItems.length, items: stats.outOfStockItems.map(i => i.name) }, matchedItems: stats.outOfStockItems };
+        }
+        return { status: 'ANALYTICAL_RESULT', analysisType: 'out_of_stock_filter', summaryText: `Good news! None of our listed ${nounEn} are marked out of stock right now.`, computedData: { outOfStockCount: 0, items: [] }, matchedItems: [] };
+      }
+
+      if (intent.type === 'in_stock_filter') {
+        const avail = stats.inStockItems.length > 0 ? stats.inStockItems : items;
+        const names = avail.slice(0, 6).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
+        const more = avail.length > 6 ? `, and ${avail.length - 6} more` : '';
+        return { status: 'ANALYTICAL_RESULT', analysisType: 'in_stock_filter', summaryText: `We currently have ${avail.length} ${nounEn} available: ${names}${more}. Let me know which one you would like to explore!`, computedData: { inStockCount: avail.length, items: avail.map(i => i.name) }, matchedItems: avail };
+      }
+
+      if (intent.type === 'count') {
+        const sample = items.slice(0, 5).map(i => i.name).join(', ');
+        const more = items.length > 5 ? `, and ${items.length - 5} more` : '';
+        const rangeNote = (stats.minPriceEntry && stats.maxPriceEntry && stats.minPriceEntry.priceValue !== stats.maxPriceEntry.priceValue)
+          ? ` ${priceLabelEn.charAt(0).toUpperCase() + priceLabelEn.slice(1)}s range from ${stats.minPriceEntry.item.price} to ${stats.maxPriceEntry.item.price}.` : '';
+        const summaryText = queryLang === 'mr-IN'
+          ? `आमच्याकडे एकूण ${stats.count} ${nounMr} उपलब्ध आहेत: ${sample}${more}.`
+          : queryLang === 'hi-IN'
+            ? `हमारे पास कुल ${stats.count} ${nounHi} उपलब्ध हैं: ${sample}${more}।`
+            : `We currently offer a total of ${stats.count} ${nounEn}: ${sample}${more}.${rangeNote} Which one would you like details on?`;
+        return { status: 'ANALYTICAL_RESULT', analysisType: 'count', summaryText, computedData: { totalCount: stats.count, inStockCount: stats.inStockCount, outOfStockCount: stats.outOfStockCount, minPrice: stats.minPriceEntry ? stats.minPriceEntry.item.price : null, maxPrice: stats.maxPriceEntry ? stats.maxPriceEntry.item.price : null }, matchedItems: items };
+      }
+
+      if (intent.type === 'price_summary') {
+        if (!stats.minPriceEntry || !stats.maxPriceEntry) return null;
+        const avgFmt = stats.avgPrice !== null ? formatCurrencyAmount(stats.avgPrice, stats.currency) : '';
+        return {
+          status: 'ANALYTICAL_RESULT',
+          analysisType: 'price_summary',
+          summaryText: `Across our ${stats.pricedCount} priced ${nounEn}, ${priceLabelEn}s range from ${stats.minPriceEntry.item.price} (${stats.minPriceEntry.item.name}) to ${stats.maxPriceEntry.item.price} (${stats.maxPriceEntry.item.name})${avgFmt ? `, with an average of about ${avgFmt}` : ''}. Let me know your budget and I can filter options for you!`,
+          computedData: { pricedCount: stats.pricedCount, min: { name: stats.minPriceEntry.item.name, price: stats.minPriceEntry.item.price }, max: { name: stats.maxPriceEntry.item.name, price: stats.maxPriceEntry.item.price }, average: avgFmt },
+          matchedItems: [stats.minPriceEntry.item, stats.maxPriceEntry.item]
+        };
+      }
+      return null;
+    }
+
+    function rankGroundedContext(query, kbList = [], pageSnippets = [], options = {}) {
+      const rawQ = String(query || '').toLowerCase().trim();
+      const extraTerms = String(options.extraTerms || '').toLowerCase().trim();
+      const topKFaqsLimit = Number(options.topKFaqs || 12);
+      const topKSnipsLimit = Number(options.topKSnippets || 6);
+
+      const tokenize = (txt) => String(txt || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !NLU_GRAMMAR_STOPWORDS.has(w));
+
+      const queryToks = Array.from(new Set([...tokenize(rawQ), ...tokenize(extraTerms)]));
+      const distinctiveQueryToks = queryToks.filter(t => !GENERIC_DOMAIN_WORDS.has(t) && !GENERIC_DOMAIN_WORDS.has(nluStemWord(t)));
+
+      const safeKbs = (Array.isArray(kbList) ? kbList : []).filter(k => k && k.q && k.a);
+      const safeSnips = (Array.isArray(pageSnippets) ? pageSnippets : []).filter(s => s && (s.heading || s.text));
+
+      const totalDocs = Math.max(1, safeKbs.length + safeSnips.length);
+      const docFreq = new Map();
+      const reg = (toks) => {
+        const uniq = new Set(toks.map(nluStemWord));
+        for (const u of uniq) docFreq.set(u, (docFreq.get(u) || 0) + 1);
+      };
+      safeKbs.forEach(k => reg([...tokenize(k.q), ...tokenize(k.a)]));
+      safeSnips.forEach(s => reg([...tokenize(s.heading), ...tokenize(s.text)]));
+
+      const idfWeight = (tok) => 1 + Math.log((totalDocs + 1) / ((docFreq.get(nluStemWord(tok)) || 0) + 1));
+
+      const scoreCand = (titleText, bodyText) => {
+        const tLower = String(titleText || '').toLowerCase();
+        const tToks = tokenize(tLower);
+        const bToks = tokenize(bodyText);
+        let score = 0;
+        let matchedDistinctive = 0;
+        let matchedGeneric = 0;
+        let exactPhraseHit = false;
+
+        if (rawQ.length >= 6 && tLower.length >= 6 && (rawQ.includes(tLower) || tLower.includes(rawQ))) {
+          score += 80;
+          exactPhraseHit = true;
+        }
+        for (const qt of queryToks) {
+          const isDist = distinctiveQueryToks.includes(qt);
+          const weight = isDist ? Math.min(2.4, idfWeight(qt)) : 0.45;
+          let bestT = 0;
+          for (const tt of tToks) {
+            const m = fuzzyTokenMatch(qt, tt);
+            if (m > bestT) bestT = m;
+          }
+          let bestB = 0;
+          for (const bt of bToks) {
+            const m = fuzzyTokenMatch(qt, bt);
+            if (m > bestB) bestB = m;
+          }
+          if (bestT >= 3) score += 22 * weight;
+          else if (bestT === 2) score += 14 * weight;
+          if (bestB >= 3) score += 10 * weight;
+          else if (bestB === 2) score += 6 * weight;
+          if (bestT >= 2 || bestB >= 2) {
+            if (isDist) matchedDistinctive++;
+            else matchedGeneric++;
+          }
+        }
+        const distinctiveCoverage = distinctiveQueryToks.length > 0
+          ? matchedDistinctive / distinctiveQueryToks.length
+          : (queryToks.length > 0 ? matchedGeneric / queryToks.length : 0);
+
+        let isRelevant = false;
+        if (exactPhraseHit) isRelevant = true;
+        else if (distinctiveQueryToks.length === 0) isRelevant = score >= 20 && matchedGeneric >= 1;
+        else if (distinctiveQueryToks.length === 1) isRelevant = matchedDistinctive === 1 && score >= 18;
+        else isRelevant = matchedDistinctive >= 1 && distinctiveCoverage >= 0.45 && score >= 24;
+
+        return { score, matchedDistinctive, distinctiveCoverage, isRelevant };
+      };
+
+      const scoredFaqs = safeKbs.map(item => ({ source: 'kb', item, topic: item.q, answer: item.a, ...scoreCand(item.q, item.a) }))
+        .sort((a, b) => b.score - a.score);
+      const scoredSnips = safeSnips.map(snip => ({ source: 'page', item: snip, topic: snip.heading || rawQ, answer: snip.text, ...scoreCand(snip.heading, snip.text) }))
+        .sort((a, b) => b.score - a.score);
+
+      const bestFaq = scoredFaqs.find(f => f.isRelevant) || null;
+      const bestSnip = scoredSnips.find(s => s.isRelevant) || null;
+      const topHit = (bestFaq && bestSnip) ? (bestFaq.score >= bestSnip.score ? bestFaq : bestSnip) : (bestFaq || bestSnip || null);
+      const confidence = !topHit ? 'none' : (topHit.score >= 42 || topHit.distinctiveCoverage >= 0.75 ? 'high' : 'medium');
+
+      return {
+        topHit,
+        topKFaqs: scoredFaqs.slice(0, topKFaqsLimit).map(f => f.item),
+        topKSnippets: scoredSnips.filter(s => s.score > 0).slice(0, topKSnipsLimit).map(s => s.item),
+        confidence,
+        distinctiveQueryToks
+      };
+    }
+
+    function isSemanticallyRepeated(candidateReply, recentReplies = [], threshold = 0.78) {
+      const cand = String(candidateReply || '').trim();
+      if (!cand || !Array.isArray(recentReplies) || recentReplies.length === 0) return false;
+      const toSet = (s) => new Set(
+        String(s || '').toLowerCase().replace(/[^a-z0-9\u0900-\u097F\s]/g, ' ').split(/\s+/).filter(w => w.length >= 2 && !NLU_GRAMMAR_STOPWORDS.has(w))
+      );
+      const candSet = toSet(cand);
+      if (candSet.size === 0) return false;
+      for (const prev of recentReplies.slice(-2)) {
+        const prevStr = String(prev || '').trim();
+        if (!prevStr) continue;
+        if (prevStr.toLowerCase() === cand.toLowerCase()) return true;
+        const prevSet = toSet(prevStr);
+        if (prevSet.size === 0) continue;
+        let inter = 0;
+        for (const t of candSet) if (prevSet.has(t)) inter++;
+        const union = candSet.size + prevSet.size - inter;
+        if (union > 0 && (inter / union) >= threshold) return true;
+      }
+      return false;
+    }
+
+    function buildHonestUncertaintyReply(query, opts = {}) {
+      const { queryLang = 'en-US', profile = null, catalogItems = [], kbTopics = [], phone = '', email = '' } = opts;
+      const rawTopic = String(query || '')
+        .replace(/^(?:hi+|hello+|hey+|namaste|namaskar)[,!.\s]+/i, '')
+        .replace(/^(?:can you tell me|could you tell me|please tell me|do you know|what is|what are|who is|where is|when is|do you have|do you offer|is there)\s+/i, '')
+        .replace(/[?!.]+$/g, '')
+        .trim()
+        .slice(0, 60);
+      const topicClauseEn = rawTopic.length >= 3 ? ` about "${rawTopic}"` : '';
+      const contactParts = [phone ? `call ${phone}` : '', email ? `email ${email}` : ''].filter(Boolean).join(' or ');
+      const topItems = (Array.isArray(catalogItems) ? catalogItems : []).slice(0, 3).map(i => i.name).filter(Boolean);
+      const topTopics = (Array.isArray(kbTopics) ? kbTopics : []).slice(0, 2).filter(Boolean);
+      const followUpEn = (profile && profile.followUpEn) ? profile.followUpEn : 'our offerings, pricing, and support';
+      const followUpHi = (profile && profile.followUpHi) ? profile.followUpHi : 'हमारी सेवाओं और कीमतों';
+      const followUpMr = (profile && profile.followUpMr) ? profile.followUpMr : 'आमच्या सेवा आणि किंमती';
+
+      if (queryLang === 'mr-IN') {
+        const contactMr = contactParts ? ` अचूक माहितीसाठी आपण आमच्या टीमशी संपर्क साधू शकता (${contactParts}).` : '';
+        const optsMr = topItems.length > 0
+          ? ` मी आपल्याला ${topItems.join(', ')} किंवा ${followUpMr}बद्दल नक्कीच अचूक माहिती देऊ शकतो!`
+          : ` मी आपल्याला ${followUpMr}बद्दल मदत करू शकतो.`;
+        return `माफ करा, माझ्याकडे सध्या या वेबसाइटवर या विषयाची अचूक माहिती उपलब्ध नाही, त्यामुळे मी चुकीची माहिती देऊ इच्छित नाही.${contactMr}${optsMr}`;
+      }
+      if (queryLang === 'hi-IN') {
+        const contactHi = contactParts ? ` सटीक जानकारी के लिए आप हमारी टीम से संपर्क कर सकते हैं (${contactParts})।` : '';
+        const optsHi = topItems.length > 0
+          ? ` मैं आपको ${topItems.join(', ')} या ${followUpHi} के बारे में सटीक जानकारी दे सकता हूँ!`
+          : ` मैं आपको ${followUpHi} के बारे में मदद कर सकता हूँ।`;
+        return `क्षमा करें, मेरे पास अभी इस वेबसाइट पर इस विषय की सटीक जानकारी उपलब्ध नहीं है, इसलिए मैं गलत जानकारी नहीं देना चाहूँगा।${contactHi}${optsHi}`;
+      }
+      const contactEn = contactParts ? ` For an exact answer, please reach our team directly via ${contactParts}.` : '';
+      const helpEn = topItems.length > 0
+        ? ` Meanwhile, I can give you verified details on ${topItems.join(', ')}, or help with ${followUpEn}!`
+        : (topTopics.length > 0
+            ? ` I can help right away with topics like ${topTopics.join(' or ')}.`
+            : ` I would be happy to help with ${followUpEn} if you'd like!`);
+      return `I don't have exact information${topicClauseEn} listed on this website right now, so I want to be honest rather than guess.${contactEn}${helpEn}`;
+    }
+
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
     async function resolveDatabaseBridge(query, agentConfig, context = null) {
       if (!query || isGreetingOrConversational(query)) {
@@ -3430,6 +4015,29 @@
             status: 'NAVIGATE_SECTION',
             item: exactTarget.label || 'section',
             data: exactTarget
+          };
+        }
+      }
+
+      // 0.20 Deterministic Catalog Data Analysis BEFORE Single-Item Lookup
+      // Handles: Comparisons ("compare Science and Commerce"), Superlatives ("cheapest", "most expensive", "highest stock"),
+      // Budget Filters ("under ₹20,000", "between 100 and 500"), Stock Filters ("out of stock"), and Counts/Price Range!
+      if (liveCatalog.length > 0 && typeof analyzeCatalogQuery === 'function') {
+        const archForAnalytics = typeof detectCurrentArchetype === 'function' ? detectCurrentArchetype(agentConfig) : 'general';
+        const profForAnalytics = typeof getArchetypeProfile === 'function' ? getArchetypeProfile(archForAnalytics) : null;
+        const langForAnalytics = typeof detectTextLanguage === 'function' ? detectTextLanguage(query) : 'en-US';
+        const analyticalResult = analyzeCatalogQuery(effectiveQuery, liveCatalog, profForAnalytics, langForAnalytics) ||
+                                 analyzeCatalogQuery(strippedQuery, liveCatalog, profForAnalytics, langForAnalytics);
+        if (analyticalResult) {
+          if (context && Array.isArray(analyticalResult.matchedItems) && analyticalResult.matchedItems.length > 0) {
+            context.lastDisplayedItems = analyticalResult.matchedItems;
+            context.catalogOffset = Math.min(5, analyticalResult.matchedItems.length);
+            context.activeTopic = analyticalResult.analysisType;
+          }
+          return {
+            status: 'ANALYTICAL_RESULT',
+            item: analyticalResult.analysisType,
+            data: analyticalResult
           };
         }
       }
@@ -3799,16 +4407,36 @@
     }
 
     // --- STRICT LIVE CUSTOMER SUPPORT SYSTEM PROMPT BUILDER ---
-    function buildCustomerSystemPrompt(agentConfig, bridgeResult, queryLang = 'en-US', context = null) {
+    function buildCustomerSystemPrompt(agentConfig, bridgeResult, queryLang = 'en-US', context = null, userQuery = '') {
       const businessName = agentConfig.businessName || agentConfig.companyName || agentConfig.name || 'our store';
       const rawKb = agentConfig.knowledgeBase || [];
-      const cleanFaqs = rawKb.filter(item => isCustomerSafeFaq(item.q, item.a)).slice(0, 25);
+      const allSafeFaqs = rawKb.filter(item => isCustomerSafeFaq(item.q, item.a));
+      const hostSnippets = (typeof extractHostPageSnippets === 'function') ? extractHostPageSnippets() : [];
+
+      // Query-Aware Top-K RAG Retrieval (ranks the most relevant FAQs & live page snippets for THIS exact question!)
+      let cleanFaqs = allSafeFaqs.slice(0, 12);
+      let topPageSnippets = [];
+      if (userQuery && typeof rankGroundedContext === 'function' && (allSafeFaqs.length > 0 || hostSnippets.length > 0)) {
+        const rag = rankGroundedContext(userQuery, allSafeFaqs, hostSnippets, { topKFaqs: 12, topKSnippets: 5 });
+        if (rag.topKFaqs.length > 0) cleanFaqs = rag.topKFaqs;
+        topPageSnippets = rag.topKSnippets;
+      }
+
       const cleanFaqBlock = cleanFaqs.length > 0
         ? cleanFaqs.map(k => `Q: ${k.q}\nA: ${k.a}`).join('\n\n')
         : 'General customer support assistance.';
+      const relevantPageBlock = topPageSnippets.length > 0
+        ? `\n\n[RELEVANT_LIVE_PAGE_FACTS]\n${topPageSnippets.map(s => `${s.heading ? `${s.heading}: ` : ''}${s.text}`).join('\n')}`
+        : '';
 
       let bridgeBlock = '';
-      if (bridgeResult && (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API')) {
+      if (bridgeResult && bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data) {
+        const aData = bridgeResult.data;
+        bridgeBlock = `STATUS: ANALYTICAL_RESULT
+ANALYSIS_TYPE: ${aData.analysisType || 'analysis'}
+VERIFIED_SUMMARY: ${aData.summaryText || ''}
+COMPUTED_DATA: ${JSON.stringify(aData.computedData || {})}`;
+      } else if (bridgeResult && (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API')) {
         const item = bridgeResult.data;
         bridgeBlock = `STATUS: FOUND_IN_DATABASE
 ITEM_NAME: ${item.name || 'Unknown'}
@@ -3937,7 +4565,10 @@ CRITICAL RULES:
 - STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
 - CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
 - EXACT FORM & SECTION REDIRECTION: When [LIVE_BRIDGE_DATA] has STATUS: NAVIGATE_SECTION, confirm you are taking the visitor directly to that exact form, section, or page (mention key fields if it is a form). When asked how to apply/order/book/register, guide them using [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT].
-- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [ACTIVE_CONVERSATION_CONTEXT], [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
+- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [ACTIVE_CONVERSATION_CONTEXT], [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT], [LIVE_HOST_WEBSITE_CONTEXT], [RELEVANT_LIVE_PAGE_FACTS], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
+- DETERMINISTIC DATA ANALYSIS: If [LIVE_BRIDGE_DATA] has STATUS: ANALYTICAL_RESULT (comparisons, cheapest/most expensive, budget filters, stock filters, counts), use the exact VERIFIED_SUMMARY and COMPUTED_DATA numbers without altering or inventing figures.
+- HONEST UNCERTAINTY PROTOCOL (CRITICAL): If the visitor asks for a specific fact, number, person, branch, date, or policy that is NOT explicitly present in your provided context, NEVER guess, assume, or fabricate an answer. Politely state that you do not have that exact detail listed on the website right now, and immediately offer verified contact details or related topics you can help with.
+- ANTI-REPETITION: Never repeat the exact same answer from a previous turn; clarify, provide new verified details, or offer concrete next steps.
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
 - If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items concisely in 1-2 sentences and confirm you have opened them.
 - If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item is not currently listed, mention available options if present, and offer guidance.
@@ -3951,7 +4582,7 @@ ${catalogSectionLabel}
 ${catalogSummary || 'Catalog empty or not loaded.'}
 
 [LIVE_HOST_WEBSITE_CONTEXT]
-${hostContextBlock || 'Customer website live interface.'}
+${hostContextBlock || 'Customer website live interface.'}${relevantPageBlock}
 
 [CLEAN_CUSTOMER_FAQ_KB]
 ${cleanFaqBlock}`;
@@ -4021,7 +4652,7 @@ ${cleanFaqBlock}`;
               body: JSON.stringify({
                 model: gModel,
                 messages: messagesPayload,
-                temperature: 0.2,
+                temperature: 0.15,
                 max_tokens: 340
               }),
               signal: AbortSignal.timeout(gIdx === 0 ? 5500 : 4000)
@@ -4069,7 +4700,7 @@ ${cleanFaqBlock}`;
                 },
                 contents,
                 generationConfig: {
-                  temperature: 0.3,
+                  temperature: 0.2,
                   maxOutputTokens: 340
                 }
               }),
@@ -4111,8 +4742,8 @@ ${cleanFaqBlock}`;
             body: JSON.stringify({
               model: model || 'gpt-4o-mini',
               messages: openAiMessages,
-              temperature: 0.3,
-              max_tokens: 150
+              temperature: 0.15,
+              max_tokens: 340
             }),
             signal: AbortSignal.timeout(8000)
           });
@@ -4192,77 +4823,22 @@ ${cleanFaqBlock}`;
       const profile = getArchetypeProfile(currentArchetype);
       const intentConcepts = (typeof classifyIntentConcepts === 'function') ? classifyIntentConcepts(lower) : {};
 
-      // Helper to search KB + Host Page Snippets for a grounded answer (Typo-Tolerant & Word-Order-Independent)
+      // Helper to search KB + Host Page Snippets for a precision-gated grounded answer (Typo-Tolerant, IDF-Weighted & Coverage-Checked)
       const findGroundedKbOrSnippet = (extraTerms = '') => {
         const hostK = extractHostPageKnowledge();
         const combinedKb = [...(agentConfig.knowledgeBase || []), ...hostK.faqs].filter(item => isCustomerSafeFaq(item.q, item.a));
-        const queryTokens = [...meaningfulWords, ...extraTerms.toLowerCase().split(/\s+/).filter(w => w.length > 2)];
-
-        let bestKb = null;
-        let bestKbScore = 0;
-        for (const item of combinedKb) {
-          const qL = (item.q || '').toLowerCase();
-          const aL = (item.a || '').toLowerCase();
-          const qToks = qL.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
-          const aToks = aL.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
-          let sc = 0;
-          if (lower.length >= 4 && (lower.includes(qL) || qL.includes(lower))) sc += 80;
-          for (const w of queryTokens) {
-            let bestQ = 0;
-            for (const kt of qToks) {
-              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, kt) : (kt.includes(w) ? 3 : 0);
-              if (m > bestQ) bestQ = m;
-            }
-            if (bestQ >= 3) sc += 20;
-            else if (bestQ === 2) sc += 14;
-
-            let bestA = 0;
-            for (const at of aToks) {
-              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, at) : (at.includes(w) ? 3 : 0);
-              if (m > bestA) bestA = m;
-            }
-            if (bestA >= 3) sc += 8;
-            else if (bestA === 2) sc += 5;
-          }
-          if (sc > bestKbScore) {
-            bestKbScore = sc;
-            bestKb = item;
-          }
-        }
-        if (bestKb && bestKbScore >= 20) {
-          return { source: 'kb', topic: bestKb.q, answer: bestKb.a };
-        }
-
-        // Check Live Host Page Content Snippets (fuzzy token scoring)
         const snippets = extractHostPageSnippets();
-        let bestSnip = null;
-        let bestSnipScore = 0;
-        for (const snip of snippets) {
-          const hToks = (snip.heading || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
-          const tToks = (snip.text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
-          let sc = 0;
-          for (const w of queryTokens) {
-            let bestH = 0;
-            for (const ht of hToks) {
-              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, ht) : (ht.includes(w) ? 3 : 0);
-              if (m > bestH) bestH = m;
-            }
-            if (bestH >= 2) sc += (bestH >= 3 ? 22 : 15);
-
-            let bestT = 0;
-            for (const tt of tToks) {
-              const m = typeof fuzzyTokenMatch === 'function' ? fuzzyTokenMatch(w, tt) : (tt.includes(w) ? 3 : 0);
-              if (m > bestT) bestT = m;
-            }
-            if (bestT >= 2) sc += (bestT >= 3 ? 12 : 8);
+        if (typeof rankGroundedContext === 'function') {
+          const rag = rankGroundedContext(lower, combinedKb, snippets, { extraTerms });
+          if (rag.topHit) {
+            return {
+              source: rag.topHit.source,
+              topic: rag.topHit.topic,
+              answer: rag.topHit.answer,
+              confidence: rag.confidence
+            };
           }
-          if (sc > bestSnipScore) {
-            bestSnipScore = sc;
-            bestSnip = snip;
-          }
-        }
-        if (bestSnip && bestSnipScore >= 24) {
-          return { source: 'page', topic: bestSnip.heading || effectiveText, answer: bestSnip.text };
+          return null;
         }
         return null;
       };
@@ -4305,7 +4881,9 @@ ${cleanFaqBlock}`;
       }
 
       // 0.1 Universal Context-Aware Follow-Up Query Handler (When a specific activeItem is locked in memory)
-      if (context && context.activeItem && !isCatalogListQuery(effectiveText) && !isGeneralPriceOrOverviewQuery(effectiveText)) {
+      // Never hijack explicit analytical queries (compare, cheapest, budget filter, counts)!
+      const isAnalyticalTurn = typeof detectAnalyticalIntent === 'function' && Boolean(detectAnalyticalIntent(effectiveText));
+      if (context && context.activeItem && !isAnalyticalTurn && !isCatalogListQuery(effectiveText) && !isGeneralPriceOrOverviewQuery(effectiveText)) {
         const active = context.activeItem;
         const unit = active.unit || profile.itemUnit || 'units';
 
@@ -4455,8 +5033,24 @@ ${cleanFaqBlock}`;
         context.lastUserTopic = meaningfulWords.slice(0, 6).join(' ');
       }
 
-      // 1. Direct Catalog List Query Handler (e.g. "can you give me details of courses", "course details", "which courses do you provide", "give list of all meds", "show all products", "show menu")
+      // 1. Direct Catalog List, Pricing Overview & Analytical Query Handlers
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig, context);
+      if (bridge && bridge.status === 'ANALYTICAL_RESULT' && bridge.data && bridge.data.summaryText) {
+        if (context) {
+          context.activeTopic = bridge.data.analysisType || 'analytics';
+          context.fallbackCount = 0;
+          if (Array.isArray(bridge.data.matchedItems) && bridge.data.matchedItems.length > 0) {
+            context.lastDisplayedItems = bridge.data.matchedItems;
+            context.catalogOffset = Math.min(5, bridge.data.matchedItems.length);
+          }
+        }
+        const sec = findHostSection('courses') || findHostSection('pricing') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu');
+        if (sec) scrollToHostSection(sec);
+        return {
+          reply: bridge.data.summaryText,
+          navAction: sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null
+        };
+      }
       if (bridge && bridge.status === 'FOUND_CATALOG_LIST') {
         const allItems = Array.isArray(bridge.data) && bridge.data.length > 0 ? bridge.data : getAllCatalogItems(agentConfig);
         const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
@@ -4799,17 +5393,17 @@ ${cleanFaqBlock}`;
           context.fallbackCount = 0;
         }
         if (currentArchetype === 'academic') {
-          if (queryLang === 'mr-IN') return `प्रवेशासाठी विद्यार्थ्यांनी मागील पात्रता परीक्षा आवश्यक गुणांसह उत्तीर्ण केलेली असावी. विशिष्ट अभ्यासक्रमाचे नाव सांगितल्यास मी अधिक तपशील देऊ शकतो.`;
-          if (queryLang === 'hi-IN') return `एडमिशन के लिए छात्रों को पिछली पात्रता परीक्षा आवश्यक अंकों के साथ उत्तीर्ण करनी होती है। किसी विशेष कोर्स का नाम बताएं ताकि मैं सटीक विवरण दे सकूँ।`;
-          return `For admissions, applicants must have passed the qualifying board examination with the required merit marks. Tell me which course you are interested in for exact details!`;
+          if (queryLang === 'mr-IN') return `अचूक पात्रता निकष येथे दिलेले नसले तरी, साधारणपणे प्रवेशासाठी मागील पात्रता परीक्षा आवश्यक गुणांसह उत्तीर्ण असणे गरजेचे असते. अचूक माहितीसाठी विशिष्ट अभ्यासक्रमाचे नाव सांगा किंवा कार्यालयाशी संपर्क साधा!`;
+          if (queryLang === 'hi-IN') return `हालांकि सटीक पात्रता मानदंड यहाँ नहीं दिए गए हैं, आमतौर पर एडमिशन के लिए पिछली पात्रता परीक्षा आवश्यक अंकों के साथ उत्तीर्ण करनी होती है। सटीक पुष्टि के लिए किसी कोर्स का नाम बताएं या कार्यालय से संपर्क करें!`;
+          return `While exact criteria are not published on this page, admissions typically require passing the qualifying board examination with the required merit marks. Tell me which course you are interested in or contact our office to confirm!`;
         }
         if (currentArchetype === 'healthcare') {
-          return `Prescription medicines require a valid doctor prescription; over-the-counter items are available directly. Ask about any specific medicine for details!`;
+          return `Prescription medicines require a valid doctor prescription, while over-the-counter items are available directly. Ask about any specific medicine for details!`;
         }
         if (currentArchetype === 'financial') {
-          return `Eligibility depends on your profile, KYC verification (PAN/ID), and income documents. Let me know which financial service you need!`;
+          return `While exact terms vary by product, eligibility typically depends on your profile, KYC verification (PAN/ID), and income documents. Let me know which financial service you need!`;
         }
-        return `Our ${profile.nounEn} are available to all customers directly through this website. Tell me which option you'd like to explore!`;
+        return `While exact eligibility rules aren't listed here, our ${profile.nounEn} are generally available to customers directly through this website. Tell me which option you'd like to explore!`;
       }
 
       if (isGeneralDocsOrPolicy) {
@@ -4818,32 +5412,32 @@ ${cleanFaqBlock}`;
           context.fallbackCount = 0;
         }
         if (currentArchetype === 'academic') {
-          if (queryLang === 'mr-IN') return `प्रवेशासाठी लागणारी कागदपत्रे: मागील इयत्तेची मार्कशीट, मूळ शाळा सोडल्याचा दाखला (LC), आधार कार्ड आणि पासपोर्ट आकाराचे फोटो.`;
-          if (queryLang === 'hi-IN') return `एडमिशन के लिए आवश्यक दस्तावेज: पिछली कक्षा की मार्कशीट, मूल स्कूल छोड़ने का प्रमाण पत्र (LC), आधार कार्ड और पासपोर्ट फोटो।`;
-          return `Required admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs.`;
+          if (queryLang === 'mr-IN') return `अचूक कागदपत्रांची यादी येथे नसली तरी, प्रवेशासाठी साधारणपणे मागील इयत्तेची मार्कशीट, मूळ शाळा सोडल्याचा दाखला (LC), आधार कार्ड आणि पासपोर्ट आकाराचे फोटो लागतात. कृपया प्रवेश कार्यालयाकडे खात्री करा.`;
+          if (queryLang === 'hi-IN') return `हालांकि सटीक सूची यहाँ उपलब्ध नहीं है, एडमिशन के लिए आमतौर पर पिछली कक्षा की मार्कशीट, मूल स्कूल छोड़ने का प्रमाण पत्र (LC), आधार कार्ड और पासपोर्ट फोटो की आवश्यकता होती है। कृपया कार्यालय से पुष्टि कर लें।`;
+          return `While the exact checklist is not published on this page, required admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs. Please confirm with our admissions desk!`;
         }
         if (currentArchetype === 'ecommerce') {
-          return `We provide authentic products with standard shipping, manufacturer warranty, and hassle-free returns as listed on our store policy. Ask about any specific product for exact details!`;
+          return `For exact shipping, warranty, and return terms, please check our store policy section or ask about a specific product so I can check what is listed for it!`;
         }
         if (currentArchetype === 'healthcare') {
           return `Please keep a valid doctor prescription and patient ID ready for prescription items. Over-the-counter healthcare items do not require a prescription.`;
         }
         if (currentArchetype === 'hospitality') {
-          return `Standard government photo ID is required at check-in. Check-in, check-out, and cancellation terms are shown on our reservation section—ask about any room for full details!`;
+          return `Standard government photo ID is typically required at check-in. Exact check-in, check-out, and cancellation terms are shown in our reservation section—ask about any room for full details!`;
         }
         if (currentArchetype === 'saas') {
-          return `Flexible monthly and annual billing options are available with instant activation. Ask about any specific plan to compare features and pricing!`;
+          return `Exact billing and invoice terms depend on your chosen plan. Ask about any specific plan to review features and pricing!`;
         }
         if (currentArchetype === 'food') {
-          return `We offer fresh dine-in, takeaway, and delivery options with clear dietary details. Ask about any dish on our menu for ingredients and pricing!`;
+          return `For exact delivery, takeaway, or dietary allergen details, please ask about a specific dish on our menu or check with our staff directly!`;
         }
         if (currentArchetype === 'automotive') {
-          return `Manufacturer warranty, financing, and servicing support are included. Please carry a valid driving license for showroom test drives!`;
+          return `For exact warranty, financing, and servicing terms, please check our showroom policy or ask about a specific model. A valid driving license is typically required for test drives.`;
         }
         if (currentArchetype === 'financial') {
-          return `Standard KYC documents (PAN card, Aadhaar/ID proof, and relevant financial statements) are typically required. Ask about a specific service for an exact checklist!`;
+          return `While exact checklists depend on the service, standard KYC documents (PAN card, Aadhaar/ID proof, and relevant financial statements) are typically required. Ask about a specific service to confirm!`;
         }
-        return `You can review full policy and requirement details on our website or ask me about any specific ${profile.itemNounEn} option!`;
+        return `I don't have the exact policy terms listed right here, so please review our website policy section or ask me about any specific ${profile.itemNounEn} option!`;
       }
 
       // 7. Polite Universal Catalog Guidance Fallback (Plural-Safe Across All 10 Website Archetypes)
@@ -4869,52 +5463,56 @@ ${cleanFaqBlock}`;
         };
       }
 
-      // 8. Anti-Loop / Stuck-State Recovery Guard: NEVER repeat the exact same vague fallback message twice!
-      const itemContextName = context?.activeItem?.name ? ` regarding ${context.activeItem.name}` : '';
-      let genericFallback = `I am here to assist you${itemContextName}. Would you like to know more about our ${profile.followUpEn}?`;
-      if (queryLang === 'mr-IN') {
-        genericFallback = `मी आपल्या सेवेसाठी तत्पर आहे${itemContextName}. आपल्याला ${profile.followUpMr}बद्दल अधिक माहिती हवी आहे का?`;
-      } else if (queryLang === 'hi-IN') {
-        genericFallback = `मैं आपकी सहायता के लिए उपस्थित हूँ${itemContextName}। क्या आप ${profile.followUpHi} के बारे में और जानना चाहते हैं?`;
-      }
+      // 8. Honest Uncertainty & Semantic Anti-Repetition Guard:
+      // NEVER guess/fabricate unverified facts, and NEVER repeat the same or near-identical answer twice!
+      const safeKbTopics = (agentConfig.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a)).slice(0, 3).map(k => k.q);
+      const recentReplies = [
+        ...(Array.isArray(context?.recentReplies) ? context.recentReplies : []),
+        ...(context?.lastReply ? [context.lastReply] : [])
+      ].filter(Boolean);
 
-      const wouldLoop = Boolean(context && (context.lastReply === genericFallback || (context.fallbackCount || 0) >= 1));
+      const honestUnknown = (typeof buildHonestUncertaintyReply === 'function')
+        ? buildHonestUncertaintyReply(text, {
+            queryLang,
+            profile,
+            catalogItems: allItems,
+            kbTopics: safeKbTopics,
+            phone: hostKnowledge.phone || '',
+            email: hostKnowledge.email || ''
+          })
+        : `I don't have exact details about that on this website right now. Would you like to explore our ${profile.followUpEn}?`;
+
+      const wouldLoop = Boolean(
+        context && (
+          (context.fallbackCount || 0) >= 1 ||
+          (typeof isSemanticallyRepeated === 'function' ? isSemanticallyRepeated(honestUnknown, recentReplies) : context.lastReply === honestUnknown)
+        )
+      );
+
       if (wouldLoop) {
         if (context) context.fallbackCount = (context.fallbackCount || 0) + 1;
-        // Proactively break out of any loop with REAL concrete options from this website!
+        // Proactively break out of any repetition with REAL concrete verified options from this website!
         if (allItems.length > 0) {
           if (context) {
             context.lastDisplayedItems = allItems;
             context.catalogOffset = Math.min(5, allItems.length);
           }
           const topList = allItems.slice(0, 4).map(i => `${i.name}${i.price ? ` (${i.price})` : ''}`).join(', ');
-          if (queryLang === 'mr-IN') return `मी थेट मदत करू शकतो! आमचे प्रमुख पर्याय: ${topList}. यापैकी कोणाचेही नाव किंवा "पहिला" असे सांगा!`;
-          if (queryLang === 'hi-IN') return `मैं सीधे मदद कर सकता हूँ! हमारे प्रमुख विकल्प हैं: ${topList}। किसी का भी नाम बताएं या "पहला" कहें!`;
-          return `Let me show you concrete options right away: ${topList}. Just name any of these or say "the first one" for full details!`;
+          if (queryLang === 'mr-IN') return `मी आपल्याला थेट खात्रीशीर पर्याय दाखवतो: ${topList}. यापैकी कोणाचेही नाव किंवा "पहिला" असे सांगा!`;
+          if (queryLang === 'hi-IN') return `मैं आपको सीधे सत्यापित विकल्प दिखाता हूँ: ${topList}। किसी का भी नाम बताएं या "पहला" कहें!`;
+          return `Let me show you our verified options right away: ${topList}. Just name any of these, ask to compare two options, or say "the first one" for full details!`;
         }
-        const safeKbTopics = (agentConfig.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a)).slice(0, 3).map(k => k.q);
         if (safeKbTopics.length > 0) {
-          return `I can answer questions right away such as: ${safeKbTopics.join(' | ')}. Which topic would you like me to explain?`;
+          return `I can give you exact verified answers on: ${safeKbTopics.join(', ')}. Which topic would you like me to explain?`;
         }
         if (hostKnowledge.phone || hostKnowledge.email) {
           const contactParts = [hostKnowledge.phone ? `call ${hostKnowledge.phone}` : '', hostKnowledge.email ? `email ${hostKnowledge.email}` : ''].filter(Boolean).join(' or ');
-          return `I want to make sure you get the exact answer you need. You can ask me about ${profile.followUpEn}, or reach our team directly via ${contactParts}.`;
+          return `To make sure you receive an accurate answer, please reach our team directly via ${contactParts}, or ask me about ${profile.followUpEn}.`;
         }
       }
 
-      if (history && history.length > 0) {
-        if (context) context.fallbackCount = (context.fallbackCount || 0) + 1;
-        return genericFallback;
-      }
-
-      if (queryLang === 'mr-IN') {
-        return `मी ${agentConfig.name} आहे. मी आपल्या प्रश्नाचे स्वागत करतो. आपण आमच्या ${profile.nounMr}बद्दल विचारू शकता. मी कशी मदत करू?`;
-      }
-      if (queryLang === 'hi-IN') {
-        return `मैं ${agentConfig.name} हूँ। आप हमारी ${profile.nounHi} के बारे में कुछ भी पूछ सकते हैं। मैं आपकी क्या मदद करूँ?`;
-      }
-
-      return `Hello, I'm ${agentConfig.name}! You can ask me about our ${profile.nounEn}, ${profile.followUpEn}, or ask me to jump to any section on this page.`;
+      if (context) context.fallbackCount = (context.fallbackCount || 0) + 1;
+      return honestUnknown;
     }
 
     // Maintain multi-turn conversation memory & session logs
@@ -4926,6 +5524,7 @@ ${cleanFaqBlock}`;
       catalogOffset: 0,
       lastIntent: null,
       lastReply: '',
+      recentReplies: [],
       fallbackCount: 0,
       turnCount: 0
     };
@@ -5147,6 +5746,15 @@ ${cleanFaqBlock}`;
             if (sec) scrollToHostSection(sec);
             const cleanBtnName = cleanScrapedItemTitle(bridgeResult.data?.name || 'Item').name.substring(0, 25);
             navAction = sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec } : null;
+          } else if (bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data) {
+            if (Array.isArray(bridgeResult.data.matchedItems) && bridgeResult.data.matchedItems.length > 0) {
+              conversationContext.lastDisplayedItems = bridgeResult.data.matchedItems;
+              conversationContext.catalogOffset = Math.min(5, bridgeResult.data.matchedItems.length);
+            }
+            conversationContext.activeTopic = bridgeResult.data.analysisType || 'analytics';
+            const sec = findHostSection('courses') || findHostSection('pricing') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu');
+            if (sec) scrollToHostSection(sec);
+            navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null;
           } else if (bridgeResult.status === 'FOUND_CATALOG_LIST' || bridgeResult.status === 'FOUND_PRICE_OVERVIEW') {
             if (Array.isArray(bridgeResult.data) && bridgeResult.data.length > 0) {
               conversationContext.lastDisplayedItems = bridgeResult.data;
@@ -5159,9 +5767,9 @@ ${cleanFaqBlock}`;
           }
         }
 
-        // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database & website context
+        // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database, precomputed analytics & RAG-ranked website context
         if (apiKey) {
-          const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext);
+          const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext, cleanInput);
           reply = await callLLMWithBYOK(cleanInput, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
           if (reply) conversationContext.fallbackCount = 0;
         }
@@ -5183,6 +5791,8 @@ ${cleanFaqBlock}`;
         reply = polishSpokenReply(reply);
 
         conversationContext.lastReply = reply;
+        if (!Array.isArray(conversationContext.recentReplies)) conversationContext.recentReplies = [];
+        conversationContext.recentReplies = [...conversationContext.recentReplies.slice(-2), reply];
         conversationContext.turnCount = (conversationContext.turnCount || 0) + 1;
         conversationHistory.push({ role: 'assistant', content: reply });
         sessionLogMessages.push({ role: 'agent', text: reply, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });

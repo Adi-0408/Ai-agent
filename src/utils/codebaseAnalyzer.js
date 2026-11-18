@@ -8,6 +8,7 @@
 
 import { extractDatabaseCredentials } from './databaseKeyExtractor.js';
 import { extractWebsiteBlueprint } from './websiteWorkflowAnalyzer.js';
+import { parseNumericPrice, computeCatalogStats } from './dataAnalyticsEngine.js';
 
 export function detectFileType(fileName, content) {
   const lowerName = (fileName || '').toLowerCase();
@@ -173,17 +174,71 @@ export function analyzeFrontendFile(fileName, content) {
     }
   }
 
+  // Strip <script> and <style> blocks once for clean content extraction
+  const safeContentForKb = String(content || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ');
+
   // 4. Extract Heading + Paragraph pairs (Rich Website Knowledge Facts)
-  const hPairRegex = /<(h[2-4])[^>]*>([\s\S]*?)<\/\1>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/gi;
+  const seenFaqQ = new Set(knowledgeBase.map(k => k.q.toLowerCase()));
+  const pushSafeKb = (q, a) => {
+    const cleanQ = String(q || '').trim();
+    const cleanA = String(a || '').trim();
+    if (!cleanQ || !cleanA || seenFaqQ.has(cleanQ.toLowerCase())) return;
+    if (!isCustomerSafeFaq(cleanQ, cleanA)) return;
+    seenFaqQ.add(cleanQ.toLowerCase());
+    knowledgeBase.push({ q: cleanQ, a: cleanA });
+  };
+
+  const hPairRegex = /<(h[2-4])[^>]*>([\s\S]*?)<\/\1>[\s\S]{0,120}?<p[^>]*>([\s\S]*?)<\/p>/gi;
   let pMatch;
-  while ((pMatch = hPairRegex.exec(content)) !== null) {
+  while ((pMatch = hPairRegex.exec(safeContentForKb)) !== null) {
     const hText = clean(pMatch[2]);
     const pText = clean(pMatch[3]);
     if (hText.length > 3 && pText.length > 15 && hText.length < 90) {
-      knowledgeBase.push({
-        q: `What is ${hText}?`,
-        a: pText
-      });
+      pushSafeKb(`What is ${hText}?`, pText);
+    }
+  }
+
+  // 4B. Extract Heading + Bulleted/Numbered Lists (<ul>/<ol> — captures Eligibility, Documents, Features, Syllabus, Amenities!)
+  const hListRegex = /<(h[2-4])[^>]*>([\s\S]*?)<\/\1>[\s\S]{0,180}?<(?:ul|ol)[^>]*>([\s\S]{10,1600}?)<\/(?:ul|ol)>/gi;
+  let lMatch;
+  while ((lMatch = hListRegex.exec(safeContentForKb)) !== null) {
+    const hText = clean(lMatch[2]);
+    if (hText.length <= 3 || hText.length >= 90) continue;
+    const liItems = Array.from(lMatch[3].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi))
+      .map(m => clean(m[1]))
+      .filter(t => t.length >= 3 && t.length <= 180)
+      .slice(0, 8);
+    if (liItems.length >= 2) {
+      pushSafeKb(`What are the details for ${hText}?`, `${hText} includes: ${liItems.join('; ')}.`);
+    }
+  }
+
+  // 4C. Extract Definition Lists (<dl><dt>Term</dt><dd>Definition</dd></dl>)
+  const dlPairRegex = /<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi;
+  let dlMatch;
+  while ((dlMatch = dlPairRegex.exec(safeContentForKb)) !== null) {
+    const term = clean(dlMatch[1]);
+    const def = clean(dlMatch[2]);
+    if (term.length >= 2 && term.length < 80 && def.length >= 4 && def.length < 350) {
+      pushSafeKb(`What is ${term}?`, def);
+    }
+  }
+
+  // 4D. Extract 2-Column Key-Value Info/Spec Tables (e.g., Timings | 8 AM - 2 PM, Principal | Dr. Sharma, Duration | 2 Years)
+  const kvTableRegex = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
+  let kvTm;
+  while ((kvTm = kvTableRegex.exec(safeContentForKb)) !== null) {
+    const rowRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+    let kvRm;
+    while ((kvRm = rowRe.exec(kvTm[1])) !== null) {
+      const cells = Array.from(kvRm[1].matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)).map(m => clean(m[1]));
+      if (cells.length === 2 && cells[0].length >= 3 && cells[0].length <= 50 && cells[1].length >= 2 && cells[1].length <= 200) {
+        if (!/^(name|item|product|course|price|fee|stock|status|sr\.?\s*no|action)$/i.test(cells[0]) && !/^(?:₹|\$|€|£|rs\.?)\s*\d/i.test(cells[1])) {
+          pushSafeKb(`What is ${cells[0]}?`, `${cells[0]}: ${cells[1]}.`);
+        }
+      }
     }
   }
 
@@ -235,11 +290,12 @@ export function analyzeFrontendFile(fileName, content) {
     }
   }
 
-  // 7. Check for pricing signs like $ or USD
-  const priceMatches = content.matchAll(/\$\s?(\d+(?:,\d{3})*(?:\.\d{2})?)/g);
+  // 7. Check for pricing signs across currencies (₹, Rs., $, €, £)
+  const priceMatches = safeContentForKb.matchAll(/(?:₹|\$|€|£|Rs\.?\s*)\s*(\d+(?:,\d{2,3})*(?:\.\d{1,2})?)/gi);
   for (const match of priceMatches) {
-    if (!pricingOrProducts.includes(`$${match[1]}`)) {
-      pricingOrProducts.push(`$${match[1]}`);
+    const formattedPrice = match[0].replace(/\s+/g, ' ').trim();
+    if (!pricingOrProducts.includes(formattedPrice)) {
+      pricingOrProducts.push(formattedPrice);
     }
   }
 
@@ -270,10 +326,13 @@ export function analyzeFrontendFile(fileName, content) {
     if (!isValidCustomerCatalogName(cleanName, rec)) return;
     if (seenCatNames.has(cleanName.toLowerCase())) return;
     seenCatNames.add(cleanName.toLowerCase());
+    const parsedPrice = parseNumericPrice(rec.price);
     catalogRecords.push({
       id: `html_${catalogRecords.length + 1}`,
       name: cleanName,
       price: rec.price,
+      numericPrice: parsedPrice ? parsedPrice.value : null,
+      currency: parsedPrice ? parsedPrice.currency : '',
       stock: (stock !== null && !isNaN(stock)) ? Number(stock) : null,
       unit,
       category: '',
@@ -605,8 +664,8 @@ export function isValidCustomerCatalogName(rawName, record = null) {
     .replace(/\bv?\d+\.\d+[a-zA-Z]*\b/g, ' ');
   if (/\b[a-zA-Z_$][a-zA-Z0-9_$]*\.[a-zA-Z_$][a-zA-Z0-9_$]{1,}\b/.test(withoutSafeDots)) return false;
 
-  // 6. Reject JS/Python/HTTP keywords, statements, and raw technical strings
-  if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
+  // 6. Reject JS/Python/HTTP keywords, statements, and raw technical strings (keep academic "Class 11 Science" valid!)
+  if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\s+[A-Z_$][A-Za-z0-9_$]*\s*(?:\{|extends\b)|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
   if (/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|application\/json|text\/plain|content-type|utf-8|cors|null|undefined|true|false|nan)$/i.test(name)) return false;
 
   // 7. Reject developer documentation, README feature specs & UI boilerplate phrases
@@ -1180,6 +1239,20 @@ export function analyzeFullStackFiles(fileList = []) {
   const totalForms = siteBlueprint.forms?.length || 0;
   const totalSections = siteBlueprint.sections?.length || 0;
   const totalRoutes = siteBlueprint.routes?.length || 0;
+
+  // Precompute normalized catalog analytics for instant downstream reasoning
+  const stats = computeCatalogStats(result.databaseRecords || []);
+  result.catalogAnalytics = {
+    count: stats.count,
+    pricedCount: stats.pricedCount,
+    inStockCount: stats.inStockCount,
+    outOfStockCount: stats.outOfStockCount,
+    minPrice: stats.minPriceEntry ? { name: stats.minPriceEntry.item.name, price: stats.minPriceEntry.item.price, value: stats.minPriceEntry.priceValue } : null,
+    maxPrice: stats.maxPriceEntry ? { name: stats.maxPriceEntry.item.name, price: stats.maxPriceEntry.item.price, value: stats.maxPriceEntry.priceValue } : null,
+    avgPrice: stats.avgPrice,
+    currency: stats.currency,
+    categories: stats.categories
+  };
 
   result.summary = `Analyzed ${fileList.length} files (${feCount} Frontend, ${beCount} Backend, ${dbCount} Database). Mapped ${totalRoutes} routes, ${totalSections} sections, ${totalForms} interactive forms, ${totalDbRecords} database records, and ${totalKb} verified customer FAQs.`;
 

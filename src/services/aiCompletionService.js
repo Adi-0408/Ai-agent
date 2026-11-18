@@ -10,6 +10,12 @@ import {
   scoreKbEntryFuzzy
 } from '../utils/fuzzyNlu.js';
 import { isValidCustomerCatalogName } from '../utils/codebaseAnalyzer.js';
+import {
+  analyzeCatalogQuery,
+  rankGroundedContext,
+  isSemanticallyRepeated,
+  buildHonestUncertaintyReply
+} from '../utils/dataAnalyticsEngine.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -432,17 +438,28 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   const cleanMessage = String(messageText || '').trim();
   const agentDisplayName = options?.agentName || options?.assistantName || (typeof promptText === 'string' && promptText.includes('named "') ? (promptText.match(/named\s*"([^"]+)"/i) || [])[1] : '') || 'Krushna AI Voice Agent';
   const promptContext = promptText || `You are ${agentDisplayName}, the official AI Customer Support & Help Desk Agent for this business.`;
-  const kbContext = kbList && kbList.length > 0
-    ? `\n\nVerified Knowledge Base Facts:\n${JSON.stringify(kbList)}`
-    : '';
+  const queryLangForPrompt = detectTextLanguage(cleanMessage);
 
   const rawDbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
   const dbRecords = (Array.isArray(rawDbRecords) ? rawDbRecords : []).filter(r => {
     const n = String(r?.name || r?.title || r?.product || '');
     return isValidCustomerCatalogName(n, r);
   });
+
+  // Query-Aware Top-K RAG Retrieval & Deterministic Pre-Computed Analytics
+  const ragRanked = rankGroundedContext(cleanMessage, Array.isArray(kbList) ? kbList : [], [], { topKFaqs: 12 });
+  const prioritizedKb = ragRanked.topKFaqs.length > 0 ? ragRanked.topKFaqs : (Array.isArray(kbList) ? kbList.slice(0, 12) : []);
+  const kbContext = prioritizedKb.length > 0
+    ? `\n\nMost Relevant Verified Knowledge Base Facts:\n${prioritizedKb.map(k => `Q: ${k.q}\nA: ${k.a}`).join('\n\n')}`
+    : '';
+
+  const precomputedAnalytics = analyzeCatalogQuery(cleanMessage, dbRecords, null, queryLangForPrompt);
+  const analyticsContext = precomputedAnalytics
+    ? `\n\n[PRECOMPUTED_ANALYTICS — USE THESE EXACT NUMBERS]\nSTATUS: ANALYTICAL_RESULT\nTYPE: ${precomputedAnalytics.analysisType}\nEXACT_SUMMARY: ${precomputedAnalytics.summaryText}\nCOMPUTED_DATA: ${JSON.stringify(precomputedAnalytics.computedData)}`
+    : '';
+
   const dbContext = (Array.isArray(dbRecords) && dbRecords.length > 0)
-    ? `\n\nVerified Live Database Records & Catalog:\n${JSON.stringify(dbRecords.slice(0, 50))}`
+    ? `\n\nVerified Live Database Records & Catalog (${dbRecords.length} items):\n${JSON.stringify(dbRecords.slice(0, 50))}`
     : '';
 
   const userKeys = getUserApiKeys();
@@ -462,10 +479,16 @@ PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Multilingual Support: The agent supports English, Hindi (हिंदी), and Marathi (मराठी) with auto-detection for voice recognition and spoken responses.
 `;
 
-  const systemInstructions = `${baseIdentity}${kbContext}${dbContext}
+  const systemInstructions = `${baseIdentity}${analyticsContext}${kbContext}${dbContext}
 
 CORE MISSION & ASSIGNMENT:
-You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, technical issues, and general company policies, guiding customers every step of the way.
+You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and factual accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, comparisons, availability, and company policies, guiding customers every step of the way.
+
+HONEST UNCERTAINTY, ACCURACY & ZERO-HALLUCINATION PROTOCOL (CRITICAL):
+- Ground every factual claim (prices, counts, dates, names, eligibility, policies, specs) strictly in the verified Knowledge Base Facts, Live Database Records, and [PRECOMPUTED_ANALYTICS] provided above.
+- If [PRECOMPUTED_ANALYTICS] is present, report those exact computed figures, comparisons, and filtered results accurately without altering numbers.
+- HONEST UNCERTAINTY: If the user asks for a specific business fact, number, person, branch, or policy that is NOT present in your provided context, NEVER invent, guess, or fabricate an answer. Politely state that you do not have that exact detail on file right now, and offer verified related options or direct contact details if available.
+- AVOID REPETITION: Review the conversation history and NEVER repeat the exact same answer from a previous turn; instead clarify, elaborate with new verified facts, or guide to a concrete next step.
 
 POLITE MANNERS & ETIQUETTE:
 You are exceptionally polite, respectful, warm, and well-mannered at all times. Use courteous phrasing (e.g. "Namaskar", "Hello, I would be delighted to assist", "Please feel free to ask", "Certainly"). Treat every visitor with patience and kindness.
@@ -523,8 +546,8 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
               content: cleanMessage
             }
           ],
-          max_tokens: 300,
-          temperature: 0.4
+          max_tokens: 340,
+          temperature: 0.15
         })
       });
 
@@ -565,7 +588,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           contents: geminiContents,
           generationConfig: {
             maxOutputTokens: 800,
-            temperature: 0.5
+            temperature: 0.2
           }
         })
       });
@@ -599,7 +622,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
             { role: 'user', content: cleanMessage }
           ],
           max_tokens: 800,
-          temperature: 0.5
+          temperature: 0.15
         })
       });
 
@@ -738,8 +761,20 @@ Your floating voice assistant widget will appear immediately on your site, with 
   const isSaas = /\b(software|saas|subscription|pricing\s*tier|pro\s*plan|enterprise\s*plan|cloud\s*platform)\b/i.test(combinedContextText);
   const isAutomotive = /\b(car|cars|vehicle|vehicles|dealership|showroom|test\s*drive|suv|sedan)\b/i.test(combinedContextText);
 
-  // Check live database records first if provided (typo-tolerant, order-independent, ordinal & affirmation aware!)
+  // Check live database records first if provided (analytical queries, ordinal, affirmation, typo-tolerant & order-independent!)
+  const inputLang = detectTextLanguage(cleanMessage);
   if (Array.isArray(dbRecords) && dbRecords.length > 0) {
+    // 0. Deterministic Data Analysis FIRST (Compare, Cheapest/Most Expensive, Budget Filter, Stock Filter, Counts/Range)
+    const analytical = analyzeCatalogQuery(effectiveClean, dbRecords, {
+      itemNounEn: isAcademic ? 'courses' : (isHealthcare ? 'medicines' : (isFood ? 'dishes' : (isHospitality ? 'rooms' : (isSaas ? 'plans' : (isAutomotive ? 'vehicles' : 'products'))))),
+      itemNounHi: isAcademic ? 'कोर्स' : (isHealthcare ? 'दवाइयां' : 'उत्पाद'),
+      itemNounMr: isAcademic ? 'अभ्यासक्रम' : (isHealthcare ? 'औषधे' : 'उत्पादने'),
+      priceLabelEn: isAcademic ? 'fee' : 'price'
+    }, inputLang);
+    if (analytical && analytical.summaryText) {
+      return analytical.summaryText;
+    }
+
     // 1. Ordinal selection ("the first one", "2nd one", "secnd one", "last one")
     let ordRecord = null;
     if (/\b(first|1st|number\s*1|#1|first\s*one)\b/i.test(lower)) ordRecord = dbRecords[0];
@@ -793,20 +828,24 @@ Your floating voice assistant widget will appear immediately on your site, with 
     }
   }
 
-  // Fuzzy Knowledge Base Matching (Typo-tolerant & order-independent)
+  // Precision-Gated Fuzzy Knowledge Base Matching (prevents false-positive irrelevant FAQ collisions!)
+  const safeKbForMatch = (Array.isArray(kbList) ? kbList : []).filter(item => item && item.a && !String(item.a).includes('['));
+  const offlineRag = rankGroundedContext(lower, safeKbForMatch, [], { topKFaqs: 5 });
+  if (offlineRag.topHit && offlineRag.topHit.answer) {
+    return offlineRag.topHit.answer;
+  }
+
+  // Secondary precision-checked scoreKbEntryFuzzy check for exact typo-corrected hits
   let bestMatch = null;
   let highestScore = 0;
-
-  for (const item of kbList) {
-    if (!item || !item.a || String(item.a).includes('[')) continue;
+  for (const item of safeKbForMatch) {
     const sc = scoreKbEntryFuzzy(lower, item);
     if (sc > highestScore) {
       highestScore = sc;
       bestMatch = item;
     }
   }
-
-  if (bestMatch && highestScore >= 20) {
+  if (bestMatch && highestScore >= 24) {
     return bestMatch.a;
   }
 
@@ -824,11 +863,11 @@ Your floating voice assistant widget will appear immediately on your site, with 
     }
   }
 
-  // Universal Order-Independent Archetype Intents (Eligibility, Procedure, Documents/Policy)
+  // Universal Order-Independent Archetype Intents (Eligibility, Procedure, Documents/Policy — honestly qualified when not in KB)
   if (intent.isEligibility) {
-    if (isAcademic) return 'For admissions, applicants must have passed the qualifying board examination with the required merit marks. Ask about a specific course for exact details!';
-    if (isHealthcare) return 'Prescription medicines require a valid doctor prescription; over-the-counter items are available directly.';
-    return 'All listed offerings are open to eligible customers directly through our website. Ask about any specific option for full details!';
+    if (isAcademic) return 'While exact course-specific criteria are not published here, admissions typically require passing the qualifying board examination with the required merit marks. Ask about a specific course or contact our office to confirm!';
+    if (isHealthcare) return 'Prescription medicines require a valid doctor prescription, while over-the-counter items are available directly. Please confirm with our pharmacist for specific items.';
+    return 'While exact eligibility terms are not listed here, our offerings are generally open to customers directly through this website. Ask about any specific option or reach out to our team to confirm!';
   }
   if (intent.isProcedure) {
     if (isAcademic) return 'To apply, complete the online admission form on this portal and submit your required documents.';
@@ -839,19 +878,32 @@ Your floating voice assistant widget will appear immediately on your site, with 
     return 'You can place an order, book, or submit your inquiry directly through our website.';
   }
   if (intent.isPolicyDocs) {
-    if (isAcademic) return 'Required admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs.';
+    if (isAcademic) return 'While our exact document checklist is not published here, admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs. Please verify with our admissions desk.';
     if (isHealthcare) return 'Please keep a valid doctor prescription and patient ID ready for prescription items.';
-    if (isHospitality) return 'Please carry a valid government photo ID at check-in. Full check-in and cancellation terms are listed on our booking page.';
-    return 'We offer transparent return, shipping, and warranty policies on our website—let me know which specific item you are asking about!';
-  }
-  if (bestMatch && highestScore >= 12) {
-    return bestMatch.a;
+    if (isHospitality) return 'Please carry a valid government photo ID at check-in. Exact check-in and cancellation terms are listed on our booking page.';
+    return 'For exact return, shipping, and warranty policy terms, please review our policy section on the website or reach out to our team directly.';
   }
 
-  const inputLang = detectTextLanguage(cleanMessage);
+  // 4. Semantic Anti-Repetition & Honest Uncertainty Handling
+  const recentAssistantReplies = validHistory.filter(m => m.role === 'assistant').map(m => m.content);
+  const lastAssistantReply = recentAssistantReplies[recentAssistantReplies.length - 1] || '';
 
-  // 4. Anti-Loop Recovery when no API key or no direct match
-  const lastAssistantReply = [...validHistory].reverse().find(m => m.role === 'assistant')?.content || '';
+  // If user asked a concrete specific question not covered by any DB record or KB fact, communicate honest uncertainty cleanly!
+  const meaningfulUnknownToks = lower
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3);
+  if (meaningfulUnknownToks.length >= 2 && !options?.throwOnMissingKey) {
+    const honestReply = buildHonestUncertaintyReply(cleanMessage, {
+      queryLang: inputLang,
+      catalogItems: dbRecords,
+      kbTopics: safeKbForMatch.slice(0, 3).map(k => k.q)
+    });
+    if (!isSemanticallyRepeated(honestReply, recentAssistantReplies)) {
+      return honestReply;
+    }
+  }
+
   if (Array.isArray(dbRecords) && dbRecords.length > 0 && lastAssistantReply) {
     const topOpts = dbRecords.slice(0, 4).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
     return `Here are concrete options I can help you with right away: ${topOpts}. Just name one or say "the first one"!`;
@@ -863,21 +915,16 @@ Your floating voice assistant widget will appear immediately on your site, with 
       error.code = 'MISSING_USER_API_KEY';
       throw error;
     }
-    if (inputLang === 'mr-IN') {
-      return `आपल्या प्रश्नाबद्दल धन्यवाद! मी आपल्या सर्व सेवा आणि उत्पादनांबद्दल माहिती देण्यासाठी उपलब्ध आहे. कृपया मला आणखी तपशील सांगा.`;
-    }
-    if (inputLang === 'hi-IN') {
-      return `आपके प्रश्न के लिए धन्यवाद! मैं हमारी सेवाओं और उत्पादों के बारे में आपकी सहायता के लिए तैयार हूँ। कृपया मुझे और विवरण बताएं।`;
-    }
-    return `No personal API key configured. You can ask about our indexed offerings, or add your personal Groq or Gemini API key in Settings to unlock real-time AI reasoning.`;
+    return buildHonestUncertaintyReply(cleanMessage, {
+      queryLang: inputLang,
+      catalogItems: dbRecords,
+      kbTopics: safeKbForMatch.slice(0, 3).map(k => k.q)
+    });
   }
 
-  if (inputLang === 'mr-IN') {
-    return `मी आपल्या प्रश्नाचे मनःपूर्वक स्वागत करतो! आपण आमच्या सेवा, उत्पादने, किंमती किंवा वेळापत्रकांबद्दल विचारू शकता. मी कशी मदत करू?`;
-  }
-  if (inputLang === 'hi-IN') {
-    return `मैं आपके प्रश्न का स्वागत करता हूँ! आप हमारी सेवाओं, उत्पादों, कीमतों या अपॉइंटमेंट के बारे में पूछ सकते हैं। मैं आपकी क्या सहायता करूँ?`;
-  }
-
-  return `I am here to assist you with our offerings, pricing, eligibility, and ordering. Which specific topic or option would you like to explore?`;
+  return buildHonestUncertaintyReply(cleanMessage, {
+    queryLang: inputLang,
+    catalogItems: dbRecords,
+    kbTopics: safeKbForMatch.slice(0, 3).map(k => k.q)
+  });
 }

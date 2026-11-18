@@ -98,9 +98,11 @@ export function fuzzyTokenMatch(inputTok, targetTok) {
     return 3;
   }
 
-  // Length 3: only allow 1-char transposition/substitution if first letter matches and target is len 4+ (e.g. "dlo" -> "dolo")
+  // Length 3: NEVER substitute one 3-letter word into another 3-letter word (e.g. "bus" -> "buy", "bag" -> "buy")!
+  // Only allow missing-letter match against a 4-char target with same first letter (e.g. "dlo" -> "dolo").
   if (minLen === 3) {
-    if (maxLen <= 4 && a[0] === b[0] && damerauLevenshtein(a, b) === 1) return 2;
+    if (a.length === 3 && b.length === 3) return 0;
+    if (maxLen === 4 && a[0] === b[0] && damerauLevenshtein(a, b) === 1) return 2;
     return 0;
   }
 
@@ -142,9 +144,10 @@ export const UNIVERSAL_CONCEPT_VOCAB = [
   'what', 'which', 'where', 'when', 'who', 'how', 'tell', 'show', 'give', 'list', 'all', 'details', 'information',
   'overview', 'about', 'know', 'want', 'need', 'provide', 'offer', 'have', 'available', 'availability', 'stock',
   'sell', 'serve', 'teach', 'study', 'learn', 'eat', 'drink', 'browse', 'explore', 'options', 'catalog', 'catalogue', 'inventory',
-  // Money & pricing
+  // Money & pricing + analytical comparisons/filters
   'price', 'prices', 'pricing', 'fee', 'fees', 'cost', 'costs', 'rate', 'rates', 'charge', 'charges', 'structure',
-  'tuition', 'pay', 'payment', 'money', 'budget', 'rent', 'tariff', 'mrp', 'amount', 'discount', 'expensive', 'cheap', 'much',
+  'tuition', 'pay', 'payment', 'money', 'budget', 'rent', 'tariff', 'mrp', 'amount', 'discount', 'expensive', 'cheap', 'cheapest', 'much',
+  'compare', 'comparison', 'versus', 'difference', 'differences', 'better', 'lowest', 'affordable', 'highest', 'costliest', 'under', 'below', 'above', 'between', 'average', 'range', 'total', 'many', 'count',
   // Categories across all 10 archetypes
   'course', 'courses', 'program', 'programs', 'stream', 'streams', 'class', 'classes', 'subject', 'subjects', 'degree', 'diploma', 'syllabus', 'curriculum', 'college', 'school', 'academy',
   'product', 'products', 'item', 'items', 'shoes', 'sneakers', 'laptop', 'phone', 'watch', 'clothing',
@@ -228,6 +231,7 @@ export function normalizeUserQuery(rawText, catalogItems = [], kbList = []) {
 
   const tokens = str
     .toLowerCase()
+    .replace(/(\d),(?=\d)/g, '$1')
     .replace(/['’]/g, '')
     .replace(/[^a-z0-9\s-]/g, ' ')
     .replace(/-/g, ' ')
@@ -235,14 +239,16 @@ export function normalizeUserQuery(rawText, catalogItems = [], kbList = []) {
     .filter(Boolean);
 
   const normalized = tokens.map(rawTok => {
+    // Preserve pure numeric tokens intact (NEVER collapse repeated digits like 20000 -> 200!)
+    if (/^\d+$/.test(rawTok)) return rawTok;
     // Collapse 3+ repeated letters ("feesss" -> "fees", "hellooo" -> "hello")
-    const tok = rawTok.replace(/(.)\1{2,}/g, '$1$1');
+    const tok = rawTok.replace(/([a-z])\1{2,}/g, '$1$1');
     if (SHORTHAND_MAP[tok]) return SHORTHAND_MAP[tok];
     if (SHORTHAND_MAP[rawTok.replace(/(.)\1+/g, '$1')]) {
       const collapsed = rawTok.replace(/(.)\1+/g, '$1');
       if (SHORTHAND_MAP[collapsed]) return SHORTHAND_MAP[collapsed];
     }
-    if (vocabSet.has(tok) || NLU_STOPWORDS.has(tok) || /\d/.test(tok) || tok.length <= 2) {
+    if (vocabSet.has(tok) || NLU_STOPWORDS.has(tok) || /\d/.test(tok) || tok.length <= 3) {
       return tok;
     }
 
@@ -462,7 +468,8 @@ export function fuzzyMatchRecord(records, rawQuery, normalizedQuery = '') {
 }
 
 /**
- * Fuzzy + stemmed KB / FAQ entry scorer (order-independent & typo-tolerant).
+ * Precision-gated fuzzy + stemmed KB / FAQ entry scorer (order-independent & typo-tolerant).
+ * Rejects false-positive matches when distinctive query tokens are completely absent from the FAQ.
  */
 export function scoreKbEntryFuzzy(normalizedQuery, item) {
   if (!item || !item.q || !item.a) return 0;
@@ -472,31 +479,49 @@ export function scoreKbEntryFuzzy(normalizedQuery, item) {
   if (!qNorm) return 0;
 
   let score = 0;
-  if (qNorm.length >= 4 && (qNorm.includes(qLower) || qLower.includes(qNorm))) {
+  let exactPhrase = false;
+  if (qNorm.length >= 6 && qLower.length >= 6 && (qNorm.includes(qLower) || qLower.includes(qNorm))) {
     score += 80;
+    exactPhrase = true;
   }
 
   const queryToks = qNorm.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !NLU_STOPWORDS.has(w));
+  const distinctiveToks = queryToks.filter(w => !GENERIC_CATEGORY_NOUNS.has(w) && !GENERIC_CATEGORY_NOUNS.has(stemWord(w)));
   const kbQToks = qLower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
   const kbAToks = aLower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
 
+  let matchedDistinctive = 0;
   for (const qt of queryToks) {
+    const isDist = distinctiveToks.includes(qt);
+    const weight = isDist ? 1.2 : 0.45;
     let bestQ = 0;
     for (const kt of kbQToks) {
       const m = fuzzyTokenMatch(qt, kt);
       if (m > bestQ) bestQ = m;
     }
-    if (bestQ >= 3) score += 20;
-    else if (bestQ === 2) score += 14;
+    if (bestQ >= 3) score += 20 * weight;
+    else if (bestQ === 2) score += 14 * weight;
 
     let bestA = 0;
     for (const at of kbAToks) {
       const m = fuzzyTokenMatch(qt, at);
       if (m > bestA) bestA = m;
     }
-    if (bestA >= 3) score += 8;
-    else if (bestA === 2) score += 5;
+    if (bestA >= 3) score += 8 * weight;
+    else if (bestA === 2) score += 5 * weight;
+
+    if (isDist && (bestQ >= 2 || bestA >= 2)) {
+      matchedDistinctive++;
+    }
   }
 
-  return score;
+  // Strict precision gate: if the query has distinctive content words, require coverage so unrelated FAQs never collide!
+  if (!exactPhrase && distinctiveToks.length > 0) {
+    if (matchedDistinctive === 0) return 0;
+    if (distinctiveToks.length >= 2 && (matchedDistinctive / distinctiveToks.length) < 0.45) {
+      return 0;
+    }
+  }
+
+  return Math.round(score);
 }
