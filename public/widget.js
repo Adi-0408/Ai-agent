@@ -868,6 +868,28 @@
         color: #ffffff;
         transform: translateY(-1px);
       }
+      .vhd-nav-links-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 9px;
+      }
+      .vhd-nav-links-row .vhd-nav-pill-btn {
+        margin-top: 0;
+      }
+      .vhd-nav-pill-btn.vhd-nav-pill-secondary {
+        background: rgba(30, 41, 59, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.32);
+        color: #cbd5e1;
+        font-weight: 500;
+        padding: 5px 11px;
+        font-size: 11px;
+      }
+      .vhd-nav-pill-btn.vhd-nav-pill-secondary:hover {
+        background: rgba(56, 189, 248, 0.16);
+        border-color: rgba(56, 189, 248, 0.55);
+        color: #e0f2fe;
+      }
       .vhd-quick-chips {
         display: flex;
         flex-wrap: nowrap;
@@ -1688,8 +1710,8 @@
       if (e.key === 'Enter') submitText();
     });
 
-    // Append Chat Message
-    function appendMsg(text, sender, navAction = null) {
+    // Append Chat Message (supports single navAction or array of primary + related clickable section links)
+    function appendMsg(text, sender, navActionOrList = null) {
       const div = document.createElement('div');
       div.className = `vhd-msg vhd-msg-${sender}`;
 
@@ -1697,35 +1719,60 @@
       textNode.textContent = text;
       div.appendChild(textNode);
 
-      if (navAction && navAction.label && (navAction.sectionInfo || navAction.redirectTarget || navAction.redirectUrl || navAction.sectionId)) {
-        const navBtn = document.createElement('button');
-        navBtn.type = 'button';
-        navBtn.className = 'vhd-nav-pill-btn';
-        const icon = navAction.targetType === 'form' ? '📝' : (navAction.isCrossPage || navAction.redirectUrl ? '↗' : '📍');
-        const labelSpan = document.createElement('span');
-        labelSpan.textContent = navAction.label;
-        navBtn.appendChild(document.createTextNode(`${icon} `));
-        navBtn.appendChild(labelSpan);
-        navBtn.appendChild(document.createTextNode(' →'));
-        navBtn.onclick = (e) => {
-          e.stopPropagation();
-          if (navAction.redirectTarget) {
-            executeRedirectAction(navAction.redirectTarget, true);
-          } else if (navAction.redirectUrl) {
-            try { window.location.assign(navAction.redirectUrl); } catch (_) {}
-          } else if (navAction.sectionInfo) {
-            scrollToHostSection(navAction.sectionInfo);
-          } else if (navAction.sectionId) {
-            const targetEl = document.getElementById(navAction.sectionId);
-            if (targetEl) {
-              scrollToHostSection({ element: targetEl, label: navAction.label });
-            } else {
-              const found = findHostSection(navAction.label);
-              if (found) scrollToHostSection(found);
+      const rawNavs = Array.isArray(navActionOrList)
+        ? navActionOrList
+        : (navActionOrList ? [navActionOrList] : []);
+      const validNavs = rawNavs
+        .filter(n => n && n.label && (n.sectionInfo || n.redirectTarget || n.redirectUrl || n.sectionId || n.href))
+        .slice(0, 3);
+
+      if (validNavs.length > 0) {
+        const navRow = document.createElement('div');
+        navRow.className = 'vhd-nav-links-row';
+
+        validNavs.forEach((navItem, idx) => {
+          const navBtn = document.createElement('button');
+          navBtn.type = 'button';
+          navBtn.className = (idx === 0 || navItem.role === 'primary')
+            ? 'vhd-nav-pill-btn'
+            : 'vhd-nav-pill-btn vhd-nav-pill-secondary';
+          const icon = navItem.targetType === 'form'
+            ? '📝'
+            : ((navItem.targetType === 'dashboard' || navItem.targetType === 'report')
+                ? '📊'
+                : (navItem.isCrossPage || navItem.redirectUrl ? '↗' : '📍'));
+          const labelSpan = document.createElement('span');
+          labelSpan.textContent = navItem.label;
+          navBtn.appendChild(document.createTextNode(`${icon} `));
+          navBtn.appendChild(labelSpan);
+          navBtn.appendChild(document.createTextNode(' →'));
+          navBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (navItem.redirectTarget) {
+              executeRedirectAction(navItem.redirectTarget, true);
+            } else if (navItem.redirectUrl) {
+              try { window.location.assign(navItem.redirectUrl); } catch (_) {}
+            } else if (navItem.sectionInfo) {
+              scrollToHostSection(navItem.sectionInfo);
+            } else if (navItem.sectionId) {
+              const targetEl = document.getElementById(navItem.sectionId);
+              if (targetEl) {
+                scrollToHostSection({ element: targetEl, label: navItem.label });
+              } else {
+                const found = findHostSection(navItem.label);
+                if (found) scrollToHostSection(found);
+              }
+            } else if (navItem.href && navItem.href.startsWith('#')) {
+              const targetEl = document.getElementById(navItem.href.slice(1));
+              if (targetEl) scrollToHostSection({ element: targetEl, label: navItem.label });
+            } else if (navItem.href) {
+              try { window.location.assign(navItem.href); } catch (_) {}
             }
-          }
-        };
-        div.appendChild(navBtn);
+          };
+          navRow.appendChild(navBtn);
+        });
+
+        div.appendChild(navRow);
       }
 
       body.appendChild(div);
@@ -4887,6 +4934,361 @@
       return null;
     }
 
+    // --- ADAPTIVE QUESTION UNDERSTANDING, MULTI-PART DECOMPOSITION & UNIVERSAL SECTION LINK ENGINE ---
+    const WIDGET_TECHNICAL_SIGNAL_RE = /\b(architecture|api|apis|endpoint|endpoints|route|routes|middleware|jwt|oauth|auth|authentication|authorization|database|schema|foreign\s+key|primary\s+key|sql|nosql|prisma|mongoose|firestore|supabase|graphql|rest|webhook|websocket|async|await|promise|closure|react|hook|useeffect|usestate|redux|zustand|state\s+management|component|dom|ssr|csr|cors|csrf|xss|encryption|hashing|index|indexing|query|optimization|algorithm|complexity|dependency|dependencies|circular|docker|ci\/cd|deployment|pipeline|backend|frontend|server|controller|service|protocol|http|https|tcp|dns)\b/i;
+    const WIDGET_DETAILED_SIGNAL_RE = /\b(explain|describe|elaborate|walk\s+me\s+through|step\s+by\s+step|in\s+detail|detailed|comprehensive|thorough|everything\s+about|full\s+details|complete\s+guide|how\s+does|how\s+do|why\s+does|why\s+is|break\s+down|overview|with\s+examples?|give\s+(?:me\s+)?(?:an\s+)?examples?|pros\s+and\s+cons|advantages|benefits|workflow|process|procedure)\b/i;
+    const WIDGET_FOLLOW_UP_REF_RE = /\b(that|this|it|them|those|these|the\s+same|previous|above|earlier|more\s+about|tell\s+me\s+more|go\s+deeper|elaborate|in\s+more\s+detail|give\s+(?:me\s+)?(?:an\s+)?example|what\s+else|anything\s+else|how\s+about\s+the\s+(?:second|third|next|other|first)|where\s+(?:is|can\s+i\s+find)\s+(?:that|this|it))\b/i;
+    const WIDGET_MULTI_ASPECT_RE = /\b(fee|fees|fee\s+structure|price|pricing|cost|eligibility|criteria|documents?|syllabus|curriculum|subjects?|timings?|hours|schedule|admission|process|procedure|steps?|scholarship|facilities|hostel|placement|contact|warranty|shipping|delivery|returns?|refund|ingredients?|calories|amenities|check-?in|check-?out|features?|specs|specifications|architecture|routes?|middleware|schema|relationships?|dependencies|diagnostics?|errors?|coverage)\b/i;
+    const WIDGET_LINK_STOPWORDS = new Set([
+      'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'what', 'which', 'your', 'about',
+      'can', 'you', 'want', 'know', 'tell', 'give', 'please', 'does', 'will', 'would', 'could', 'there',
+      'here', 'their', 'where', 'when', 'how', 'show', 'take', 'open', 'jump', 'navigate', 'view', 'see',
+      'find', 'explain', 'detail', 'details', 'section', 'page', 'website', 'site', 'more', 'help', 'need', 'like'
+    ]);
+
+    function decomposeComplexQuestion(rawQuery = '') {
+      const str = String(rawQuery || '').replace(/\s+/g, ' ').trim();
+      if (!str || str.length < 14) return [str].filter(Boolean);
+
+      // Preserve single comparison queries intact ("compare A and B", "difference between A and B")
+      if (/\b(compare|comparison|difference\s+between|versus|\bvs\.?\b|between\s+\S+\s+and\s+\S+)\b/i.test(str) && !/\?\s*\S/.test(str)) {
+        return [str];
+      }
+
+      // 1. Multiple explicit question-mark sentences
+      if (str.includes('?')) {
+        const qParts = str
+          .split(/\?\s+(?:and\s+also\s+|also\s+|and\s+)?/i)
+          .map(s => s.replace(/^(?:and\s+also|and|also|plus|then)\s+/i, '').trim())
+          .filter(s => s.length >= 6);
+        if (qParts.length >= 2) {
+          return qParts.slice(0, 4).map(p => (p.endsWith('?') ? p : `${p}?`));
+        }
+      }
+
+      // 2. Sequential / compound conjunction split
+      const seqParts = str
+        .split(/(?:\s*,?\s*\band\s+also\b\s*|\s*;\s*(?:also\s+)?|\s*,?\s*\band\s+(?=(?:how|what|which|where|when|who|why|can|do|does|is|are|explain|show|list|tell|check|verify|give|trace|compare|summarize)\b)|\s+\balso\s+(?=(?:how|what|which|where|when|explain|show|list|tell|check|trace)\b)|\s+\bthen\s+(?=(?:explain|show|tell|how|what)\b))/i)
+        .map(s => s.replace(/^(?:first|firstly)\s+/i, '').trim())
+        .filter(s => s.length >= 6);
+      if (seqParts.length >= 2) {
+        return seqParts.slice(0, 4);
+      }
+
+      // 3. Comma-separated multi-aspect queries carrying a shared subject
+      const aspectMatch = str.match(/^(?:(?:please\s+)?(?:explain|tell\s+me\s+about|give\s+me|what\s+are|share|describe|list|show)\s+(?:the\s+)?)?(.+?,\s*.+?\s+and\s+.+?)(?:\s+(for|of|in|about|on)\s+(.+?))?[?.!]*$/i);
+      if (aspectMatch) {
+        const listSegment = aspectMatch[1] || '';
+        const prep = aspectMatch[2] || '';
+        const sharedSubject = (aspectMatch[3] || '').trim();
+        const rawItems = listSegment
+          .split(/,\s*(?:and\s+)?|\s+and\s+/i)
+          .map(s => s.replace(/^(?:the|a|an|all)\s+/i, '').trim())
+          .filter(s => s.length >= 3 && s.length <= 55);
+
+        const aspectHits = rawItems.filter(item => WIDGET_MULTI_ASPECT_RE.test(item));
+        if (rawItems.length >= 2 && aspectHits.length >= 2) {
+          return rawItems.slice(0, 4).map(item =>
+            sharedSubject ? `${item} ${prep} ${sharedSubject}` : item
+          );
+        }
+      }
+
+      return [str];
+    }
+
+    function analyzeQuestionUnderstanding(rawQuery = '', context = null, history = [], opts = {}) {
+      const clean = String(rawQuery || '').replace(/\s+/g, ' ').trim();
+      const lower = clean.toLowerCase();
+      const catalogItems = Array.isArray(opts.catalogItems) ? opts.catalogItems : [];
+
+      if (isUnclearOrAmbiguousQuery(clean, context)) {
+        return {
+          mode: 'unclear',
+          expandedQuery: clean,
+          requiredParts: [],
+          isFollowUp: false,
+          resolvedAnchor: '',
+          wantsExamples: false,
+          wantsStepByStep: false,
+          isGeneralOffTopic: false,
+          recommendedMaxTokens: 500,
+          depthDirective: 'The question is unclear or ambiguous. Politely ask a clear, friendly clarifying question instead of guessing.'
+        };
+      }
+
+      let resolvedAnchor = '';
+      if (context?.activeItem?.name) {
+        resolvedAnchor = String(context.activeItem.name).trim();
+      } else if (context?.activeTopic && !['catalog_list', 'pricing', 'unclear'].includes(context.activeTopic)) {
+        resolvedAnchor = String(context.activeTopic).trim();
+      } else if (Array.isArray(history) && history.length > 0) {
+        const prevUsers = history
+          .filter(m => (m?.role === 'user' || m?.sender === 'user') && String(m.content || m.text || '').trim() !== clean)
+          .slice(-3);
+        const lastSubstantive = [...prevUsers].reverse().find(m => String(m.content || m.text || '').trim().length >= 8);
+        if (lastSubstantive) {
+          resolvedAnchor = String(lastSubstantive.content || lastSubstantive.text || '').trim().slice(0, 90);
+        }
+      }
+
+      const isFollowUp = Boolean(resolvedAnchor && WIDGET_FOLLOW_UP_REF_RE.test(lower) && clean.length < 140);
+      const expandedQuery = (isFollowUp && resolvedAnchor && !lower.includes(resolvedAnchor.toLowerCase()))
+        ? `${clean} (regarding: ${resolvedAnchor})`
+        : clean;
+
+      const requiredParts = decomposeComplexQuestion(clean);
+      const isMultiPart = requiredParts.length >= 2;
+      const isTechnical = WIDGET_TECHNICAL_SIGNAL_RE.test(expandedQuery);
+      const wantsExamples = /\b(example|examples|sample|illustration|for\s+instance|e\.g\.)\b/i.test(lower);
+      const wantsStepByStep = /\b(step\s+by\s+step|steps|procedure|process|how\s+to|walk\s+me\s+through|guide)\b/i.test(lower);
+      const isDetailedAsk = WIDGET_DETAILED_SIGNAL_RE.test(lower) || wantsExamples || wantsStepByStep || clean.split(/\s+/).length >= 11;
+      const isGeneralOffTopic = isGeneralOffTopicQuery(clean, catalogItems);
+
+      let mode = 'simple';
+      let recommendedMaxTokens = 1000;
+      let depthDirective = 'SIMPLE / DIRECT QUESTION: Provide a clear, polite, direct, and accurate answer addressing the exact question with helpful context and next steps.';
+
+      if (isMultiPart) {
+        mode = 'complex_multi_part';
+        recommendedMaxTokens = 1500;
+        depthDirective = `COMPLEX MULTI-PART QUESTION (${requiredParts.length} PARTS): You MUST thoroughly address EVERY SINGLE part below in clear logical order without skipping any part: ${requiredParts.map((p, i) => `(${i + 1}) ${p}`).join('; ')}. Include relevant specifics, steps, or examples for each part.`;
+      } else if (isTechnical) {
+        mode = 'technical';
+        recommendedMaxTokens = 1500;
+        depthDirective = `TECHNICAL QUESTION: Provide a comprehensive, accurate explanation covering how the relevant concepts/steps work, concrete examples${wantsExamples ? ' (explicitly requested by user)' : ''}, and important details.`;
+      } else if (isDetailedAsk) {
+        mode = 'detailed';
+        recommendedMaxTokens = 1400;
+        depthDirective = `DETAILED EXPLANATION REQUESTED: Provide a complete, well-structured, polite, and thorough explanation including key specifics, ${wantsStepByStep ? 'clear step-by-step instructions, ' : ''}${wantsExamples ? 'concrete examples, ' : ''}practical details, and helpful next steps — do NOT give a brief 1-line summary.`;
+      } else if (isGeneralOffTopic) {
+        mode = 'general_off_topic';
+        recommendedMaxTokens = 1200;
+        depthDirective = 'GENERAL KNOWLEDGE / OFF-TOPIC QUESTION: Answer accurately, politely, and clearly using your verified knowledge without forcing unrelated project or website content. If you do not know reliably, politely apologize and invite another question.';
+      } else if (isFollowUp) {
+        mode = 'follow_up';
+        recommendedMaxTokens = 1300;
+        depthDirective = `FOLLOW-UP QUESTION (ANCHORED TO: "${resolvedAnchor}"): Use the prior conversation context directly without asking the user to repeat themselves, and provide a thorough, specific answer building on what was already discussed.`;
+      }
+
+      return {
+        mode,
+        expandedQuery,
+        requiredParts,
+        isFollowUp,
+        resolvedAnchor,
+        wantsExamples,
+        wantsStepByStep,
+        isGeneralOffTopic,
+        recommendedMaxTokens,
+        depthDirective
+      };
+    }
+
+    function collectLiveDomSectionsForLinks() {
+      if (typeof document === 'undefined') return [];
+      const results = [];
+      const seenIds = new Set();
+      try {
+        const els = document.querySelectorAll('section[id], form[id], main[id], article[id], div[id], table[id]');
+        for (const el of els) {
+          if (!el || !el.id || el.closest('#voice-helpdesk-root')) continue;
+          const id = String(el.id).trim();
+          if (!id || seenIds.has(id.toLowerCase()) || /^(root|app|__next|modal|toast|tooltip)$/i.test(id)) continue;
+          const headingEl = el.querySelector('h1, h2, h3, h4, legend, caption');
+          const label = (headingEl?.textContent || el.getAttribute('aria-label') || id.replace(/[-_]+/g, ' '))
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 50);
+          if (!label || label.length < 2) continue;
+          seenIds.add(id.toLowerCase());
+          const tag = (el.tagName || '').toLowerCase();
+          const targetType = (tag === 'form' || el.querySelector('form')) ? 'form' : (tag === 'table' ? 'report' : 'section');
+          results.push({
+            id,
+            label,
+            targetType,
+            element: el,
+            textPreview: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180)
+          });
+          if (results.length >= 30) break;
+        }
+      } catch (_) {}
+      return results;
+    }
+
+    function findRelevantSectionLinks(query = '', replyText = '', sources = {}, options = {}) {
+      const { maxLinks = 3, isGeneralOffTopic = false, isUnclear = false, currentPath = '/' } = options;
+      if (!query || isGeneralOffTopic || isUnclear) return [];
+
+      const tokenize = (s) => String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length >= 3 && !WIDGET_LINK_STOPWORDS.has(w));
+
+      const queryTokens = Array.from(new Set(tokenize(query))).slice(0, 14);
+      const replyTokens = Array.from(new Set(tokenize(replyText))).slice(0, 16);
+      if (queryTokens.length === 0 && replyTokens.length === 0) return [];
+
+      const scoreCand = (fields = []) => {
+        const hay = fields.filter(Boolean).join(' ').toLowerCase();
+        if (!hay) return { primaryScore: 0, replyScore: 0 };
+        const hayWords = hay.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 2);
+        let primaryScore = 0;
+        for (const t of queryTokens) {
+          if (hayWords.includes(t)) primaryScore += 10;
+          else if (hay.includes(t) && t.length >= 4) primaryScore += 7;
+          else if (typeof fuzzyTokenMatch === 'function' && hayWords.some(hw => hw.length >= 4 && fuzzyTokenMatch(t, hw) >= 2)) primaryScore += 5;
+        }
+        let replyScore = 0;
+        for (const rt of replyTokens) {
+          if (hayWords.includes(rt)) replyScore += 3;
+          else if (hay.includes(rt) && rt.length >= 5) replyScore += 2;
+        }
+        return { primaryScore, replyScore };
+      };
+
+      const blueprint = sources?.siteBlueprint || null;
+      const feIdx = sources?.frontendIntelligence || blueprint?.frontendIndex || null;
+      const liveDomSections = Array.isArray(sources?.liveDomSections) ? sources.liveDomSections : [];
+      const normCurr = String(currentPath || '/').toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+      const candidates = [];
+
+      if (Array.isArray(blueprint?.sections)) {
+        for (const s of blueprint.sections) {
+          const label = String(s.label || s.id || '').trim();
+          const href = s.href || (s.id ? `#${s.id}` : '');
+          if (!label || !href) continue;
+          const sc = scoreCand([label, s.id, s.excerpt, ...(s.keywords || [])]);
+          const total = sc.primaryScore + Math.min(sc.replyScore, 9);
+          if (sc.primaryScore >= 7 || total >= 12) {
+            const sPath = String(s.path || '/').toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+            const isCrossPage = Boolean(s.path && sPath !== '/' && sPath !== normCurr);
+            candidates.push({
+              label, href, sectionId: s.id || '', redirectUrl: isCrossPage ? href : null,
+              isCrossPage, targetType: 'section', score: total, primaryScore: sc.primaryScore
+            });
+          }
+        }
+      }
+
+      if (Array.isArray(blueprint?.forms)) {
+        for (const f of blueprint.forms) {
+          const label = String(f.title || f.label || f.id || '').trim();
+          const secId = f.sectionId || f.id || '';
+          const href = f.href || (secId ? `#${secId}` : '');
+          if (!label || !href) continue;
+          const sc = scoreCand([label, f.id, f.submitLabel, ...(f.fields || []), ...(f.keywords || []), 'form apply register inquiry contact']);
+          const total = sc.primaryScore + Math.min(sc.replyScore, 9);
+          if (sc.primaryScore >= 7 || total >= 12) {
+            const fPath = String(f.path || '/').toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+            const isCrossPage = Boolean(f.path && fPath !== '/' && fPath !== normCurr);
+            candidates.push({
+              label, href, sectionId: secId, redirectUrl: isCrossPage ? href : null,
+              isCrossPage, targetType: 'form', score: total, primaryScore: sc.primaryScore
+            });
+          }
+        }
+      }
+
+      if (Array.isArray(blueprint?.routes)) {
+        for (const r of blueprint.routes) {
+          const label = String(r.label || r.path || '').trim();
+          const href = r.path || '';
+          if (!label || !href || href === '/') continue;
+          const sc = scoreCand([label, href, r.file, ...(r.keywords || [])]);
+          const total = sc.primaryScore + Math.min(sc.replyScore, 9);
+          if (sc.primaryScore >= 7 || total >= 12) {
+            const rPath = href.toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+            candidates.push({
+              label, href, sectionId: '', redirectUrl: href,
+              isCrossPage: rPath !== normCurr, targetType: 'page', score: total, primaryScore: sc.primaryScore
+            });
+          }
+        }
+      }
+
+      if (feIdx) {
+        for (const p of (feIdx.pages || [])) {
+          const label = String(p.pageLabel || p.pagePath || '').trim();
+          const href = p.pagePath || '/';
+          if (!label) continue;
+          const sc = scoreCand([label, href, p.summary]);
+          const total = sc.primaryScore + Math.min(sc.replyScore, 9);
+          if (sc.primaryScore >= 7 || total >= 12) {
+            const pNorm = href.toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+            candidates.push({
+              label, href, sectionId: '', redirectUrl: pNorm !== normCurr ? href : null,
+              isCrossPage: pNorm !== normCurr,
+              targetType: /dashboard|report|analytics|chart/i.test(`${label} ${href}`) ? 'dashboard' : 'page',
+              score: total, primaryScore: sc.primaryScore
+            });
+          }
+        }
+        for (const ch of (feIdx.charts || [])) {
+          const label = String(ch.title || '').trim();
+          const href = ch.pagePath || '/';
+          if (!label) continue;
+          const sc = scoreCand([label, ch.summary, ch.pageLabel, 'chart graph trend']);
+          const total = sc.primaryScore + Math.min(sc.replyScore, 9);
+          if (sc.primaryScore >= 8 || total >= 14) {
+            const pNorm = href.toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+            candidates.push({
+              label: ch.pageLabel && ch.pageLabel !== label ? `${label} (${ch.pageLabel})` : label,
+              href, sectionId: ch.sectionId || '', redirectUrl: pNorm !== normCurr ? href : null,
+              isCrossPage: pNorm !== normCurr, targetType: 'dashboard', score: total, primaryScore: sc.primaryScore
+            });
+          }
+        }
+        for (const tbl of (feIdx.reportTables || [])) {
+          const label = String(tbl.title || '').trim();
+          const href = tbl.pagePath || '/';
+          if (!label) continue;
+          const sc = scoreCand([label, tbl.summary, tbl.pageLabel, ...(tbl.headers || []), 'report table']);
+          const total = sc.primaryScore + Math.min(sc.replyScore, 9);
+          if (sc.primaryScore >= 8 || total >= 14) {
+            const pNorm = href.toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+            candidates.push({
+              label: tbl.pageLabel && tbl.pageLabel !== label ? `${label} (${tbl.pageLabel})` : label,
+              href, sectionId: tbl.sectionId || '', redirectUrl: pNorm !== normCurr ? href : null,
+              isCrossPage: pNorm !== normCurr, targetType: 'report', score: total, primaryScore: sc.primaryScore
+            });
+          }
+        }
+      }
+
+      for (const domSec of liveDomSections) {
+        const label = String(domSec.label || domSec.id || '').trim();
+        const secId = domSec.id || '';
+        if (!label || !secId) continue;
+        const sc = scoreCand([label, secId, domSec.textPreview || '']);
+        const total = sc.primaryScore + Math.min(sc.replyScore, 9);
+        if (sc.primaryScore >= 7 || total >= 12) {
+          candidates.push({
+            label, href: `#${secId}`, sectionId: secId, redirectUrl: null,
+            isCrossPage: false, targetType: domSec.targetType || 'section',
+            sectionInfo: domSec.element ? domSec : null, score: total + 2, primaryScore: sc.primaryScore
+          });
+        }
+      }
+
+      candidates.sort((a, b) => (b.primaryScore - a.primaryScore) || (b.score - a.score));
+
+      const selected = [];
+      const seenKeys = new Set();
+      for (const c of candidates) {
+        const dedupeKey = `${(c.sectionId || c.href || '').toLowerCase()}::${c.label.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+        const hrefKey = (c.href || '').toLowerCase();
+        if (seenKeys.has(dedupeKey) || (hrefKey && hrefKey !== '/' && seenKeys.has(`href::${hrefKey}`))) continue;
+        seenKeys.add(dedupeKey);
+        if (hrefKey && hrefKey !== '/') seenKeys.add(`href::${hrefKey}`);
+        selected.push({ ...c, role: selected.length === 0 ? 'primary' : 'related' });
+        if (selected.length >= maxLinks) break;
+      }
+      return selected;
+    }
+
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
     async function resolveDatabaseBridge(query, agentConfig, context = null) {
       if (!query || isGreetingOrConversational(query)) {
@@ -5377,7 +5779,7 @@
     }
 
     // --- STRICT LIVE CUSTOMER SUPPORT SYSTEM PROMPT BUILDER ---
-    function buildCustomerSystemPrompt(agentConfig, bridgeResult, queryLang = 'en-US', context = null, userQuery = '') {
+    function buildCustomerSystemPrompt(agentConfig, bridgeResult, queryLang = 'en-US', context = null, userQuery = '', understanding = null) {
       const businessName = agentConfig.businessName || agentConfig.companyName || agentConfig.name || 'our store';
       const rawKb = agentConfig.knowledgeBase || [];
       const allSafeFaqs = rawKb.filter(item => isCustomerSafeFaq(item.q, item.a));
@@ -5572,10 +5974,35 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         ? `\n[CROSS_PAGE_WEBSITE_INSIGHTS]\n${crossLines.join('\n')}\n`
         : '';
 
+      const qUnderstanding = understanding || (
+        userQuery && typeof analyzeQuestionUnderstanding === 'function'
+          ? analyzeQuestionUnderstanding(userQuery, context, typeof conversationHistory !== 'undefined' ? conversationHistory : [], { catalogItems: allDbRecords })
+          : null
+      );
+      const understandingLines = [];
+      if (qUnderstanding) {
+        understandingLines.push(`COMPLEXITY_MODE: ${qUnderstanding.mode}`);
+        understandingLines.push(`DEPTH_DIRECTIVE: ${qUnderstanding.depthDirective}`);
+        if (qUnderstanding.isFollowUp && qUnderstanding.resolvedAnchor) {
+          understandingLines.push(`FOLLOW_UP_CONTEXT_ANCHOR: "${qUnderstanding.resolvedAnchor}"`);
+        }
+        if (Array.isArray(qUnderstanding.requiredParts) && qUnderstanding.requiredParts.length >= 2) {
+          understandingLines.push(`REQUIRED_PARTS_CHECKLIST: ${qUnderstanding.requiredParts.map((p, idx) => `(${idx + 1}) ${p}`).join(' | ')}`);
+        }
+      }
+      const understandingBlock = understandingLines.length > 0
+        ? `\n[QUESTION_UNDERSTANDING_AND_DEPTH_PLAN]\n${understandingLines.join('\n')}\n`
+        : '';
+
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
 - AUDIENCE IS CONSUMER / CUSTOMER ONLY: The person reading and asking is an ordinary website visitor, customer, parent, or student — NOT the website owner, admin, or developer. Always answer warmly, politely, and directly from their perspective. NEVER quote admin/staff setup guides (such as Google Sheets apps, spreadsheets, "open your sheet", "message the parent", Apps Script toolbars, deploy instructions, CSS/responsive specs, database schemas, SQL, or developer notes). If asked about database internals or queries, politely decline: ${consumerDeclineText}
+- ADAPTIVE RESPONSE DEPTH & COMPREHENSIVE EXPLANATIONS (CRITICAL): Follow [QUESTION_UNDERSTANDING_AND_DEPTH_PLAN] closely:
+  • Simple question → give a clear, polite, direct answer with helpful context.
+  • Detailed / how-to / technical question → give a thorough, well-structured explanation with key specifics, step-by-step guidance, concrete examples, and practical next steps (do NOT give a brief 1-line summary!).
+  • Complex / multi-part question → address EVERY SINGLE part in REQUIRED_PARTS_CHECKLIST in clear logical order without skipping any part.
+  • Follow-up question → resolve the context directly from [ACTIVE_CONVERSATION_CONTEXT] and previous turns without asking the visitor to repeat themselves.
 - WARM, POLITE & DETAILED RESPONSE STYLE (CRITICAL): Always respond with genuine warmth, respect, and courtesy (e.g., "I would be happy to help!", "Certainly!", "Thank you for asking!"). Give thorough, well-explained, and genuinely helpful answers — include all relevant verified details (full descriptions, features, fees/prices, availability, eligibility, step-by-step process, and helpful next steps) rather than overly short one-line replies, and close with a warm, polite offer to help with anything else.
 - QUESTION-SPECIFIC & ON-TOPIC FOCUS (CRITICAL): Answer directly and specifically what the user asked. Keep every sentence relevant to their actual question — NEVER pad answers with unrelated website sections, unsolicited catalog dumps, or off-point filler.
 - INTELLIGENT OFF-TOPIC, GENERAL KNOWLEDGE & HONEST UNCERTAINTY PROTOCOL (CRITICAL):
@@ -5594,7 +6021,7 @@ CRITICAL RULES:
 - Keep responses plain-text, polite, detailed, and natural to read or listen to (covering all relevant verified details cleanly; never cut off mid-sentence, never output markdown symbols like *, #, \`, or raw #section-id anchors).
 - LANGUAGE: ${langDirective}
 
-${liveDbBlock}[LIVE_BRIDGE_DATA]
+${liveDbBlock}${understandingBlock}[LIVE_BRIDGE_DATA]
 ${bridgeBlock}
 ${activeContextBlock}${blueprintBlock}${liveFrontendBlock}${crossPageBlock}
 ${catalogSectionLabel}
@@ -5608,11 +6035,12 @@ ${cleanFaqBlock}`;
     }
 
     // --- UNIFIED BYOK LLM FETCHER (Groq, Gemini, OpenAI) ---
-    async function callLLMWithBYOK(userMessage, systemPrompt, conversationHistory, apiKey, model = '') {
+    async function callLLMWithBYOK(userMessage, systemPrompt, conversationHistory, apiKey, model = '', maxTokensOverride = null) {
       if (!apiKey) return null;
 
       const cleanUser = String(userMessage || '').trim();
       const trimmedKey = String(apiKey).trim();
+      const targetMaxTokens = Math.max(500, Math.min(1800, Number(maxTokensOverride) || 1200));
 
       function sanitizeSpokenOutput(text, wasTruncated = false) {
         if (!text) return '';
@@ -5624,11 +6052,11 @@ ${cleanFaqBlock}`;
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Keep detailed responses complete and never cut off in the middle! Only trim if exceptionally long (> 420 words), strictly at a full sentence boundary.
+        // Keep detailed responses complete and never cut off in the middle! Only trim if exceptionally long (> 520 words), strictly at a full sentence boundary.
         const words = cleaned.split(' ');
         let hitWordCap = false;
-        if (words.length > 420) {
-          const sliced = words.slice(0, 420).join(' ');
+        if (words.length > 520) {
+          const sliced = words.slice(0, 520).join(' ');
           const lastEnd = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'), sliced.lastIndexOf('।'));
           cleaned = lastEnd > 60 ? sliced.slice(0, lastEnd + 1) : sliced;
           hitWordCap = true;
@@ -5648,7 +6076,7 @@ ${cleanFaqBlock}`;
             else if (m.includes('mixtral')) targetModel = 'mixtral-8x7b-32768';
             else if (m.startsWith('llama-') || m.startsWith('mixtral-') || m.startsWith('gemma')) targetModel = model;
           }
-          const historySlice = conversationHistory.slice(-8);
+          const historySlice = conversationHistory.slice(-12);
           const messagesPayload = [
             { role: 'system', content: systemPrompt },
             ...historySlice.map(m => ({
@@ -5675,9 +6103,9 @@ ${cleanFaqBlock}`;
                 model: gModel,
                 messages: messagesPayload,
                 temperature: 0.15,
-                max_tokens: 1200
+                max_tokens: targetMaxTokens
               }),
-              signal: AbortSignal.timeout(gIdx === 0 ? 8500 : 6000)
+              signal: AbortSignal.timeout(gIdx === 0 ? 9500 : 6500)
             });
 
             if (groqRes.ok) {
@@ -5701,7 +6129,7 @@ ${cleanFaqBlock}`;
             else if (m.startsWith('gemini-')) geminiModel = model;
           }
 
-          const geminiHistory = conversationHistory.slice(-8);
+          const geminiHistory = conversationHistory.slice(-12);
           const contents = geminiHistory.map(m => ({
             role: (m.role === 'assistant' || m.role === 'agent') ? 'model' : 'user',
             parts: [{ text: m.content || m.text || '' }]
@@ -5725,10 +6153,10 @@ ${cleanFaqBlock}`;
                 contents,
                 generationConfig: {
                   temperature: 0.2,
-                  maxOutputTokens: 1200
+                  maxOutputTokens: targetMaxTokens
                 }
               }),
-              signal: AbortSignal.timeout(gIdx === 0 ? 8500 : 6000)
+              signal: AbortSignal.timeout(gIdx === 0 ? 9500 : 6500)
             });
 
             if (geminiRes.ok) {
@@ -5746,7 +6174,7 @@ ${cleanFaqBlock}`;
 
         // 3. OpenAI / Compatible Provider (sk-...)
         if (trimmedKey.startsWith('sk-')) {
-          const openAiHistory = conversationHistory.slice(-8);
+          const openAiHistory = conversationHistory.slice(-12);
           const openAiMessages = [
             { role: 'system', content: systemPrompt },
             ...openAiHistory.map(m => ({
@@ -5769,7 +6197,7 @@ ${cleanFaqBlock}`;
               model: model || 'gpt-4o-mini',
               messages: openAiMessages,
               temperature: 0.15,
-              max_tokens: 1200
+              max_tokens: targetMaxTokens
             }),
             signal: AbortSignal.timeout(9500)
           });
@@ -5789,25 +6217,9 @@ ${cleanFaqBlock}`;
       return null;
     }
 
-    // Multi-Step / Compound Question Splitter & Pre-Response Answer Verification Guard
+    // Multi-Step / Compound / Multi-Aspect Question Splitter & Pre-Response Answer Verification Guard
     function splitMultiStepQuestion(rawQuery = '') {
-      const str = String(rawQuery || '').trim();
-      if (!str || str.length < 18) return [str];
-      if (/\b(compare|comparison|difference\s+between|between\s+\S+\s+and\s+\S+)\b/i.test(str) && !/\?\s*\S/.test(str)) {
-        return [str];
-      }
-      if (str.includes('?')) {
-        const qParts = str
-          .split(/\?\s+(?:and\s+also\s+|also\s+|and\s+)?/i)
-          .map(s => s.replace(/^\s*(?:and\s+also|also|and|plus)\s+/i, '').trim())
-          .filter(s => s.length >= 6);
-        if (qParts.length >= 2) return qParts.slice(0, 2);
-      }
-      const compoundParts = str
-        .split(/(?:\s*,?\s*\band\s+also\b\s*|\s*;\s*(?:also\s+)?|\s*,?\s*\band\s+(?=(?:what|which|how|where|when|who|show|tell|explain|check|trace|list|compare|summarize|are\s+there|do\s+you)\b))/i)
-        .map(s => s.trim())
-        .filter(s => s.length >= 6);
-      return compoundParts.length >= 2 ? compoundParts.slice(0, 2) : [str];
+      return decomposeComplexQuestion(rawQuery);
     }
 
     function verifyWidgetReply(candidateReply = '', bridgeResult = null) {
@@ -5825,14 +6237,14 @@ ${cleanFaqBlock}`;
 
     // Autonomous Zero-API-Key Local Reasoning Engine with Multi-Step Synthesis, Conversational Memory, Context Lock & Spoken Grammar Polish
     async function inferLocalAgentResponse(userText, bridgeResult = null, history = [], context = null) {
-      // Handle complex 2-part compound questions cleanly (e.g. "Which course is cheapest? And how do I apply?")
+      // Handle complex multi-part & comma-separated multi-aspect questions cleanly (e.g. "Explain fee structure, eligibility criteria, and documents required for Class 11 Science")
       if (!context || !context._inSubClause) {
         const clauses = splitMultiStepQuestion(userText);
         if (clauses.length >= 2) {
           const parts = [];
           let combinedNav = null;
           const subCtx = context ? { ...context, _inSubClause: true } : { _inSubClause: true };
-          for (const cl of clauses) {
+          for (const cl of clauses.slice(0, 4)) {
             const subBridge = await resolveDatabaseBridge(cl, agentConfig, subCtx);
             const subRes = await _inferLocalAgentResponseCore(cl, subBridge, history, subCtx);
             const subText = typeof subRes === 'object' && subRes !== null ? (subRes.reply || '') : String(subRes || '');
@@ -6309,6 +6721,26 @@ ${cleanFaqBlock}`;
 
       // 3. Exact Database Item Found in Host State / Live API
       if (bridge && (bridge.status === 'FOUND_IN_HOST_STATE' || bridge.status === 'FOUND_IN_LIVE_API')) {
+        // When user asks specifically about eligibility, required documents/policy, or application procedure
+        // for a matched item (e.g. "documents required for Class 11 Science"), check grounded KB/page FAQs first
+        // so we answer the exact aspect asked instead of repeating generic price/availability!
+        const isAspectSpecificItemQuery = Boolean(
+          intentConcepts.isEligibility ||
+          intentConcepts.isPolicyDocs ||
+          intentConcepts.isProcedure ||
+          /\b(eligibility|criteria|documents?|marksheet|leaving\s+certificate|how\s+to\s+apply|admission\s+process|procedure|warranty|return\s+policy|refund|shipping)\b/i.test(lower)
+        );
+        if (isAspectSpecificItemQuery) {
+          const groundedAspect = findGroundedKbOrSnippet(bridge.data?.name || '');
+          if (groundedAspect && groundedAspect.answer) {
+            if (context) {
+              context.activeItem = bridge.data;
+              context.activeTopic = groundedAspect.topic;
+              context.fallbackCount = 0;
+            }
+            return groundedAspect.answer;
+          }
+        }
         const formatted = formatRealtimeStockResponse(bridge.data, queryLang, effectiveText || text);
         const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
         if (sec) scrollToHostSection(sec);
@@ -6712,14 +7144,25 @@ ${cleanFaqBlock}`;
         nav.redirectTarget?.element?.id ||
         '';
       const redirectUrl = nav.redirectUrl || nav.redirectTarget?.redirectUrl || '';
-      if (!sectionId && !redirectUrl) return null;
+      const href = nav.href || (redirectUrl || (sectionId ? `#${sectionId}` : ''));
+      if (!sectionId && !redirectUrl && !href) return null;
       return {
         label: String(nav.label).slice(0, 60),
         sectionId: sectionId ? String(sectionId) : '',
         redirectUrl: redirectUrl ? String(redirectUrl) : '',
+        href: href ? String(href) : '',
         isCrossPage: Boolean(nav.isCrossPage || redirectUrl),
-        targetType: nav.targetType || 'section'
+        targetType: nav.targetType || 'section',
+        role: nav.role || 'primary'
       };
+    }
+
+    function serializeNavActions(navList) {
+      if (!Array.isArray(navList)) {
+        const single = serializeNavAction(navList);
+        return single ? [single] : [];
+      }
+      return navList.map(serializeNavAction).filter(Boolean).slice(0, 3);
     }
 
     function readRawDeviceState() {
@@ -6843,13 +7286,17 @@ ${cleanFaqBlock}`;
         state.messages.forEach(m => {
           if (!m || !m.text) return;
           const sender = m.role === 'user' ? 'user' : 'agent';
+          const restoredNavs = Array.isArray(m.navActions) && m.navActions.length > 0
+            ? m.navActions
+            : (m.navAction ? [m.navAction] : []);
           sessionLogMessages.push({
             role: sender,
             text: m.text,
             timestamp: m.timestamp || '',
-            navAction: m.navAction || null
+            navAction: restoredNavs[0] || null,
+            navActions: restoredNavs
           });
-          appendMsg(m.text, sender, m.navAction || null);
+          appendMsg(m.text, sender, restoredNavs.length > 0 ? restoredNavs : null);
         });
       }
       // Restore open/closed panel state across page navigation (respecting data-auto-open)
@@ -7133,6 +7580,13 @@ ${cleanFaqBlock}`;
                        window.AI_AGENT_API_KEY ||
                        '';
 
+        // 0. Adaptive Question Understanding & Complexity Plan
+        const understanding = (typeof analyzeQuestionUnderstanding === 'function')
+          ? analyzeQuestionUnderstanding(cleanInput, conversationContext, conversationHistory, {
+              catalogItems: getAllCatalogItems(agentConfig)
+            })
+          : null;
+
         // 1. Deterministically resolve Live Real-Time Website Database Bridge first
         const bridgeResult = await resolveDatabaseBridge(cleanInput, agentConfig, conversationContext);
         if (agentDeleted) return;
@@ -7149,7 +7603,8 @@ ${cleanFaqBlock}`;
                 redirectTarget: sec,
                 redirectUrl: sec.isCrossPage ? sec.redirectUrl : null,
                 isCrossPage: Boolean(sec.isCrossPage),
-                targetType: sec.targetType || 'section'
+                targetType: sec.targetType || 'section',
+                role: 'primary'
               };
             }
           } else if (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API') {
@@ -7157,7 +7612,7 @@ ${cleanFaqBlock}`;
             const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
             if (sec) scrollToHostSection(sec);
             const cleanBtnName = cleanScrapedItemTitle(bridgeResult.data?.name || 'Item').name.substring(0, 25);
-            navAction = sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec } : null;
+            navAction = sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec, role: 'primary' } : null;
           } else if (bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data) {
             if (Array.isArray(bridgeResult.data.matchedItems) && bridgeResult.data.matchedItems.length > 0) {
               conversationContext.lastDisplayedItems = bridgeResult.data.matchedItems;
@@ -7166,7 +7621,7 @@ ${cleanFaqBlock}`;
             conversationContext.activeTopic = bridgeResult.data.analysisType || 'analytics';
             const sec = findHostSection('courses') || findHostSection('pricing') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu');
             if (sec) scrollToHostSection(sec);
-            navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null;
+            navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec, role: 'primary' } : null;
           } else if (bridgeResult.status === 'FOUND_CATALOG_LIST' || bridgeResult.status === 'FOUND_PRICE_OVERVIEW') {
             if (Array.isArray(bridgeResult.data) && bridgeResult.data.length > 0) {
               conversationContext.lastDisplayedItems = bridgeResult.data;
@@ -7175,14 +7630,14 @@ ${cleanFaqBlock}`;
             }
             const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
             if (sec) scrollToHostSection(sec);
-            navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null;
+            navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec, role: 'primary' } : null;
           }
         }
 
-        // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database, precomputed analytics & RAG-ranked website context
+        // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database, precomputed analytics, adaptive depth plan & RAG-ranked website context
         if (apiKey) {
-          const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext, cleanInput);
-          reply = await callLLMWithBYOK(cleanInput, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
+          const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext, cleanInput, understanding);
+          reply = await callLLMWithBYOK(cleanInput, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model, understanding?.recommendedMaxTokens || 1200);
           if (reply) conversationContext.fallbackCount = 0;
         }
 
@@ -7202,6 +7657,59 @@ ${cleanFaqBlock}`;
         typingLoader.remove();
         reply = verifyWidgetReply(reply, bridgeResult);
 
+        // 4. Universal Primary + Related Clickable Section Links (for ALL website/section/dashboard/form/FAQ replies — NEVER for off-topic or unclear queries!)
+        const isOffTopicOrUnclearTurn = Boolean(
+          bridgeResult?.status === 'GENERAL_KNOWLEDGE_QUERY' ||
+          bridgeResult?.status === 'UNCLEAR_QUERY' ||
+          understanding?.mode === 'general_off_topic' ||
+          understanding?.mode === 'unclear' ||
+          isGreetingOrConversational(cleanInput)
+        );
+        const navActions = [];
+        const seenNavKeys = new Set();
+        const pushNavAction = (item, roleOverride = '') => {
+          if (!item || !item.label) return;
+          const sid = item.sectionId || item.sectionInfo?.id || item.sectionInfo?.element?.id || item.redirectTarget?.id || '';
+          const url = item.redirectUrl || item.redirectTarget?.redirectUrl || item.href || '';
+          const key = `${String(sid || url).toLowerCase()}::${String(item.label).toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+          const hrefKey = url && url !== '/' ? `href::${String(url).toLowerCase()}` : '';
+          if (seenNavKeys.has(key) || (hrefKey && seenNavKeys.has(hrefKey))) return;
+          seenNavKeys.add(key);
+          if (hrefKey) seenNavKeys.add(hrefKey);
+          navActions.push({
+            ...item,
+            role: roleOverride || (navActions.length === 0 ? 'primary' : 'related')
+          });
+        };
+
+        if (navAction && !isOffTopicOrUnclearTurn) {
+          pushNavAction(navAction, 'primary');
+        }
+        if (!isOffTopicOrUnclearTurn && typeof findRelevantSectionLinks === 'function') {
+          const currPath = (typeof window !== 'undefined' && window.location) ? window.location.pathname : '/';
+          const discoveredLinks = findRelevantSectionLinks(
+            understanding?.expandedQuery || cleanInput,
+            reply,
+            {
+              siteBlueprint: agentConfig?.siteBlueprint || null,
+              frontendIntelligence: typeof getCrossPageFrontendIndex === 'function' ? getCrossPageFrontendIndex(agentConfig) : null,
+              liveDomSections: typeof collectLiveDomSectionsForLinks === 'function' ? collectLiveDomSectionsForLinks() : []
+            },
+            { maxLinks: 3, isGeneralOffTopic: false, isUnclear: false, currentPath: currPath }
+          );
+          for (const link of discoveredLinks) {
+            if (navActions.length >= 3) break;
+            const formattedLabel = link.targetType === 'form'
+              ? `Open ${link.label}`
+              : (link.isCrossPage ? `Go to ${link.label}` : `View ${link.label}`);
+            pushNavAction({
+              ...link,
+              label: formattedLabel
+            });
+          }
+        }
+        const serializedNavs = serializeNavActions(navActions);
+
         conversationContext.lastReply = reply;
         if (!Array.isArray(conversationContext.recentReplies)) conversationContext.recentReplies = [];
         conversationContext.recentReplies = [...conversationContext.recentReplies.slice(-2), reply];
@@ -7211,14 +7719,15 @@ ${cleanFaqBlock}`;
           role: 'agent',
           text: reply,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          navAction: serializeNavAction(navAction)
+          navAction: serializedNavs[0] || null,
+          navActions: serializedNavs
         });
         saveDeviceConversationState({ isOpen: true });
         recordSessionLogToAgentFolder(sessionLogMessages);
 
         orb.className = 'vhd-orb-btn speaking';
         voiceLabel.textContent = 'Speaking...';
-        appendMsg(reply, 'agent', navAction);
+        appendMsg(reply, 'agent', navActions.length > 0 ? navActions : null);
         const shouldAutoListen = isVoiceTurn && !isFarewellQuery(cleanInput);
         speakReply(reply, { shouldAutoListen });
       } catch (err) {

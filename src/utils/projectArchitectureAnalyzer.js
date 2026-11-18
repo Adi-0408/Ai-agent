@@ -9,6 +9,7 @@
 
 import { fuzzyTokenMatch, NLU_STOPWORDS } from './fuzzyNlu.js';
 import { resolveDeepProjectQuery } from './deepProjectIndexer.js';
+import { decomposeComplexQuestion } from './answerDepthAndNavigationEngine.js';
 
 function baseFileName(p = '') {
   return String(p || '').split(/[\\/]/).pop() || '';
@@ -586,41 +587,14 @@ export function resolveProjectArchitectureQuery(query, projectArch = null, optio
 }
 
 /**
- * Split complex multi-step / compound user questions into independent sub-questions cleanly.
+ * Split complex multi-step, compound, and comma-separated multi-aspect user questions into independent sub-questions cleanly.
  * Examples:
  *  - "Which course is cheapest? And how do I apply?" -> ["Which course is cheapest?", "how do I apply?"]
- *  - "What is the total revenue, and also explain how the frontend connects to the backend" -> 2 clauses
+ *  - "Explain the fee structure, eligibility criteria, and documents required for Class 11 Science" -> 3 clauses
  * Does NOT split comparisons like "compare Science and Commerce" or "between 100 and 500"!
  */
 export function splitMultiStepQuestion(rawQuery = '') {
-  const str = String(rawQuery || '').trim();
-  if (!str || str.length < 18) return [str];
-
-  // Never split comparison or numeric range queries on "and"
-  if (/\b(compare|comparison|difference\s+between|between\s+\S+\s+and\s+\S+)\b/i.test(str) && !/\?\s*\S/.test(str)) {
-    return [str];
-  }
-
-  // 1. Explicit two-question split on "?" followed by another clause
-  if (str.includes('?')) {
-    const qParts = str
-      .split(/\?\s+(?:and\s+also\s+|also\s+|and\s+)?/i)
-      .map(s => s.replace(/^\s*(?:and\s+also|also|and|plus)\s+/i, '').trim())
-      .filter(s => s.length >= 6);
-    if (qParts.length >= 2) return qParts.slice(0, 2);
-  }
-
-  // 2. Explicit compound conjunctions ("and also", "as well as", "; also", ", and tell me", ", and how/what/which/where")
-  const compoundParts = str
-    .split(/(?:\s*,?\s*\band\s+also\b\s*|\s*;\s*(?:also\s+)?|\s*,?\s*\band\s+(?=(?:what|which|how|where|when|who|show|tell|explain|check|trace|list|compare|summarize|are\s+there|do\s+you)\b))/i)
-    .map(s => s.trim())
-    .filter(s => s.length >= 6);
-
-  if (compoundParts.length >= 2) {
-    return compoundParts.slice(0, 2);
-  }
-
-  return [str];
+  return decomposeComplexQuestion(rawQuery);
 }
 
 /**

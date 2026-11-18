@@ -32,6 +32,12 @@ import {
   isGeneralOffTopicQuery,
   tryAnswerGeneralKnowledgeLocally
 } from '../utils/questionRelevanceRouter.js';
+import {
+  analyzeQuestionUnderstanding,
+  decomposeComplexQuestion,
+  findRelevantSectionLinks,
+  formatSectionLinksMarkdown
+} from '../utils/answerDepthAndNavigationEngine.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -572,6 +578,51 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     ? `\n\n[COMPLETE_PROJECT_INDEX_AND_CROSS_MODULE_GRAPH]\n${archLines.join('\n')}`
     : '';
 
+  // Multi-Turn Conversational Memory & History Formatting (expanded 12-turn window for follow-up continuity!)
+  const rawHistory = options?.conversationHistory || options?.history || userMessage?.conversationHistory || userMessage?.history || [];
+  const validHistory = (Array.isArray(rawHistory) ? rawHistory : []).slice(-12).map(m => {
+    const role = (m.role === 'agent' || m.role === 'assistant' || m.sender === 'assistant') ? 'assistant' : 'user';
+    const textContent = String(m.content || m.text || '').trim();
+    return { role, content: textContent };
+  }).filter(m => m.content && m.content !== cleanMessage);
+
+  // Adaptive Question Understanding, Complexity Plan & Universal Clickable Section Links
+  const questionUnderstanding = analyzeQuestionUnderstanding(cleanMessage, null, validHistory, {
+    catalogItems: dbRecords
+  });
+  const targetMaxTokens = Math.max(500, Math.min(1800, Number(questionUnderstanding.recommendedMaxTokens) || 1200));
+  const effectiveBlueprint = options?.siteBlueprint || userMessage?.siteBlueprint || null;
+  const relevantSectionLinks = (!options?._isSubClause && !questionUnderstanding.isGeneralOffTopic && questionUnderstanding.mode !== 'unclear')
+    ? findRelevantSectionLinks(
+        questionUnderstanding.expandedQuery || cleanMessage,
+        precomputedFrontend?.summaryText || precomputedAnalytics?.summaryText || '',
+        { siteBlueprint: effectiveBlueprint, frontendIntelligence: frontendIndex },
+        { maxLinks: 3, isGeneralOffTopic: false, isUnclear: false }
+      )
+    : [];
+  const sectionLinksMarkdown = formatSectionLinksMarkdown(relevantSectionLinks);
+
+  const depthPlanLines = [
+    `COMPLEXITY_MODE: ${questionUnderstanding.mode}`,
+    `DEPTH_DIRECTIVE: ${questionUnderstanding.depthDirective}`
+  ];
+  if (questionUnderstanding.isFollowUp && questionUnderstanding.resolvedAnchor) {
+    depthPlanLines.push(`FOLLOW_UP_CONTEXT_ANCHOR: "${questionUnderstanding.resolvedAnchor}"`);
+  }
+  if (Array.isArray(questionUnderstanding.requiredParts) && questionUnderstanding.requiredParts.length >= 2) {
+    depthPlanLines.push(`REQUIRED_PARTS_CHECKLIST: ${questionUnderstanding.requiredParts.map((p, idx) => `(${idx + 1}) ${p}`).join(' | ')}`);
+  }
+  if (relevantSectionLinks.length > 0) {
+    depthPlanLines.push(`CLICKABLE_WEBSITE_SECTION_LINKS (include at the end of your reply): ${sectionLinksMarkdown}`);
+  }
+  const adaptiveDepthContext = `\n\n[ADAPTIVE_RESPONSE_DEPTH_AND_COMPLETENESS_PLAN]\n${depthPlanLines.join('\n')}`;
+
+  const appendOfflineLinks = (text) => {
+    const clean = String(text || '').trim();
+    if (!clean || options?._isSubClause || !sectionLinksMarkdown || clean.includes('Relevant sections:')) return clean;
+    return `${clean}\n\n${sectionLinksMarkdown}`;
+  };
+
   const verifiedFallbackSummary = precomputedArchitecture?.summaryText || precomputedFrontend?.summaryText || precomputedAnalytics?.summaryText || '';
   const platformKnowledgeBlock = isCustomerMode ? '' : `
 PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
@@ -583,10 +634,19 @@ PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Multilingual Support: The agent supports English, Hindi (हिंदी), and Marathi (मराठी) with auto-detection for voice recognition and spoken responses.
 `;
 
-  const systemInstructions = `${baseIdentity}${analyticsContext}${frontendContext}${architectureContext}${kbContext}${dbContext}
+  const systemInstructions = `${baseIdentity}${adaptiveDepthContext}${analyticsContext}${frontendContext}${architectureContext}${kbContext}${dbContext}
 
 CORE MISSION & ASSIGNMENT:
 You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and factual accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, comparisons, availability, dashboard summaries, statistics, charts, reports, and company policies, guiding customers every step of the way.
+
+ADAPTIVE DEPTH, COMPLEX QUESTION COVERAGE & SECTION NAVIGATION (CRITICAL):
+- Follow [ADAPTIVE_RESPONSE_DEPTH_AND_COMPLETENESS_PLAN] strictly:
+  • Simple question: Give a clear, polite, direct answer with helpful context.
+  • Detailed / how-to question: Provide a comprehensive, well-structured explanation with specifics, concrete examples, step-by-step guidance, and practical next steps (NEVER give a brief 1-line summary!).
+  • Technical question: Provide a thorough technical explanation covering architecture, implementation details, data flow, examples, and relevant trade-offs.
+  • Complex / multi-part question: Thoroughly address EVERY SINGLE part listed in REQUIRED_PARTS_CHECKLIST in logical order without skipping any part.
+  • Follow-up question: Resolve the reference directly using FOLLOW_UP_CONTEXT_ANCHOR and previous conversation turns without asking the user to repeat themselves.
+  • Website section links: Whenever CLICKABLE_WEBSITE_SECTION_LINKS are provided, include those exact clickable markdown links naturally at the end of your reply so the user can jump directly to the relevant section, dashboard, form, or report.
 
 HONEST UNCERTAINTY, QUESTION-SPECIFIC RELEVANCE & 6-WAY RESPONSE PROTOCOL (CRITICAL):
 - QUESTION-SPECIFIC & ON-TOPIC ANSWERS: Directly address what the user actually asked. Keep every explanation relevant to their specific question without adding unrelated project sections, unsolicited catalog dumps, or off-point filler.
@@ -620,14 +680,6 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
 2. NEVER Output JSON Or Config Schemas: You are in DIRECT CHAT / VOICE MODE. You MUST NEVER output JSON configurations, code schemas, or objects like {"agent_config": ...}.
 3. Dual-Channel Excellence: Give polite, warm, and detailed answers (clear explanations, key specifics, and helpful next steps) that read cleanly in chat and flow naturally when spoken aloud. Never rush or give curt one-line replies when helpful detail is available.
 4. STRICT CUSTOMER-ONLY INTERACTIONS: You are talking directly to customers, shoppers, and site visitors—NOT developers or database engineers. Only answer customer questions (products, pricing, availability, store services, ordering). NEVER show unnecessary internal data, README setup notes, Apps Script toolbars, responsive/CSS specs, technical database queries, schema questions, SQL statements, or developer backend logic. Always reply politely and warmly with only what the visitor actually needs.`;
-
-  // Multi-Turn Conversational Memory & History Formatting (for ALL agents & websites)
-  const rawHistory = options?.conversationHistory || options?.history || userMessage?.conversationHistory || userMessage?.history || [];
-  const validHistory = (Array.isArray(rawHistory) ? rawHistory : []).slice(-8).map(m => {
-    const role = (m.role === 'agent' || m.role === 'assistant' || m.sender === 'assistant') ? 'assistant' : 'user';
-    const textContent = String(m.content || m.text || '').trim();
-    return { role, content: textContent };
-  }).filter(m => m.content && m.content !== cleanMessage);
 
   // 1. Try Groq with User-Provided Key (High Intelligence default: llama-3.3-70b-versatile with automatic failover)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
@@ -663,7 +715,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
                 content: cleanMessage
               }
             ],
-            max_tokens: 1200,
+            max_tokens: targetMaxTokens,
             temperature: 0.15
           })
         });
@@ -710,7 +762,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           },
           contents: geminiContents,
           generationConfig: {
-            maxOutputTokens: 1200,
+            maxOutputTokens: targetMaxTokens,
             temperature: 0.2
           }
         })
@@ -747,7 +799,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
             ...validHistory,
             { role: 'user', content: cleanMessage }
           ],
-          max_tokens: 1200,
+          max_tokens: targetMaxTokens,
           temperature: 0.15
         })
       });
@@ -769,17 +821,17 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
   // 3. Fallback to Universal Typo-Tolerant, Multi-Step & Project-Aware Local NLU Engine
   const rawTrimmed = cleanMessage.trim();
 
-  // Multi-Step / Compound Question Decomposition ("Which course is cheapest? And how do I apply?", "What is total revenue and how does frontend connect to backend?")
+  // Multi-Step / Compound / Comma-Separated Multi-Aspect Question Decomposition
   if (!options?._isSubClause) {
-    const subClauses = splitMultiStepQuestion(rawTrimmed);
+    const subClauses = decomposeComplexQuestion(rawTrimmed);
     if (subClauses.length >= 2) {
       const subAnswers = [];
-      for (const clause of subClauses) {
+      for (const clause of subClauses.slice(0, 4)) {
         const ans = await generateAIResponse(clause, promptText, kbList, '', { ...options, _isSubClause: true, throwOnMissingKey: false });
         if (ans && !subAnswers.includes(ans)) subAnswers.push(ans.trim());
       }
       if (subAnswers.length >= 2) {
-        return verifyAndPolishAnswer(subAnswers.join(' '), { isCustomerMode });
+        return appendOfflineLinks(verifyAndPolishAnswer(subAnswers.join(' '), { isCustomerMode }));
       }
     }
   }
@@ -935,7 +987,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
     const feDirect = resolveFrontendDataQuery(effectiveClean, liveFrontendSnapshot, frontendIndex, inputLang) ||
                      resolveFrontendDataQuery(rawTrimmed, liveFrontendSnapshot, frontendIndex, inputLang);
     if (feDirect && feDirect.summaryText) {
-      return feDirect.summaryText;
+      return appendOfflineLinks(feDirect.summaryText);
     }
   }
 
@@ -948,7 +1000,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
       priceLabelEn: isAcademic ? 'fee' : 'price'
     }, inputLang);
     if (analytical && analytical.summaryText) {
-      return analytical.summaryText;
+      return appendOfflineLinks(analytical.summaryText);
     }
 
     // 1. Ordinal selection ("the first one", "2nd one", "secnd one", "last one")
@@ -958,7 +1010,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
     else if (/\b(third|3rd|number\s*3|#3)\b/i.test(lower)) ordRecord = dbRecords[2];
     else if (/\b(last\s*one|the\s*last)\b/i.test(lower)) ordRecord = dbRecords[dbRecords.length - 1];
     if (ordRecord) {
-      return `${ordRecord.name}${ordRecord.price ? ` (${ordRecord.price})` : ''}${ordRecord.description ? `: ${ordRecord.description}` : ''}${ordRecord.stock !== null && ordRecord.stock !== undefined ? ` — ${ordRecord.stock} ${ordRecord.unit || 'units'} available.` : '.'}`;
+      return appendOfflineLinks(`${ordRecord.name}${ordRecord.price ? ` (${ordRecord.price})` : ''}${ordRecord.description ? `: ${ordRecord.description}` : ''}${ordRecord.stock !== null && ordRecord.stock !== undefined ? ` — ${ordRecord.stock} ${ordRecord.unit || 'units'} available.` : '.'}`);
     }
 
     // 2. Affirmation / "tell me more" / "yes" continuation
@@ -966,23 +1018,45 @@ Your floating voice assistant widget will appear immediately on your site, with 
       const lastBotText = [...validHistory].reverse().find(m => m.role === 'assistant')?.content || '';
       const mentioned = dbRecords.find(r => r.name && lastBotText.toLowerCase().includes(r.name.toLowerCase()));
       if (mentioned) {
-        return `Here is more about ${mentioned.name}: ${mentioned.description || 'Full details are available on our website'}${mentioned.price ? `. ${isAcademic ? 'Fee' : 'Price'}: ${mentioned.price}` : ''}.`;
+        return appendOfflineLinks(`Here is more about ${mentioned.name}: ${mentioned.description || 'Full details are available on our website'}${mentioned.price ? `. ${isAcademic ? 'Fee' : 'Price'}: ${mentioned.price}` : ''}.`);
       }
       const summary = dbRecords.slice(0, 5).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
-      return `Here are our available options: ${summary}. Name any one or say "the first one" for full details!`;
+      return appendOfflineLinks(`Here are our available options: ${summary}. Name any one or say "the first one" for full details!`);
     }
 
     // 3. Specific Item Fuzzy Match FIRST (word-order independent & typo-tolerant: "fess for scince 11th", "scince 11th details", "paracetmol avilable")
-    let matchedRecord = fuzzyMatchRecord(dbRecords, strippedRaw, lower);
-    if (!matchedRecord && intent.hasPronounRef) {
-      const recentCombined = validHistory.slice(-4).map(m => m.content).join(' ').toLowerCase();
-      matchedRecord = dbRecords.find(r => r.name && recentCombined.includes(r.name.toLowerCase()));
-    }
-    if (matchedRecord) {
-      if (isAcademic) {
-        return `${matchedRecord.name} is one of our academic programs${matchedRecord.price ? ` (Fee: ${matchedRecord.price})` : ''}.${matchedRecord.description ? ` Details: ${matchedRecord.description}` : ''}`;
+    // IMPORTANT: When the user specifically asks about eligibility, required documents/policy, or application procedure
+    // for an item (e.g. "documents required for Class 11 Science"), check grounded Knowledge Base FAQs FIRST so we
+    // answer the exact aspect asked instead of repeating the generic item fee/description!
+    const isSpecificAspectAsk = Boolean(intent.isEligibility || intent.isPolicyDocs || intent.isProcedure);
+    if (isSpecificAspectAsk) {
+      const safeKbEarly = safeKbList.filter(item => item && item.a && !String(item.a).includes('['));
+      const aspectRag = rankGroundedContext(lower, safeKbEarly, [], { topKFaqs: 5 });
+      if (aspectRag.topHit && aspectRag.topHit.answer) {
+        return appendOfflineLinks(aspectRag.topHit.answer);
       }
-      return `${matchedRecord.name} is in our database${matchedRecord.price ? ` at ${matchedRecord.price}` : ''}.${matchedRecord.description ? ` ${matchedRecord.description}` : ''}${matchedRecord.stock !== null && matchedRecord.stock !== undefined ? ` Available: ${matchedRecord.stock} ${matchedRecord.unit || 'units'}.` : ''}`;
+    }
+
+    let matchedRecord = fuzzyMatchRecord(dbRecords, strippedRaw, lower);
+    if (!matchedRecord && (intent.hasPronounRef || questionUnderstanding.isFollowUp)) {
+      // Check most recent anchor & turns in reverse chronological order so the LATEST discussed item always wins!
+      const anchorCandidates = [
+        String(questionUnderstanding.resolvedAnchor || '').toLowerCase(),
+        ...validHistory.slice(-4).reverse().map(m => String(m.content || '').toLowerCase())
+      ].filter(Boolean);
+      for (const turnText of anchorCandidates) {
+        const hit = dbRecords.find(r => r.name && turnText.includes(r.name.toLowerCase()));
+        if (hit) {
+          matchedRecord = hit;
+          break;
+        }
+      }
+    }
+    if (matchedRecord && !isSpecificAspectAsk) {
+      if (isAcademic) {
+        return appendOfflineLinks(`${matchedRecord.name} is one of our academic programs${matchedRecord.price ? ` (Fee: ${matchedRecord.price})` : ''}.${matchedRecord.description ? ` Details: ${matchedRecord.description}` : ''}`);
+      }
+      return appendOfflineLinks(`${matchedRecord.name} is in our database${matchedRecord.price ? ` at ${matchedRecord.price}` : ''}.${matchedRecord.description ? ` ${matchedRecord.description}` : ''}${matchedRecord.stock !== null && matchedRecord.stock !== undefined ? ` Available: ${matchedRecord.stock} ${matchedRecord.unit || 'units'}.` : ''}`);
     }
 
     // 4. General Pricing / Fee Structure Overview ("fess structre", "how much do i have to pay?", "pricing")
@@ -990,7 +1064,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
       const priced = dbRecords.filter(r => r.price);
       if (priced.length > 0) {
         const feeSum = priced.slice(0, 6).map(r => `${r.name}: ${r.price}`).join(', ');
-        return `Here is our ${isAcademic ? 'fee structure' : 'pricing'} overview: ${feeSum}. Ask about any specific option for complete details!`;
+        return appendOfflineLinks(`Here is our ${isAcademic ? 'fee structure' : 'pricing'} overview: ${feeSum}. Ask about any specific option for complete details!`);
       }
     }
 
@@ -998,9 +1072,9 @@ Your floating voice assistant widget will appear immediately on your site, with 
     if (intent.isCatalogList) {
       const summary = dbRecords.slice(0, 6).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}`).join(', ');
       if (isAcademic) {
-        return `Our verified academic programs and courses include: ${summary}. Feel free to ask me for admission criteria, eligibility, or details on any course!`;
+        return appendOfflineLinks(`Our verified academic programs and courses include: ${summary}. Feel free to ask me for admission criteria, eligibility, or details on any course!`);
       }
-      return `Our verified database includes: ${summary}. You can ask me for real-time availability, pricing, or details on any item!`;
+      return appendOfflineLinks(`Our verified database includes: ${summary}. You can ask me for real-time availability, pricing, or details on any item!`);
     }
   }
 
@@ -1009,7 +1083,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
     const feFallbackHit = resolveFrontendDataQuery(effectiveClean, liveFrontendSnapshot, frontendIndex, inputLang) ||
                           resolveFrontendDataQuery(rawTrimmed, liveFrontendSnapshot, frontendIndex, inputLang);
     if (feFallbackHit && feFallbackHit.summaryText) {
-      return feFallbackHit.summaryText;
+      return appendOfflineLinks(feFallbackHit.summaryText);
     }
   }
 
@@ -1017,7 +1091,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
   const safeKbForMatch = safeKbList.filter(item => item && item.a && !String(item.a).includes('['));
   const offlineRag = rankGroundedContext(lower, safeKbForMatch, [], { topKFaqs: 5 });
   if (offlineRag.topHit && offlineRag.topHit.answer) {
-    return offlineRag.topHit.answer;
+    return appendOfflineLinks(offlineRag.topHit.answer);
   }
 
   // Secondary precision-checked scoreKbEntryFuzzy check for exact typo-corrected hits
@@ -1031,42 +1105,42 @@ Your floating voice assistant widget will appear immediately on your site, with 
     }
   }
   if (bestMatch && highestScore >= 24) {
-    return bestMatch.a;
+    return appendOfflineLinks(bestMatch.a);
   }
 
   // Check catalog/offerings in Knowledge Base when dbRecords is empty
   if (intent.isCatalogList && kbList.length > 0) {
     const productEntry = kbList.find(k => /\b(what products|what courses|courses|models do you offer|catalog|services do you offer|programs|menu|plans|rooms)\b/i.test(k.q));
     if (productEntry && productEntry.a && !productEntry.a.includes('[')) {
-      return productEntry.a;
+      return appendOfflineLinks(productEntry.a);
     }
     const productTitles = kbList
       .map(k => k.q.replace(/^(?:what is|what are|tell me about)\s+/i, '').replace(/\?$/, '').trim())
       .filter(t => t.length > 2 && !/^(?:this website|main point|contact|support|hours|pricing)/i.test(t));
     if (productTitles.length > 0) {
-      return `Our offerings include: ${productTitles.slice(0, 6).join(', ')}. Which would you like to explore in detail?`;
+      return appendOfflineLinks(`Our offerings include: ${productTitles.slice(0, 6).join(', ')}. Which would you like to explore in detail?`);
     }
   }
 
   // Universal Order-Independent Archetype Intents (Eligibility, Procedure, Documents/Policy — honestly qualified when not in KB)
   if (intent.isEligibility) {
-    if (isAcademic) return 'While exact course-specific criteria are not published here, admissions typically require passing the qualifying board examination with the required merit marks. Ask about a specific course or contact our office to confirm!';
-    if (isHealthcare) return 'Prescription medicines require a valid doctor prescription, while over-the-counter items are available directly. Please confirm with our pharmacist for specific items.';
-    return 'While exact eligibility terms are not listed here, our offerings are generally open to customers directly through this website. Ask about any specific option or reach out to our team to confirm!';
+    if (isAcademic) return appendOfflineLinks('While exact course-specific criteria are not published here, admissions typically require passing the qualifying board examination with the required merit marks. Ask about a specific course or contact our office to confirm!');
+    if (isHealthcare) return appendOfflineLinks('Prescription medicines require a valid doctor prescription, while over-the-counter items are available directly. Please confirm with our pharmacist for specific items.');
+    return appendOfflineLinks('While exact eligibility terms are not listed here, our offerings are generally open to customers directly through this website. Ask about any specific option or reach out to our team to confirm!');
   }
   if (intent.isProcedure) {
-    if (isAcademic) return 'To apply, complete the online admission form on this portal and submit your required documents.';
-    if (isFood) return 'You can place your order directly from our menu section or reserve a table with us online.';
-    if (isHospitality) return 'Select your check-in and check-out dates in our reservation section to confirm your booking.';
-    if (isSaas) return 'Choose your preferred plan on our pricing section to start your subscription or free trial right away.';
-    if (isAutomotive) return 'Schedule a showroom visit or test drive using our online booking form.';
-    return 'You can place an order, book, or submit your inquiry directly through our website.';
+    if (isAcademic) return appendOfflineLinks('To apply, complete the online admission form on this portal and submit your required documents.');
+    if (isFood) return appendOfflineLinks('You can place your order directly from our menu section or reserve a table with us online.');
+    if (isHospitality) return appendOfflineLinks('Select your check-in and check-out dates in our reservation section to confirm your booking.');
+    if (isSaas) return appendOfflineLinks('Choose your preferred plan on our pricing section to start your subscription or free trial right away.');
+    if (isAutomotive) return appendOfflineLinks('Schedule a showroom visit or test drive using our online booking form.');
+    return appendOfflineLinks('You can place an order, book, or submit your inquiry directly through our website.');
   }
   if (intent.isPolicyDocs) {
-    if (isAcademic) return 'While our exact document checklist is not published here, admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs. Please verify with our admissions desk.';
-    if (isHealthcare) return 'Please keep a valid doctor prescription and patient ID ready for prescription items.';
-    if (isHospitality) return 'Please carry a valid government photo ID at check-in. Exact check-in and cancellation terms are listed on our booking page.';
-    return 'For exact return, shipping, and warranty policy terms, please review our policy section on the website or reach out to our team directly.';
+    if (isAcademic) return appendOfflineLinks('While our exact document checklist is not published here, admission documents typically include your previous marksheet, original School Leaving Certificate (LC), identity proof, and passport photographs. Please verify with our admissions desk.');
+    if (isHealthcare) return appendOfflineLinks('Please keep a valid doctor prescription and patient ID ready for prescription items.');
+    if (isHospitality) return appendOfflineLinks('Please carry a valid government photo ID at check-in. Exact check-in and cancellation terms are listed on our booking page.');
+    return appendOfflineLinks('For exact return, shipping, and warranty policy terms, please review our policy section on the website or reach out to our team directly.');
   }
 
   // 4. Semantic Anti-Repetition & Honest Uncertainty Handling
