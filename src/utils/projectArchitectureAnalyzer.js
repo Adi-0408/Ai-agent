@@ -10,6 +10,7 @@
 import { fuzzyTokenMatch, NLU_STOPWORDS } from './fuzzyNlu.js';
 import { resolveDeepProjectQuery } from './deepProjectIndexer.js';
 import { decomposeComplexQuestion } from './answerDepthAndNavigationEngine.js';
+import { verifyAnswerAccuracy } from './accuracyVerificationEngine.js';
 
 function baseFileName(p = '') {
   return String(p || '').split(/[\\/]/).pop() || '';
@@ -605,12 +606,47 @@ export function splitMultiStepQuestion(rawQuery = '') {
  */
 export function verifyAndPolishAnswer(candidateReply = '', verificationContext = {}) {
   let text = String(candidateReply || '').replace(/\s+/g, ' ').trim();
-  const { verifiedFallback = '', isCustomerMode = false, wasTruncated = false } = verificationContext;
+  const {
+    verifiedFallback = '',
+    isCustomerMode = false,
+    wasTruncated = false,
+    groundTruth = null,
+    catalogItems = null,
+    matchedItem = null,
+    query = '',
+    isGeneralOffTopic = false,
+    isGreeting = false,
+    isUnclear = false,
+    hasVerifiedContext = true,
+    queryLang = 'en-US',
+    onAuditResult = null
+  } = verificationContext;
 
-  // 1. If candidate reply falsely says "not available / I don't know / error" while we ALREADY have a verified grounded answer, prefer the verified answer!
-  const looksLikeFalseError = /\b(not\s+available\s+right\s+now|cannot\s+find|could\s+not\s+find|no\s+information\s+available|i\s+don'?t\s+have\s+(?:exact\s+)?information|unable\s+to\s+find)\b/i.test(text);
-  if ((!text || looksLikeFalseError) && verifiedFallback && verifiedFallback.trim().length > 10) {
-    text = verifiedFallback.trim();
+  // 1. Run deterministic fact-verification & hallucination audit gate when ground truth or catalog context is provided
+  if (groundTruth || (Array.isArray(catalogItems) && catalogItems.length > 0)) {
+    const audit = verifyAnswerAccuracy(text, {
+      query,
+      groundTruth,
+      catalogItems: catalogItems || [],
+      matchedItem,
+      verifiedFallback,
+      isCustomerMode,
+      isGeneralOffTopic,
+      isGreeting,
+      isUnclear,
+      hasVerifiedContext,
+      queryLang
+    });
+    text = String(audit.text || '').replace(/\s+/g, ' ').trim();
+    if (typeof onAuditResult === 'function') {
+      try { onAuditResult(audit); } catch (_) {}
+    }
+  } else {
+    // 1b. Basic false-error override when called without full ground truth bundle
+    const looksLikeFalseError = /\b(not\s+available\s+right\s+now|cannot\s+find|could\s+not\s+find|no\s+information\s+available|i\s+don'?t\s+have\s+(?:exact\s+)?information|unable\s+to\s+find)\b/i.test(text);
+    if ((!text || looksLikeFalseError) && verifiedFallback && verifiedFallback.trim().length > 10) {
+      text = verifiedFallback.trim();
+    }
   }
 
   if (!text) return '';

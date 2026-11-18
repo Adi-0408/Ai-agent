@@ -3599,10 +3599,18 @@
       return { name: cleanName, desc: secondary };
     }
 
-    let _catalogCache = { timestamp: 0, items: [] };
+    let _catalogCache = { timestamp: 0, domVersion: -1, configFetchedAt: -1, items: [] };
     function getAllCatalogItems(agentConfig, forceRefresh = false) {
       const now = Date.now();
-      if (!forceRefresh && _catalogCache.items.length > 0 && (now - _catalogCache.timestamp < 4000)) {
+      const currDomVer = typeof _frontendDomVersion !== 'undefined' ? _frontendDomVersion : 0;
+      const currCfgAt = typeof lastConfigFetchAt !== 'undefined' ? lastConfigFetchAt : 0;
+      if (
+        !forceRefresh &&
+        _catalogCache.items.length > 0 &&
+        _catalogCache.domVersion === currDomVer &&
+        _catalogCache.configFetchedAt === currCfgAt &&
+        (now - _catalogCache.timestamp < 4000)
+      ) {
         return _catalogCache.items;
       }
       const items = [];
@@ -3889,7 +3897,12 @@
       }
 
       // STRICT ACCURACY: Never fabricate fake catalog items from FAQs or general text.
-      _catalogCache = { timestamp: now, items };
+      _catalogCache = {
+        timestamp: now,
+        domVersion: typeof _frontendDomVersion !== 'undefined' ? _frontendDomVersion : 0,
+        configFetchedAt: typeof lastConfigFetchAt !== 'undefined' ? lastConfigFetchAt : 0,
+        items
+      };
       return items;
     }
 
@@ -5289,6 +5302,261 @@
       return selected;
     }
 
+    // --- CROSS-SOURCE VERIFICATION, HALLUCINATION AUDIT GATE & CONSISTENCY LEDGER (PILLAR 7) ---
+    const _widgetConsistencyLedger = new Map();
+
+    function extractWidgetCurrencyMentions(text = '') {
+      const str = String(text || '');
+      const matches = [];
+      const re = /(?:₹|rs\.?\s*|inr\s*|\$|€|£)\s*(\d+(?:,\d{2,3})*(?:\.\d+)?)\s*(k|thousand|lakh|lakhs|lac|lacs|cr|crore|m|million)?\b/gi;
+      let m;
+      while ((m = re.exec(str)) !== null) {
+        const parsed = typeof parseNumericPrice === 'function' ? parseNumericPrice(m[0]) : null;
+        if (parsed && Number.isFinite(parsed.value)) {
+          matches.push({ raw: m[0].trim(), value: parsed.value, currency: parsed.currency });
+        }
+      }
+      return matches;
+    }
+
+    function extractWidgetContactMentions(text = '') {
+      const str = String(text || '');
+      const emails = Array.from(new Set(
+        (str.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi) || []).map(e => e.toLowerCase())
+      ));
+      const rawPhones = str.match(/(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{3,5}\)?[\s.-]?)?\d{3,5}[\s.-]?\d{4,6}/g) || [];
+      const phones = [];
+      for (const rp of rawPhones) {
+        const digits = String(rp || '').replace(/\D/g, '');
+        if (digits.length >= 10 && digits.length <= 13 && !/^20\d{2}/.test(digits)) {
+          phones.push({ raw: rp.trim(), digits });
+        }
+      }
+      return { emails, phones };
+    }
+
+    function computeWidgetDataVersion(catalogItems = [], kb = []) {
+      const domVer = typeof _frontendDomVersion !== 'undefined' ? _frontendDomVersion : 0;
+      const cfgAt = typeof lastConfigFetchAt !== 'undefined' ? lastConfigFetchAt : 0;
+      const catSig = (Array.isArray(catalogItems) ? catalogItems : []).slice(0, 40).map(i => `${i?.name || ''}|${i?.price || ''}|${i?.stock ?? ''}`).join(';');
+      const kbSig = (Array.isArray(kb) ? kb : []).slice(0, 25).map(k => `${k?.q || ''}`).join(';');
+      let h = 2166136261;
+      const raw = `${domVer}#${cfgAt}#${catSig}#${kbSig}`;
+      for (let i = 0; i < raw.length; i++) {
+        h ^= raw.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return (h >>> 0).toString(36);
+    }
+
+    function crossVerifyWidgetSources(sources = {}) {
+      const catalogItems = Array.isArray(sources.catalogItems) ? sources.catalogItems.filter(Boolean) : [];
+      const knowledgeBase = Array.isArray(sources.knowledgeBase) ? sources.knowledgeBase.filter(Boolean) : [];
+      const hostKnowledge = sources.hostKnowledge || null;
+
+      const authoritativeItems = new Map();
+      const allVerifiedPriceValues = new Set();
+      for (const item of catalogItems) {
+        const name = String(item.name || item.title || item.product || '').trim();
+        if (!name) continue;
+        const rawPriceStr = item.price ? String(item.price).trim() : '';
+        const isPercentNotPrice = /%\s*$/.test(rawPriceStr) && !/[₹$€£]|rs\.?|inr|usd/i.test(rawPriceStr);
+        const parsedPrice = (!isPercentNotPrice && rawPriceStr && typeof parseNumericPrice === 'function') ? parseNumericPrice(rawPriceStr) : null;
+        const stockNum = (item.stock !== null && item.stock !== undefined && item.stock !== '' && !isNaN(Number(item.stock)))
+          ? Number(item.stock)
+          : null;
+        if (parsedPrice && Number.isFinite(parsedPrice.value)) allVerifiedPriceValues.add(parsedPrice.value);
+        authoritativeItems.set(name.toLowerCase(), {
+          name,
+          rawPrice: isPercentNotPrice ? '' : rawPriceStr,
+          priceValue: parsedPrice ? parsedPrice.value : null,
+          stock: stockNum,
+          unit: item.unit || 'units'
+        });
+      }
+
+      const conflicts = [];
+      for (const faq of knowledgeBase) {
+        const qAndALower = `${faq.q || ''} ${faq.a || ''}`.toLowerCase();
+        const faqPrices = extractWidgetCurrencyMentions(faq.a || '');
+        if (faqPrices.length === 0) continue;
+        for (const [keyLower, auth] of authoritativeItems.entries()) {
+          if (auth.priceValue === null) continue;
+          if (qAndALower.includes(keyLower)) {
+            const hasAuth = faqPrices.some(fp => Math.abs(fp.value - auth.priceValue) <= 1);
+            if (!hasAuth) {
+              conflicts.push({
+                entity: auth.name,
+                staleValue: faqPrices[0].raw,
+                authoritativeValue: auth.rawPrice,
+                resolution: `For "${auth.name}", use the authoritative verified price ${auth.rawPrice} (superseding outdated FAQ value ${faqPrices[0].raw}).`
+              });
+            }
+          }
+        }
+      }
+
+      const verifiedEmails = new Set();
+      const verifiedPhoneDigits = new Set();
+      const ingestContacts = (txt) => {
+        const { emails, phones } = extractWidgetContactMentions(txt);
+        emails.forEach(e => verifiedEmails.add(e));
+        phones.forEach(p => {
+          verifiedPhoneDigits.add(p.digits);
+          if (p.digits.length > 10) verifiedPhoneDigits.add(p.digits.slice(-10));
+        });
+      };
+      if (hostKnowledge?.email) ingestContacts(hostKnowledge.email);
+      if (hostKnowledge?.phone) ingestContacts(hostKnowledge.phone);
+      for (const faq of knowledgeBase) ingestContacts(`${faq.q || ''} ${faq.a || ''}`);
+
+      const lines = [];
+      if (conflicts.length > 0) {
+        lines.push('CROSS_SOURCE_CONFLICTS_RESOLVED (ALWAYS USE AUTHORITATIVE LIVE/DB VALUES):');
+        conflicts.slice(0, 6).forEach(c => lines.push(`- ${c.resolution}`));
+      }
+      const groundTruthBlock = lines.length > 0 ? `\n[CROSS_VERIFIED_GROUND_TRUTH]\n${lines.join('\n')}\n` : '';
+
+      return {
+        authoritativeItems,
+        allVerifiedPriceValues,
+        verifiedEmails,
+        verifiedPhoneDigits,
+        conflicts,
+        groundTruthBlock
+      };
+    }
+
+    function verifyWidgetAnswerAccuracy(candidateReply = '', ctx = {}) {
+      let text = String(candidateReply || '').trim();
+      const {
+        groundTruth = null,
+        bridgeResult = null,
+        catalogItems = [],
+        hostKnowledge = null,
+        knowledgeBase = [],
+        isGeneralOffTopic = false,
+        isGreeting = false,
+        isUnclear = false,
+        query = '',
+        queryLang = 'en-US'
+      } = ctx || {};
+
+      const issues = [];
+      let repaired = false;
+      const gt = groundTruth || crossVerifyWidgetSources({ catalogItems, hostKnowledge, knowledgeBase });
+
+      const verifiedFallback =
+        (bridgeResult && bridgeResult.status === 'FOUND_IN_FRONTEND' && bridgeResult.data?.summaryText) ||
+        (bridgeResult && bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data?.summaryText) ||
+        '';
+      const looksLikeFalseError = /\b(not\s+available\s+right\s+now|cannot\s+find|could\s+not\s+find|no\s+information\s+available|i\s+don'?t\s+have\s+(?:exact\s+)?information|unable\s+to\s+find)\b/i.test(text);
+      if ((!text || looksLikeFalseError) && verifiedFallback) {
+        text = verifiedFallback;
+        issues.push({ type: 'false_error_override' });
+        repaired = true;
+      }
+
+      if (!text || isGeneralOffTopic || isGreeting || isUnclear || bridgeResult?.status === 'FOUND_IN_FRONTEND') {
+        return { text: polishSpokenReply(text), passed: issues.length === 0, issues, repaired };
+      }
+
+      // 1. Price & Stock Fact-Check against Authoritative Live Catalog / DB
+      const textLower = text.toLowerCase();
+      const matchedItems = [];
+      if (bridgeResult && (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API') && bridgeResult.data?.name) {
+        const hit = gt.authoritativeItems.get(String(bridgeResult.data.name).toLowerCase());
+        if (hit) matchedItems.push(hit);
+      }
+      if (matchedItems.length === 0) {
+        for (const auth of gt.authoritativeItems.values()) {
+          if (auth.name.length >= 3 && textLower.includes(auth.name.toLowerCase())) {
+            matchedItems.push(auth);
+          }
+        }
+      }
+
+      if (matchedItems.length === 1) {
+        const target = matchedItems[0];
+        const citedPrices = extractWidgetCurrencyMentions(text);
+        if (target.priceValue !== null && citedPrices.length > 0) {
+          const hasExact = citedPrices.some(cp => Math.abs(cp.value - target.priceValue) <= 1);
+          const allKnown = citedPrices.every(cp => Math.abs(cp.value - target.priceValue) <= 1 || gt.allVerifiedPriceValues.has(cp.value));
+          if (!hasExact || !allKnown) {
+            const bad = citedPrices.find(cp => Math.abs(cp.value - target.priceValue) > 1);
+            issues.push({ type: 'price_mismatch', entity: target.name, cited: bad?.raw || '', expected: target.rawPrice });
+            if (bad?.raw) text = text.replace(bad.raw, target.rawPrice);
+            repaired = true;
+          }
+        }
+        if (target.stock !== null) {
+          const stockRe = /\b(\d{1,5})\s+(?:seats?|units?|items?|rooms?|slots?|spots?|in\s+stock|available)\b/gi;
+          const sm = stockRe.exec(text);
+          if (sm && Number(sm[1]) !== target.stock) {
+            issues.push({ type: 'stock_mismatch', entity: target.name, cited: sm[1], expected: String(target.stock) });
+            text = text.replace(sm[0], `${target.stock} ${target.unit || 'units'}`);
+            repaired = true;
+          }
+        }
+      }
+
+      // 2. Fabricated Contact Details Guard
+      const citedContacts = extractWidgetContactMentions(text);
+      for (const em of citedContacts.emails) {
+        if (!gt.verifiedEmails.has(em)) {
+          issues.push({ type: 'fabricated_contact', cited: em });
+          text = text.replace(new RegExp(em.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), 'our official contact page');
+          repaired = true;
+        }
+      }
+      for (const ph of citedContacts.phones) {
+        const last10 = ph.digits.length > 10 ? ph.digits.slice(-10) : ph.digits;
+        if (!gt.verifiedPhoneDigits.has(ph.digits) && !gt.verifiedPhoneDigits.has(last10)) {
+          issues.push({ type: 'fabricated_contact', cited: ph.raw });
+          text = text.replace(ph.raw, 'our official contact section');
+          repaired = true;
+        }
+      }
+
+      // 3. Strict Uncertainty Guard when ITEM_NOT_FOUND but reply fabricated a price for it
+      if (bridgeResult && bridgeResult.status === 'ITEM_NOT_FOUND') {
+        const ungroundedPrice = extractWidgetCurrencyMentions(text).some(cp => !gt.allVerifiedPriceValues.has(cp.value));
+        if (ungroundedPrice) {
+          issues.push({ type: 'ungrounded_claim' });
+          text = buildHonestUncertaintyReply(query, { queryLang, catalogItems });
+          repaired = true;
+        }
+      }
+
+      return { text: polishSpokenReply(text), passed: issues.length === 0, issues, repaired };
+    }
+
+    function canonicalizeWidgetQuery(rawQuery = '', catalogItems = [], activeItem = null, queryLang = 'en-US') {
+      const clean = String(rawQuery || '').replace(/\s+/g, ' ').trim();
+      if (!clean || clean.length < 4) return '';
+      const lower = clean.toLowerCase();
+      const hasPronoun = /\b(that|this|it|them|those|first\s+one|second\s+one)\b/i.test(lower);
+      let entityKey = '';
+      if (activeItem?.name && hasPronoun) {
+        entityKey = String(activeItem.name).toLowerCase().trim();
+      } else if (Array.isArray(catalogItems) && catalogItems.length > 0 && typeof matchInInventory === 'function') {
+        const hit = matchInInventory(catalogItems, clean);
+        if (hit?.name) entityKey = String(hit.name).toLowerCase().trim();
+      }
+      let aspect = '';
+      if (/\b(fee|fees|price|cost|charges?|rate|rates|how\s+much|tuition|mrp)\b/i.test(lower)) aspect = 'price';
+      else if (/\b(stock|available|availability|seats?|quantity|how\s+many|in\s+stock)\b/i.test(lower)) aspect = 'stock';
+      else if (/\b(eligibility|criteria|marks|percentage|qualification|requirements?)\b/i.test(lower)) aspect = 'eligibility';
+      else if (/\b(documents?|marksheet|leaving\s+certificate|certificates?|papers?)\b/i.test(lower)) aspect = 'documents';
+      else if (/\b(how\s+to\s+apply|admission\s+process|procedure|steps|register|enroll|apply)\b/i.test(lower)) aspect = 'procedure';
+      else if (/\b(details?|subjects?|syllabus|curriculum|what\s+is\s+included|features?|about)\b/i.test(lower)) aspect = 'details';
+
+      if (entityKey && aspect && !/\b(compare|versus|\bvs\.?\b|and\s+.*and)\b/i.test(lower)) {
+        return `${entityKey}::${aspect}::${queryLang}`;
+      }
+      return '';
+    }
+
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
     async function resolveDatabaseBridge(query, agentConfig, context = null) {
       if (!query || isGreetingOrConversational(query)) {
@@ -5994,9 +6262,18 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         ? `\n[QUESTION_UNDERSTANDING_AND_DEPTH_PLAN]\n${understandingLines.join('\n')}\n`
         : '';
 
+      const crossVerifiedWidget = (typeof crossVerifyWidgetSources === 'function')
+        ? crossVerifyWidgetSources({
+            catalogItems: allDbRecords,
+            knowledgeBase: allSafeFaqs,
+            hostKnowledge
+          })
+        : { groundTruthBlock: '' };
+
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
+- MAXIMUM ACCURACY & ZERO-HALLUCINATION RULE (HIGHEST PRIORITY): Never prioritize producing an answer over producing a CORRECT, VERIFIED answer. Verify every price, fee, stock/seat count, phone number, email, and policy strictly against the verified context below. If [CROSS_VERIFIED_GROUND_TRUTH] flags a conflict between an older FAQ and live database/webpage records, ALWAYS report the authoritative live/database value. NEVER fabricate prices, counts, or contact numbers!
 - AUDIENCE IS CONSUMER / CUSTOMER ONLY: The person reading and asking is an ordinary website visitor, customer, parent, or student — NOT the website owner, admin, or developer. Always answer warmly, politely, and directly from their perspective. NEVER quote admin/staff setup guides (such as Google Sheets apps, spreadsheets, "open your sheet", "message the parent", Apps Script toolbars, deploy instructions, CSS/responsive specs, database schemas, SQL, or developer notes). If asked about database internals or queries, politely decline: ${consumerDeclineText}
 - ADAPTIVE RESPONSE DEPTH & COMPREHENSIVE EXPLANATIONS (CRITICAL): Follow [QUESTION_UNDERSTANDING_AND_DEPTH_PLAN] closely:
   • Simple question → give a clear, polite, direct answer with helpful context.
@@ -6021,7 +6298,7 @@ CRITICAL RULES:
 - Keep responses plain-text, polite, detailed, and natural to read or listen to (covering all relevant verified details cleanly; never cut off mid-sentence, never output markdown symbols like *, #, \`, or raw #section-id anchors).
 - LANGUAGE: ${langDirective}
 
-${liveDbBlock}${understandingBlock}[LIVE_BRIDGE_DATA]
+${liveDbBlock}${crossVerifiedWidget.groundTruthBlock}${understandingBlock}[LIVE_BRIDGE_DATA]
 ${bridgeBlock}
 ${activeContextBlock}${blueprintBlock}${liveFrontendBlock}${crossPageBlock}
 ${catalogSectionLabel}
@@ -6102,7 +6379,7 @@ ${cleanFaqBlock}`;
               body: JSON.stringify({
                 model: gModel,
                 messages: messagesPayload,
-                temperature: 0.15,
+                temperature: 0.05,
                 max_tokens: targetMaxTokens
               }),
               signal: AbortSignal.timeout(gIdx === 0 ? 9500 : 6500)
@@ -6152,7 +6429,7 @@ ${cleanFaqBlock}`;
                 },
                 contents,
                 generationConfig: {
-                  temperature: 0.2,
+                  temperature: 0.1,
                   maxOutputTokens: targetMaxTokens
                 }
               }),
@@ -6196,7 +6473,7 @@ ${cleanFaqBlock}`;
             body: JSON.stringify({
               model: model || 'gpt-4o-mini',
               messages: openAiMessages,
-              temperature: 0.15,
+              temperature: 0.05,
               max_tokens: targetMaxTokens
             }),
             signal: AbortSignal.timeout(9500)
@@ -6222,7 +6499,24 @@ ${cleanFaqBlock}`;
       return decomposeComplexQuestion(rawQuery);
     }
 
-    function verifyWidgetReply(candidateReply = '', bridgeResult = null) {
+    function verifyWidgetReply(candidateReply = '', bridgeResult = null, verifyCtx = {}) {
+      if (typeof verifyWidgetAnswerAccuracy === 'function') {
+        const liveCatalog = Array.isArray(verifyCtx.catalogItems) ? verifyCtx.catalogItems : getAllCatalogItems(agentConfig);
+        const hostK = verifyCtx.hostKnowledge || (typeof extractHostPageKnowledge === 'function' ? extractHostPageKnowledge() : null);
+        const safeKb = (agentConfig?.knowledgeBase || []).filter(item => isCustomerSafeFaq(item.q, item.a));
+        const audit = verifyWidgetAnswerAccuracy(candidateReply, {
+          bridgeResult,
+          catalogItems: liveCatalog,
+          hostKnowledge: hostK,
+          knowledgeBase: safeKb,
+          isGeneralOffTopic: Boolean(verifyCtx.isGeneralOffTopic || bridgeResult?.status === 'GENERAL_KNOWLEDGE_QUERY'),
+          isGreeting: Boolean(verifyCtx.isGreeting),
+          isUnclear: Boolean(verifyCtx.isUnclear || bridgeResult?.status === 'UNCLEAR_QUERY'),
+          query: verifyCtx.query || '',
+          queryLang: verifyCtx.queryLang || 'en-US'
+        });
+        return audit.text;
+      }
       let text = String(candidateReply || '').trim();
       const verifiedFallback =
         (bridgeResult && bridgeResult.status === 'FOUND_IN_FRONTEND' && bridgeResult.data?.summaryText) ||
@@ -7634,8 +7928,25 @@ ${cleanFaqBlock}`;
           }
         }
 
+        // 1.5 Check Session Consistency Ledger (prevents contradictory answers when rephrasing the same verified question; auto-invalidates on live DOM/DB updates!)
+        const liveCatalogForVerify = getAllCatalogItems(agentConfig);
+        const widgetDataVersion = typeof computeWidgetDataVersion === 'function'
+          ? computeWidgetDataVersion(liveCatalogForVerify, agentConfig?.knowledgeBase)
+          : '';
+        const widgetCanonicalKey = typeof canonicalizeWidgetQuery === 'function'
+          ? canonicalizeWidgetQuery(cleanInput, liveCatalogForVerify, conversationContext?.activeItem, detectedQueryLang)
+          : '';
+        if (widgetCanonicalKey && widgetDataVersion && _widgetConsistencyLedger.has(widgetCanonicalKey)) {
+          const cached = _widgetConsistencyLedger.get(widgetCanonicalKey);
+          if (cached && cached.version === widgetDataVersion && cached.reply) {
+            reply = cached.reply;
+          } else {
+            _widgetConsistencyLedger.delete(widgetCanonicalKey);
+          }
+        }
+
         // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database, precomputed analytics, adaptive depth plan & RAG-ranked website context
-        if (apiKey) {
+        if (!reply && apiKey) {
           const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext, cleanInput, understanding);
           reply = await callLLMWithBYOK(cleanInput, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model, understanding?.recommendedMaxTokens || 1200);
           if (reply) conversationContext.fallbackCount = 0;
@@ -7655,7 +7966,21 @@ ${cleanFaqBlock}`;
         if (agentDeleted) return;
 
         typingLoader.remove();
-        reply = verifyWidgetReply(reply, bridgeResult);
+        reply = verifyWidgetReply(reply, bridgeResult, {
+          catalogItems: liveCatalogForVerify,
+          isGeneralOffTopic: Boolean(understanding?.isGeneralOffTopic),
+          isGreeting: isGreetingOrConversational(cleanInput),
+          isUnclear: understanding?.mode === 'unclear',
+          query: cleanInput,
+          queryLang: detectedQueryLang
+        });
+        if (widgetCanonicalKey && widgetDataVersion && reply) {
+          if (_widgetConsistencyLedger.size >= 60) {
+            const firstK = _widgetConsistencyLedger.keys().next().value;
+            if (firstK) _widgetConsistencyLedger.delete(firstK);
+          }
+          _widgetConsistencyLedger.set(widgetCanonicalKey, { version: widgetDataVersion, reply });
+        }
 
         // 4. Universal Primary + Related Clickable Section Links (for ALL website/section/dashboard/form/FAQ replies — NEVER for off-topic or unclear queries!)
         const isOffTopicOrUnclearTurn = Boolean(

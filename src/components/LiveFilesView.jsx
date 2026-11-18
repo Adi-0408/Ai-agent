@@ -26,6 +26,7 @@ import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExt
 import { detectFileType, analyzeDatabaseFile } from '../utils/codebaseAnalyzer';
 import { extractDatabaseCredentials, fetchExternalDatabaseRecords } from '../utils/databaseKeyExtractor';
 import { isZipFile, expandFileList } from '../utils/zipHandler';
+import { getAccuracyAuditSummary, clearAccuracyAuditLog } from '../utils/accuracyVerificationEngine';
 import {
   saveFileToLocalStore,
   saveFilesBatchToLocalStore,
@@ -105,6 +106,8 @@ export default function LiveFilesView({
   const [webhookCaps, setWebhookCaps] = useState(null);
   const [isCleaningOrphans, setIsCleaningOrphans] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
+  const [showAccuracyAuditFor, setShowAccuracyAuditFor] = useState(null);
+  const [auditRefreshTick, setAuditRefreshTick] = useState(0);
 
   useEffect(() => {
     const initial = getDriveConnectionStatus();
@@ -566,6 +569,29 @@ export default function LiveFilesView({
                     </span>
                   );
                 })()}
+                {(() => {
+                  const auditSummary = getAccuracyAuditSummary(astName);
+                  void auditRefreshTick;
+                  const hasCaught = auditSummary.repairedCount > 0 || auditSummary.totalConflictsResolved > 0;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setShowAccuracyAuditFor(prev => (prev === astName ? null : astName))}
+                      className={`px-2 py-0.5 rounded-md border text-[11px] font-medium flex items-center gap-1 cursor-pointer transition-colors ${
+                        hasCaught
+                          ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                      }`}
+                      title="Click to inspect continuous accuracy verification telemetry & recurring knowledge gaps"
+                    >
+                      🛡️ Accuracy: <strong>{auditSummary.passRate}%</strong>
+                      {auditSummary.totalChecked > 0 ? ` (${auditSummary.totalChecked} verified` : ' (ready'}
+                      {auditSummary.repairedCount > 0 ? ` · ${auditSummary.repairedCount} repaired` : ''}
+                      {auditSummary.totalConflictsResolved > 0 ? ` · ${auditSummary.totalConflictsResolved} conflicts resolved` : ''}
+                      )
+                    </button>
+                  );
+                })()}
                 {ast?.databaseConfig && (
                   <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[11px] font-semibold flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
@@ -573,6 +599,49 @@ export default function LiveFilesView({
                   </span>
                 )}
               </div>
+              {showAccuracyAuditFor === astName && (() => {
+                const auditSummary = getAccuracyAuditSummary(astName);
+                const catEntries = Object.entries(auditSummary.issuesByCategory || {});
+                return (
+                  <div className="mt-2.5 p-3 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-700 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-800">
+                        Continuous Accuracy Audit — "{astName}" ({auditSummary.verifiedCleanCount}/{auditSummary.totalChecked} clean, {auditSummary.repairedCount} auto-repaired)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearAccuracyAuditLog();
+                          setAuditRefreshTick(t => t + 1);
+                        }}
+                        className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                      >
+                        Reset Audit Log
+                      </button>
+                    </div>
+                    {catEntries.length > 0 ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-slate-500 font-semibold">Caught &amp; Prevented:</span>
+                        {catEntries.map(([k, v]) => (
+                          <span key={k} className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-semibold">
+                            {k}: {v}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-emerald-700 font-medium">
+                        No hallucinations or factual discrepancies caught yet — all verified answers passed cleanly.
+                      </div>
+                    )}
+                    {auditSummary.topRecurringGaps.length > 0 && (
+                      <div className="text-slate-600">
+                        <span className="font-semibold text-slate-700">Recurring Knowledge Gaps: </span>
+                        {auditSummary.topRecurringGaps.map(g => `"${g.query}" (${g.count}x)`).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

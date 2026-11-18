@@ -38,6 +38,14 @@ import {
   findRelevantSectionLinks,
   formatSectionLinksMarkdown
 } from '../utils/answerDepthAndNavigationEngine.js';
+import {
+  crossVerifyProjectSources,
+  computeDataVersionHash,
+  canonicalizeQueryForConsistency,
+  lookupConsistentAnswer,
+  storeConsistentAnswer,
+  recordAccuracyAuditEvent
+} from '../utils/accuracyVerificationEngine.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -617,13 +625,95 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   }
   const adaptiveDepthContext = `\n\n[ADAPTIVE_RESPONSE_DEPTH_AND_COMPLETENESS_PLAN]\n${depthPlanLines.join('\n')}`;
 
-  const appendOfflineLinks = (text) => {
-    const clean = String(text || '').trim();
-    if (!clean || options?._isSubClause || !sectionLinksMarkdown || clean.includes('Relevant sections:')) return clean;
-    return `${clean}\n\n${sectionLinksMarkdown}`;
+  const verifiedFallbackSummary = precomputedArchitecture?.summaryText || precomputedFrontend?.summaryText || precomputedAnalytics?.summaryText || '';
+
+  // Cross-Source Verification, Conflict Resolution & Consistency Ledger (Pillar 7)
+  const crossVerifiedGroundTruth = crossVerifyProjectSources({
+    catalogItems: dbRecords,
+    knowledgeBase: safeKbList,
+    frontendIndex,
+    liveFrontendSnapshot,
+    deepProjectIndex: isCustomerMode ? null : deepProjectIndex,
+    projectArch: isCustomerMode ? null : projectArch,
+    promptContext: baseIdentity
+  });
+  const dataVersionHash = computeDataVersionHash({
+    catalogItems: dbRecords,
+    knowledgeBase: safeKbList,
+    deepProjectIndex: isCustomerMode ? null : deepProjectIndex
+  });
+  const canonicalConsistencyKey = !options?._isSubClause
+    ? canonicalizeQueryForConsistency(cleanMessage, { queryLang: queryLangForPrompt, catalogItems: dbRecords })
+    : '';
+  const hasVerifiedContext = Boolean(
+    precomputedArchitecture ||
+    precomputedFrontend ||
+    precomputedAnalytics ||
+    ragRanked.topHit ||
+    dbRecords.length > 0 ||
+    (!isCustomerMode && (deepProjectIndex || projectArch))
+  );
+
+  // Return consistent verified answer for identical rephrased factual queries when data version is unchanged
+  if (canonicalConsistencyKey && !options?.bypassConsistencyCache) {
+    const cachedConsistent = lookupConsistentAnswer(canonicalConsistencyKey, dataVersionHash);
+    if (cachedConsistent) {
+      recordAccuracyAuditEvent({
+        agentName: agentDisplayName,
+        query: cleanMessage,
+        passed: true,
+        repaired: false,
+        conflictCount: crossVerifiedGroundTruth.conflicts.length,
+        issues: []
+      });
+      return cachedConsistent;
+    }
+  }
+
+  const finalizeVerifiedResponse = (rawCandidate, wasTruncated = false) => {
+    let lastAudit = { passed: true, repaired: false, issues: [] };
+    const verified = verifyAndPolishAnswer(rawCandidate, {
+      verifiedFallback: verifiedFallbackSummary,
+      isCustomerMode,
+      wasTruncated,
+      groundTruth: crossVerifiedGroundTruth,
+      catalogItems: dbRecords,
+      query: cleanMessage,
+      isGeneralOffTopic: Boolean(questionUnderstanding.isGeneralOffTopic),
+      isUnclear: questionUnderstanding.mode === 'unclear',
+      hasVerifiedContext,
+      queryLang: queryLangForPrompt,
+      onAuditResult: (audit) => { lastAudit = audit; }
+    });
+    if (!options?._isSubClause) {
+      recordAccuracyAuditEvent({
+        agentName: agentDisplayName,
+        query: cleanMessage,
+        passed: lastAudit.passed,
+        repaired: lastAudit.repaired,
+        conflictCount: crossVerifiedGroundTruth.conflicts.length,
+        issues: lastAudit.issues
+      });
+      if (canonicalConsistencyKey && verified && lastAudit.passed) {
+        storeConsistentAnswer(canonicalConsistencyKey, dataVersionHash, verified);
+      }
+    }
+    return verified;
   };
 
-  const verifiedFallbackSummary = precomputedArchitecture?.summaryText || precomputedFrontend?.summaryText || precomputedAnalytics?.summaryText || '';
+  const appendOfflineLinks = (text) => {
+    const clean = String(text || '').trim();
+    if (!clean) return '';
+    // Verify offline replies against cross-verified ground truth (catches outdated FAQ prices vs live DB!)
+    const verifiedCore = finalizeVerifiedResponse(clean, false);
+    const withLinks = (!options?._isSubClause && sectionLinksMarkdown && !verifiedCore.includes('Relevant sections:'))
+      ? `${verifiedCore}\n\n${sectionLinksMarkdown}`
+      : verifiedCore;
+    if (!options?._isSubClause && canonicalConsistencyKey && withLinks) {
+      storeConsistentAnswer(canonicalConsistencyKey, dataVersionHash, withLinks);
+    }
+    return withLinks;
+  };
   const platformKnowledgeBlock = isCustomerMode ? '' : `
 PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Free Groq API Key (<200ms latency): Obtained for free from https://console.groq.com/keys by clicking "Create API Key". Format starts with 'gsk_'.
@@ -634,10 +724,16 @@ PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Multilingual Support: The agent supports English, Hindi (हिंदी), and Marathi (मराठी) with auto-detection for voice recognition and spoken responses.
 `;
 
-  const systemInstructions = `${baseIdentity}${adaptiveDepthContext}${analyticsContext}${frontendContext}${architectureContext}${kbContext}${dbContext}
+  const systemInstructions = `${baseIdentity}${crossVerifiedGroundTruth.groundTruthBlock}${adaptiveDepthContext}${analyticsContext}${frontendContext}${architectureContext}${kbContext}${dbContext}
 
 CORE MISSION & ASSIGNMENT:
 You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and factual accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, comparisons, availability, dashboard summaries, statistics, charts, reports, and company policies, guiding customers every step of the way.
+
+MAXIMUM ACCURACY & ZERO-HALLUCINATION VERIFICATION PROTOCOL (HIGHEST PRIORITY):
+- NEVER prioritize generating an answer over generating a CORRECT, VERIFIED answer.
+- FACT VERIFICATION: Before stating any price, fee, stock count, phone number, email, file path, API route, or database table, verify it directly against [CROSS_VERIFIED_GROUND_TRUTH], Verified Live Database Records, [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS], and [COMPLETE_PROJECT_INDEX_AND_CROSS_MODULE_GRAPH].
+- CROSS-SOURCE CONFLICT RESOLUTION: Whenever [CROSS_VERIFIED_GROUND_TRUTH] reports a conflict between an older FAQ and live database/code records, ALWAYS use the authoritative verified value and NEVER quote the outdated figure.
+- ZERO INVENTED CITATIONS: NEVER fabricate file paths, API endpoints, database tables, phone numbers, emails, or catalog prices not present in the verified sources. If verified evidence is missing, politely acknowledge uncertainty instead of guessing.
 
 ADAPTIVE DEPTH, COMPLEX QUESTION COVERAGE & SECTION NAVIGATION (CRITICAL):
 - Follow [ADAPTIVE_RESPONSE_DEPTH_AND_COMPLETENESS_PLAN] strictly:
@@ -716,7 +812,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
               }
             ],
             max_tokens: targetMaxTokens,
-            temperature: 0.15
+            temperature: 0.05
           })
         });
 
@@ -726,7 +822,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           if (choice && choice.message) {
             const wasTruncated = choice.finish_reason === 'length';
             const cleaned = sanitizeSpokenResponse(choice.message.content, cleanMessage, { ...options, agentName: agentDisplayName });
-            return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode, wasTruncated });
+            return finalizeVerifiedResponse(cleaned, wasTruncated);
           }
         } else if (![400, 404, 429].includes(groqRes.status)) {
           break;
@@ -763,7 +859,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           contents: geminiContents,
           generationConfig: {
             maxOutputTokens: targetMaxTokens,
-            temperature: 0.2
+            temperature: 0.1
           }
         })
       });
@@ -774,7 +870,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
         if (cand && cand.content && cand.content.parts[0]) {
           const wasTruncated = cand.finishReason === 'MAX_TOKENS';
           const cleaned = sanitizeSpokenResponse(cand.content.parts[0].text, cleanMessage, { ...options, agentName: agentDisplayName });
-          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode, wasTruncated });
+          return finalizeVerifiedResponse(cleaned, wasTruncated);
         }
       }
     } catch (err) {
@@ -800,7 +896,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
             { role: 'user', content: cleanMessage }
           ],
           max_tokens: targetMaxTokens,
-          temperature: 0.15
+          temperature: 0.05
         })
       });
 
@@ -810,7 +906,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
         if (choice && choice.message) {
           const wasTruncated = choice.finish_reason === 'length';
           const cleaned = sanitizeSpokenResponse(choice.message.content, cleanMessage, { ...options, agentName: agentDisplayName });
-          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode, wasTruncated });
+          return finalizeVerifiedResponse(cleaned, wasTruncated);
         }
       }
     } catch (err) {
