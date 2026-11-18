@@ -619,7 +619,7 @@ export function splitMultiStepQuestion(rawQuery = '') {
  */
 export function verifyAndPolishAnswer(candidateReply = '', verificationContext = {}) {
   let text = String(candidateReply || '').replace(/\s+/g, ' ').trim();
-  const { verifiedFallback = '', isCustomerMode = false } = verificationContext;
+  const { verifiedFallback = '', isCustomerMode = false, wasTruncated = false } = verificationContext;
 
   // 1. If candidate reply falsely says "not available / I don't know / error" while we ALREADY have a verified grounded answer, prefer the verified answer!
   const looksLikeFalseError = /\b(not\s+available\s+right\s+now|cannot\s+find|could\s+not\s+find|no\s+information\s+available|i\s+don'?t\s+have\s+(?:exact\s+)?information|unable\s+to\s+find)\b/i.test(text);
@@ -633,24 +633,44 @@ export function verifyAndPolishAnswer(candidateReply = '', verificationContext =
   if (isCustomerMode) {
     text = text
       .replace(/```[\s\S]*?```/g, '')
+      .replace(/(?:^|\s)#{1,6}\s+/g, ' ')
       .replace(/\s*\(#[-a-z0-9_]+\)/gi, '')
       .replace(/[*#_`]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
 
-  // 3. Ensure complete ending sentence (never leave trailing dangling preposition/conjunction)
+  // 3. Ensure complete ending sentence (never leave trailing dangling preposition/conjunction, unclosed paren, trailing comma/dash, or max_tokens cutoff)
   if (!/[.!?।]$/.test(text)) {
-    const trailingDangling = /\s+(?:with|for|to|and|or|of|in|at|by|from|the|a|an|as|on|into|including|that|which)$/i;
-    if (trailingDangling.test(text)) {
-      const lastEnd = Math.max(text.lastIndexOf('. '), text.lastIndexOf('! '), text.lastIndexOf('? '), text.lastIndexOf('। '));
-      if (lastEnd >= 35) {
-        text = text.slice(0, lastEnd + 1).trim();
-      } else {
-        text = text.replace(trailingDangling, '').trim() + '.';
-      }
+    const lastEnd = Math.max(text.lastIndexOf('. '), text.lastIndexOf('! '), text.lastIndexOf('? '), text.lastIndexOf('। '));
+    const hasTrailingPunct = /[,:;\-–—\/(]\s*$/.test(text);
+    const hasUnclosedParen = (text.split('(').length > text.split(')').length);
+    const trailingDangling = /(?:^|\s)(?:with|for|to|and|or|of|in|at|by|from|the|a|an|as|on|into|onto|through|including|that|which|who|where|when|while|because|since|until|unless|between|without|about|per|via|such|plus|also|both|each|every|all|more|not|only|just|this|these|those|featuring|offering|providing|covering|designed|focused|based|using|helping|ensuring|making|giving|has|have|had|is|are|was|were|be|been|being|can|could|will|would|should|may|might|must|our|your|their|आणि|किंवा|साठी|मध्ये|वर|तसेच|और|या|के|की|का|में|पर|को|से|तथा)\s*$/i;
+    const trailingFrag = lastEnd >= 0 ? text.slice(lastEnd + 2).trim() : text;
+    const looksHalfCut = lastEnd >= 25 && (
+      wasTruncated ||
+      hasTrailingPunct ||
+      hasUnclosedParen ||
+      trailingDangling.test(text) ||
+      (trailingFrag.length >= 6 && trailingFrag.split(/\s+/).length <= 14 && /[,:-]/.test(trailingFrag))
+    );
+
+    if (looksHalfCut) {
+      text = text.slice(0, lastEnd + 1).trim();
     } else {
-      text += '.';
+      if (hasUnclosedParen) {
+        const openIdx = text.lastIndexOf('(');
+        if (openIdx >= 15) text = text.slice(0, openIdx).trim();
+      }
+      text = text.replace(/[,:;\-–—\/(]+\s*$/, '').trim();
+      let guard = 0;
+      while (guard < 3 && trailingDangling.test(text) && text.split(/\s+/).length > 3) {
+        text = text.replace(trailingDangling, '').replace(/[,:;\-–—\/]+\s*$/, '').trim();
+        guard++;
+      }
+      if (text && !/[.!?।]$/.test(text)) {
+        text += '.';
+      }
     }
   }
 

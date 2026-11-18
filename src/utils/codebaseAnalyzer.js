@@ -12,6 +12,35 @@ import { parseNumericPrice, computeCatalogStats } from './dataAnalyticsEngine.js
 import { buildCrossPageFrontendIndex } from './frontendIntelligenceExtractor.js';
 import { analyzeProjectArchitecture } from './projectArchitectureAnalyzer.js';
 
+/**
+ * Cleanly trims extracted text to a complete sentence boundary (NEVER leaves half-cut sentences or mid-word slices).
+ */
+export function trimToCompleteSentence(rawText, maxLen = 500) {
+  const s = String(rawText || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (s.length <= maxLen) return s;
+  const candidate = s.slice(0, maxLen);
+  const lastEnd = Math.max(
+    candidate.lastIndexOf('. '),
+    candidate.lastIndexOf('! '),
+    candidate.lastIndexOf('? '),
+    candidate.lastIndexOf('। ')
+  );
+  if (lastEnd >= Math.floor(maxLen * 0.35)) {
+    return candidate.slice(0, lastEnd + 1).trim();
+  }
+  const exactEnd = Math.max(candidate.lastIndexOf('.'), candidate.lastIndexOf('!'), candidate.lastIndexOf('?'), candidate.lastIndexOf('।'));
+  if (exactEnd >= Math.floor(maxLen * 0.35)) {
+    return candidate.slice(0, exactEnd + 1).trim();
+  }
+  // Fallback: step back to last complete word boundary and close cleanly
+  const lastSpace = candidate.lastIndexOf(' ');
+  const trimmed = (lastSpace > 40 ? candidate.slice(0, lastSpace) : candidate)
+    .replace(/[,:;\-–—\/(]+\s*$/, '')
+    .trim();
+  return trimmed && !/[.!?।]$/.test(trimmed) ? `${trimmed}.` : trimmed;
+}
+
 export function detectFileType(fileName, content) {
   const lowerName = (fileName || '').toLowerCase();
   const lowerContent = (content || '').toLowerCase();
@@ -348,7 +377,7 @@ export function analyzeFrontendFile(fileName, content) {
   const seenCatNames = new Set();
   const addHtmlCatalogItem = (rawName, price = '', stock = null, desc = '', unit = 'units') => {
     const cleanName = clean(rawName).replace(/^[^\w₹$€£]+/, '').trim();
-    const rec = { name: cleanName, price: clean(price), stock, unit, description: clean(desc).slice(0, 180) };
+    const rec = { name: cleanName, price: clean(price), stock, unit, description: trimToCompleteSentence(clean(desc), 450) };
     if (!isValidCustomerCatalogName(cleanName, rec)) return;
     if (seenCatNames.has(cleanName.toLowerCase())) return;
     seenCatNames.add(cleanName.toLowerCase());
@@ -1043,7 +1072,7 @@ export function analyzeDatabaseFile(fileName, content) {
         recordsCount++;
         knowledgeBase.push({
           q: `What is ${heading}?`,
-          a: body.substring(0, 400)
+          a: trimToCompleteSentence(body, 700)
         });
         if (/product|fleet|service|model|plan|package/i.test(heading)) {
           discoveredItems.push(heading);
@@ -1121,7 +1150,7 @@ export function analyzeDatabaseFile(fileName, content) {
     // 6. Synthesize Overview & Subject from Document Intro
     const introParagraph = rawLines.slice(0, 6).join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     if (introParagraph.length > 30 && !introParagraph.includes('{') && !introParagraph.includes('CREATE TABLE')) {
-      const cleanSummary = introParagraph.substring(0, 350);
+      const cleanSummary = trimToCompleteSentence(introParagraph, 500);
       knowledgeBase.unshift({
         q: "What is this website about?",
         a: cleanSummary

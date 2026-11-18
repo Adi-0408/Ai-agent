@@ -11,8 +11,11 @@ import {
   detectFileType,
   analyzeFullStackFiles,
   isValidCustomerCatalogName,
-  isCustomerSafeFaq
+  isCustomerSafeFaq,
+  trimToCompleteSentence
 } from '../src/utils/codebaseAnalyzer.js';
+import { splitTextIntoSpeechChunks } from '../src/utils/voiceConsistency.js';
+import { verifyAndPolishAnswer } from '../src/utils/projectArchitectureAnalyzer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -333,6 +336,60 @@ async function runTests() {
   assert(
     !/####|google sheets|column link/i.test(realContactText),
     'Customer contact reply is clean, warm, and free of markdown/admin artifacts'
+  );
+
+  // --- TEST 7: Zero Mid-Answer Cutoffs (Text, LLM max_tokens, Ingestion & Sentence-Chunked Speech) ---
+  console.log('\n7) Zero Mid-Answer Cutoffs (Text, LLM Limits, Ingestion & Voice Chunking)');
+  assert(
+    !widgetSrc.includes('max_tokens: 340') && !widgetSrc.includes('maxOutputTokens: 340'),
+    'Raised widget.js LLM output token caps from 340 to 900 across Groq, Gemini, and OpenAI'
+  );
+  const aiSvcSrc = fs.readFileSync(path.resolve(__dirname, '../src/services/aiCompletionService.js'), 'utf8');
+  assert(
+    !aiSvcSrc.includes('max_tokens: 340'),
+    'Raised aiCompletionService.js Groq max_tokens from 340 to 900'
+  );
+
+  const commaCut = widget.polishSpokenReply('Our Class 11 Science batch covers Physics, Chemistry, and Mathematics. Weekly mock tests include Physics, Chemistry,');
+  assert(
+    commaCut === 'Our Class 11 Science batch covers Physics, Chemistry, and Mathematics.',
+    `Healed mid-sentence comma cutoff cleanly ("${commaCut}")`
+  );
+
+  const parenCut = widget.polishSpokenReply('Admissions are open for Class 11 and Class 12. Specialized batches are available for students (Science, JEE &');
+  assert(
+    parenCut === 'Admissions are open for Class 11 and Class 12.',
+    `Healed unclosed parenthesis cutoff cleanly ("${parenCut}")`
+  );
+
+  const maxTokCut = widget.polishSpokenReply('The annual fee for Class 11 Science is ₹25,000 per year. This includes lab sessions, study material, and personal doubt', { wasTruncated: true });
+  assert(
+    maxTokCut === 'The annual fee for Class 11 Science is ₹25,000 per year.',
+    `Healed finish_reason=length cutoff cleanly at previous full sentence ("${maxTokCut}")`
+  );
+
+  const verifiedCut = verifyAndPolishAnswer('You can apply online through the Admission Form. Please keep your previous marksheet and', { isCustomerMode: true });
+  assert(
+    verifiedCut === 'You can apply online through the Admission Form.',
+    `verifyAndPolishAnswer heals mid-sentence cutoffs cleanly ("${verifiedCut}")`
+  );
+
+  const longDoc = 'Sentence one introduces the academy and its core vision for students. Sentence two explains the 11th and 12th Science coaching batches with small class sizes. Sentence three provides full details about lab practicals, weekly mock exams, parent progress updates, and scholarship opportunities for meritorious applicants across the district.';
+  const trimmedDoc = trimToCompleteSentence(longDoc, 180);
+  assert(
+    /[.!?]$/.test(trimmedDoc) && trimmedDoc.endsWith('sizes.'),
+    `trimToCompleteSentence stops cleanly at sentence boundary without cutting mid-sentence ("${trimmedDoc}")`
+  );
+
+  const longSpoken = 'I would be happy to help you with our academic programs! We offer Class 11 and Class 12 Science batches with strictly limited seats for personalized attention. Every week we conduct mock tests and doubt-solving sessions for JEE, NEET, and MHT-CET preparation. Please let me know which batch you would like to explore further!';
+  const chunks = splitTextIntoSpeechChunks(longSpoken, 175);
+  assert(
+    chunks.length >= 2 && chunks.every(c => c.length <= 175) && chunks.join(' ') === longSpoken,
+    `Sentence-chunked TTS splits long replies cleanly (${chunks.length} chunks, zero lost words, zero Chrome 15s cutoff)`
+  );
+  assert(
+    !widgetSrc.includes('window.speechSynthesis.pause();'),
+    'Removed destructive Windows pause/resume speech heartbeat from public/widget.js'
   );
 
   console.log('\n==============================================================');

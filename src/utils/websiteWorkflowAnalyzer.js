@@ -190,7 +190,7 @@ function extractSections(frontendFiles, routes = []) {
       href: fullHref,
       label: finalLabel,
       page: page || 'index.html',
-      excerpt: trimToCompleteSentence(excerpt, 340),
+      excerpt: trimToCompleteSentence(excerpt, 480),
       keywords: extractKeywords(cleanId, finalLabel, excerpt.slice(0, 100))
     });
   };
@@ -206,7 +206,7 @@ function extractSections(frontendFiles, routes = []) {
     while ((m = secOpenRegex.exec(content)) !== null) {
       const tag = m[1].toLowerCase();
       const id = m[2].trim();
-      const afterOpen = content.slice(m.index + m[0].length, m.index + m[0].length + 600);
+      const afterOpen = content.slice(m.index + m[0].length, m.index + m[0].length + 1800);
       const closeIdx = afterOpen.search(new RegExp(`</${tag}>|<section\\b`, 'i'));
       const innerPreview = closeIdx >= 0 ? afterOpen.slice(0, closeIdx) : afterOpen;
       const hMatch = innerPreview.match(/<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/i);

@@ -319,9 +319,10 @@
   // Universal Spoken & Chat Grammar Polisher:
   // 1. Removes raw CSS/HTML anchors "(#tuition-info)" so TTS never reads "hashtag tuition dash info"
   // 2. Fixes singular/plural grammar ("1 courses / programs" -> "1 course") & spoken slashes
-  // 3. Fixes cut-in-half legacy FAQ answers ending mid-sentence ("...students with") cleanly at sentence boundary!
-  function polishSpokenReply(rawText) {
+  // 3. Fixes cut-in-half answers (truncated LLM output, dangling clauses, trailing commas/colons/open parens, legacy mid-sentence FAQs) cleanly at a full sentence boundary!
+  function polishSpokenReply(rawText, options = {}) {
     if (!rawText) return '';
+    const wasTruncated = Boolean(options && options.wasTruncated);
     let s = String(rawText)
       .replace(/```[\s\S]*?```/g, '')
       .replace(/(?:^|\s)#{1,6}\s+/g, ' ')
@@ -360,16 +361,42 @@
       .replace(/\.\.+/g, '.')
       .trim();
 
-    // Fix truncated / cut-in-half sentences (e.g. "...Strictly capped at 15–18 students with")
+    // Fix truncated / cut-in-half sentences (e.g. "...Strictly capped at 15–18 students with", "...Physics, Chemistry,", "... (Science, JEE", or LLM max_tokens cutoff)
     if (s && !/[.!?।]$/.test(s)) {
       const lastSentenceIdx = Math.max(s.lastIndexOf('. '), s.lastIndexOf('! '), s.lastIndexOf('? '), s.lastIndexOf('। '));
-      const endsWithDanglingWord = /\b(?:with|and|or|for|of|in|on|at|to|by|from|the|a|an|that|which|as|into|through|including|such|plus|where|when|while|featuring|offering|providing|has|have|is|are|was|were|be|been|can|will|our|your|their)\s*$/i.test(s);
-      if (lastSentenceIdx >= 35 && endsWithDanglingWord) {
+      const hasTrailingDanglingPunct = /[,:;\-–—\/(]\s*$/.test(s);
+      const hasUnclosedParen = (s.split('(').length > s.split(')').length);
+      const danglingWordRe = /(?:^|\s)(?:with|and|or|for|of|in|on|at|to|by|from|the|a|an|that|which|who|whom|whose|as|into|onto|through|throughout|including|such|plus|where|when|while|because|since|until|unless|before|after|during|under|over|between|without|about|per|via|like|than|then|also|both|each|every|all|more|most|very|not|only|just|this|these|those|featuring|offering|providing|covering|designed|focused|based|using|helping|ensuring|making|giving|has|have|had|is|are|was|were|be|been|being|can|could|will|would|shall|should|may|might|must|our|your|their|its|his|her|my|आणि|किंवा|साठी|मध्ये|वर|तसेच|ते|हे|या|और|या|के|की|का|में|पर|को|से|तथा)\s*$/i;
+      const endsWithDanglingWord = danglingWordRe.test(s);
+      const trailingFrag = lastSentenceIdx >= 0 ? s.slice(lastSentenceIdx + 2).trim() : s;
+      const looksHalfCutAfterSentence = lastSentenceIdx >= 25 && (
+        wasTruncated ||
+        hasTrailingDanglingPunct ||
+        hasUnclosedParen ||
+        endsWithDanglingWord ||
+        // Trailing partial clause that lacks terminal punctuation after multi-sentence text and ends abruptly (e.g. "Each batch includes Physics, Chemistry, daily")
+        (trailingFrag.length >= 6 && trailingFrag.split(/\s+/).length <= 14 && /[,:-]/.test(trailingFrag))
+      );
+
+      if (looksHalfCutAfterSentence) {
         s = s.slice(0, lastSentenceIdx + 1).trim();
-      } else if (endsWithDanglingWord) {
-        s = s.replace(/\s+\b(?:with|and|or|for|of|in|on|at|to|by|from|the|a|an|that|which|as|into|through|including|such|plus|where|when|while|featuring|offering|providing|has|have|is|are|was|were|be|been|can|will|our|your|their)\s*$/i, '').trim() + '.';
       } else {
-        s = `${s}.`;
+        // Strip unclosed trailing parenthetical fragment e.g. "Class 11 & 12 (Science, JEE" -> "Class 11 & 12"
+        if (hasUnclosedParen) {
+          const openIdx = s.lastIndexOf('(');
+          if (openIdx >= 15) s = s.slice(0, openIdx).trim();
+        }
+        // Strip trailing commas/colons/semicolons/dashes/slashes
+        s = s.replace(/[,:;\-–—\/(]+\s*$/, '').trim();
+        // Strip repeated trailing dangling words if still incomplete (e.g. "...available for the")
+        let guard = 0;
+        while (guard < 3 && danglingWordRe.test(s) && s.split(/\s+/).length > 3) {
+          s = s.replace(danglingWordRe, '').replace(/[,:;\-–—\/]+\s*$/, '').trim();
+          guard++;
+        }
+        if (s && !/[.!?।]$/.test(s)) {
+          s = `${s}.`;
+        }
       }
     }
 
@@ -1478,6 +1505,7 @@
       userManuallyStoppedMic = true;
       lastInputWasVoice = false;
       isAutoResumedListening = false;
+      window.__vhdSpeechSessionId = (window.__vhdSpeechSessionId || 0) + 1;
       if (window.speechSynthesis) window.speechSynthesis.cancel();
       if (recognition && isListening) {
         try { recognition.stop(); } catch (_) {}
@@ -1517,6 +1545,7 @@
                                initLang.startsWith('mr') ? 'माईक सुरू होत आहे...' :
                                'Starting mic...';
 
+      window.__vhdSpeechSessionId = (window.__vhdSpeechSessionId || 0) + 1;
       if (window.speechSynthesis) {
         try { window.speechSynthesis.cancel(); } catch (_) {}
       }
@@ -1599,6 +1628,7 @@
 
       // If agent is speaking, cancel speech and immediately start listening (Barge-in)
       if (window.speechSynthesis && (window.speechSynthesis.speaking || orb.classList.contains('speaking'))) {
+        window.__vhdSpeechSessionId = (window.__vhdSpeechSessionId || 0) + 1;
         try { window.speechSynthesis.cancel(); } catch (_) {}
         if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
         if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
@@ -2824,7 +2854,7 @@
         blocks.forEach(el => {
           if (el.closest('#voice-helpdesk-root, script, style, noscript, nav, footer, header')) return;
           const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
-          if (txt.length < 25 || txt.length > 400) return;
+          if (txt.length < 25 || txt.length > 900) return;
           if (/^(copyright|©|all rights reserved|privacy policy|terms of use)/i.test(txt)) return;
           if (/\{[\s\S]*\}|function\s*\(|const\s+\w+\s*=|import\s+\w+/i.test(txt)) return;
           const parentSec = el.closest('section, article, .card, div[id], div[class*="section"]');
@@ -5401,23 +5431,28 @@ ${cleanFaqBlock}`;
       const cleanUser = String(userMessage || '').trim();
       const trimmedKey = String(apiKey).trim();
 
-      function sanitizeSpokenOutput(text) {
+      function sanitizeSpokenOutput(text, wasTruncated = false) {
         if (!text) return '';
         let cleaned = String(text)
           .replace(/```[\s\S]*?```/g, '')
+          .replace(/(?:^|\s)#{1,6}\s+/g, ' ')
           .replace(/[*#_`]/g, '')
           .replace(/^[-*•]\s+/gm, '')
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Keep responses complete and conversational (up to 110 words), always stopping at a full sentence boundary!
+        // Keep responses complete and never cut off in the middle! Only trim if exceptionally long (> 260 words), strictly at a full sentence boundary.
         const words = cleaned.split(' ');
-        if (words.length > 110) {
-          const sliced = words.slice(0, 110).join(' ');
+        let hitWordCap = false;
+        if (words.length > 260) {
+          const sliced = words.slice(0, 260).join(' ');
           const lastEnd = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'), sliced.lastIndexOf('।'));
-          cleaned = lastEnd > 40 ? sliced.slice(0, lastEnd + 1) : sliced;
+          cleaned = lastEnd > 60 ? sliced.slice(0, lastEnd + 1) : sliced;
+          hitWordCap = true;
         }
-        return (typeof polishSpokenReply === 'function') ? polishSpokenReply(cleaned) : cleaned;
+        return (typeof polishSpokenReply === 'function')
+          ? polishSpokenReply(cleaned, { wasTruncated: wasTruncated || hitWordCap })
+          : cleaned;
       }
 
       try {
@@ -5457,15 +5492,17 @@ ${cleanFaqBlock}`;
                 model: gModel,
                 messages: messagesPayload,
                 temperature: 0.15,
-                max_tokens: 340
+                max_tokens: 900
               }),
-              signal: AbortSignal.timeout(gIdx === 0 ? 5500 : 4000)
+              signal: AbortSignal.timeout(gIdx === 0 ? 8500 : 6000)
             });
 
             if (groqRes.ok) {
               const data = await groqRes.json();
-              const content = data.choices?.[0]?.message?.content;
-              if (content) return sanitizeSpokenOutput(content);
+              const choice = data.choices?.[0];
+              const content = choice?.message?.content;
+              const wasTruncated = choice?.finish_reason === 'length';
+              if (content) return sanitizeSpokenOutput(content, wasTruncated);
             } else if (![400, 404, 429].includes(groqRes.status)) {
               break;
             }
@@ -5505,16 +5542,18 @@ ${cleanFaqBlock}`;
                 contents,
                 generationConfig: {
                   temperature: 0.2,
-                  maxOutputTokens: 340
+                  maxOutputTokens: 900
                 }
               }),
-              signal: AbortSignal.timeout(gIdx === 0 ? 5500 : 4000)
+              signal: AbortSignal.timeout(gIdx === 0 ? 8500 : 6000)
             });
 
             if (geminiRes.ok) {
               const data = await geminiRes.json();
-              const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (candidateText) return sanitizeSpokenOutput(candidateText);
+              const candidate = data.candidates?.[0];
+              const candidateText = candidate?.content?.parts?.[0]?.text;
+              const wasTruncated = candidate?.finishReason === 'MAX_TOKENS';
+              if (candidateText) return sanitizeSpokenOutput(candidateText, wasTruncated);
             } else {
               console.warn('[Echo AI BYOK] Gemini API error status:', geminiRes.status, 'for model:', gModel);
               if (![400, 404, 429].includes(geminiRes.status)) break;
@@ -5547,15 +5586,17 @@ ${cleanFaqBlock}`;
               model: model || 'gpt-4o-mini',
               messages: openAiMessages,
               temperature: 0.15,
-              max_tokens: 340
+              max_tokens: 900
             }),
-            signal: AbortSignal.timeout(8000)
+            signal: AbortSignal.timeout(9500)
           });
 
           if (openAiRes.ok) {
             const data = await openAiRes.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (content) return sanitizeSpokenOutput(content);
+            const choice = data.choices?.[0];
+            const content = choice?.message?.content;
+            const wasTruncated = choice?.finish_reason === 'length';
+            if (content) return sanitizeSpokenOutput(content, wasTruncated);
           }
         }
       } catch (err) {
@@ -7325,7 +7366,71 @@ ${cleanFaqBlock}`;
       return { ...resolved, lang: resolved?.voice?.lang || 'en-US' };
     }
 
-    // Speak Reply via Browser Web Speech Synthesis (Hardened GC Pinning, Watchdog & Voice-Only Auto-Resume)
+    // Split long answers into natural sentence chunks (< 175 chars) so Chrome/Edge SpeechSynthesis NEVER stops mid-answer!
+    function splitIntoSpeechChunks(text, maxLen = 175) {
+      const clean = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!clean) return [];
+      if (clean.length <= maxLen) return [clean];
+
+      const rawSentences = clean.match(/[^.!?।]+(?:[.!?।]+(?=\s|$)|$)/g) || [clean];
+      const chunks = [];
+      let current = '';
+
+      const pushSubChunks = (seg) => {
+        const trimmed = seg.trim();
+        if (!trimmed) return;
+        if (trimmed.length <= maxLen) {
+          chunks.push(trimmed);
+          return;
+        }
+        // Only split an extra-long single sentence at comma/semicolon or word boundaries
+        const parts = trimmed.split(/(?<=[,;:])\s+/);
+        let buf = '';
+        for (const p of parts) {
+          if ((buf ? buf.length + 1 : 0) + p.length <= maxLen) {
+            buf = buf ? `${buf} ${p}` : p;
+          } else {
+            if (buf) chunks.push(buf);
+            if (p.length <= maxLen) {
+              buf = p;
+            } else {
+              const words = p.split(/\s+/);
+              let wBuf = '';
+              for (const w of words) {
+                if ((wBuf ? wBuf.length + 1 : 0) + w.length <= maxLen) {
+                  wBuf = wBuf ? `${wBuf} ${w}` : w;
+                } else {
+                  if (wBuf) chunks.push(wBuf);
+                  wBuf = w;
+                }
+              }
+              buf = wBuf;
+            }
+          }
+        }
+        if (buf) chunks.push(buf);
+      };
+
+      for (const sent of rawSentences) {
+        const s = sent.trim();
+        if (!s) continue;
+        if ((current ? current.length + 1 : 0) + s.length <= maxLen) {
+          current = current ? `${current} ${s}` : s;
+        } else {
+          if (current) chunks.push(current);
+          if (s.length <= maxLen) {
+            current = s;
+          } else {
+            pushSubChunks(s);
+            current = '';
+          }
+        }
+      }
+      if (current) chunks.push(current);
+      return chunks.length > 0 ? chunks : [clean];
+    }
+
+    // Speak Reply via Browser Web Speech Synthesis (Sentence-Chunked Queue, GC Pinning, Generous Per-Chunk Watchdog & Voice-Only Auto-Resume)
     function speakReply(text, options = {}) {
       const shouldAutoListen = Boolean(options?.shouldAutoListen);
       cancelAutoResumeTimer();
@@ -7338,7 +7443,9 @@ ${cleanFaqBlock}`;
         return;
       }
 
-      // 1. Cleanly cancel pending/paused speech in browser
+      // 1. Cleanly cancel any previous queued speech session
+      const mySessionId = (window.__vhdSpeechSessionId || 0) + 1;
+      window.__vhdSpeechSessionId = mySessionId;
       try { window.speechSynthesis.cancel(); } catch (_) {}
       if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
       if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
@@ -7350,7 +7457,7 @@ ${cleanFaqBlock}`;
       let cleanSpoken = String(text).replace(/[*#_`]/g, '').trim();
       if (!cleanSpoken) return;
 
-      // Smart TTS brevity: If text is a long catalog listing, summarize concisely for spoken audio (< 25 words)
+      // Smart TTS brevity: If text is a long catalog listing, summarize concisely for spoken audio
       const catalogMatch = cleanSpoken.match(/^We currently have (\d+) ([\w\s]+?) in our live database: (.*?)\.(.*)$/i);
       if (catalogMatch) {
         const count = catalogMatch[1];
@@ -7377,19 +7484,11 @@ ${cleanFaqBlock}`;
         cleanSpoken = `हमारे डेटाबेस में उपलब्ध ${noun}: ${sample}। ${ending}`.trim();
       }
 
-      const utterance = new SpeechSynthesisUtterance(cleanSpoken);
       const resolved = resolveVoiceForText(agentConfig.voice, cleanSpoken);
-      if (resolved.voice) {
-        utterance.voice = resolved.voice;
-      }
-      utterance.pitch = resolved.pitch;
-      utterance.rate = resolved.rate;
-      utterance.lang = resolved.lang || 'en-US';
-
-      // Pin utterance to window so V8 Garbage Collection cannot silence speech mid-sentence
-      window.__vhdActiveUtterance = utterance;
-
+      const chunks = splitIntoSpeechChunks(cleanSpoken, 175);
+      let chunkIdx = 0;
       let hasFinished = false;
+
       const cleanupSpeech = (wasNormalEnd = false) => {
         if (hasFinished) return;
         hasFinished = true;
@@ -7431,44 +7530,82 @@ ${cleanFaqBlock}`;
         }
       };
 
-      utterance.onstart = () => {
-        orb.className = 'vhd-orb-btn speaking';
-        voiceLabel.textContent = resolved.lang.startsWith('hi') ? 'बोल रहे हैं...' :
-                                 resolved.lang.startsWith('mr') ? 'बोलत आहे...' :
-                                 'Speaking...';
+      const speakNextChunk = () => {
+        if (hasFinished || window.__vhdSpeechSessionId !== mySessionId) {
+          return;
+        }
+        if (chunkIdx >= chunks.length) {
+          cleanupSpeech(true);
+          return;
+        }
 
-        // Chrome Heartbeat: prevents browser synthesis engine from freezing on utterances > 8s
-        if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
-        window.__vhdHeartbeat = setInterval(() => {
-          if (window.speechSynthesis && window.speechSynthesis.speaking) {
-            window.speechSynthesis.pause();
+        const chunkText = chunks[chunkIdx++];
+        const utterance = new SpeechSynthesisUtterance(chunkText);
+        if (resolved.voice) utterance.voice = resolved.voice;
+        utterance.pitch = resolved.pitch;
+        utterance.rate = resolved.rate;
+        utterance.lang = resolved.lang || 'en-US';
+
+        // Pin utterance to window so V8 Garbage Collection cannot silence speech mid-sentence
+        window.__vhdActiveUtterance = utterance;
+        let chunkSettled = false;
+
+        const finishChunk = (wasError = false) => {
+          if (chunkSettled) return;
+          chunkSettled = true;
+          if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
+          if (window.__vhdSpeechSessionId !== mySessionId) {
+            cleanupSpeech(false);
+            return;
+          }
+          if (wasError) {
+            cleanupSpeech(false);
+            return;
+          }
+          speakNextChunk();
+        };
+
+        utterance.onstart = () => {
+          if (window.__vhdSpeechSessionId !== mySessionId) return;
+          orb.className = 'vhd-orb-btn speaking';
+          voiceLabel.textContent = resolved.lang.startsWith('hi') ? 'बोल रहे हैं...' :
+                                   resolved.lang.startsWith('mr') ? 'बोलत आहे...' :
+                                   'Speaking...';
+        };
+
+        utterance.onend = () => finishChunk(false);
+        utterance.onerror = (ev) => {
+          // Ignore benign 'interrupted'/'canceled' when user starts speaking or closes widget
+          if (ev && (ev.error === 'interrupted' || ev.error === 'canceled')) {
+            cleanupSpeech(false);
+            return;
+          }
+          finishChunk(true);
+        };
+
+        // Generous per-sentence watchdog (170ms/char + 6s buffer, min 12s) so slow/Indic voices NEVER get killed mid-sentence
+        if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
+        const chunkBudgetMs = Math.max(12000, Math.round(chunkText.length * 170) + 6000);
+        window.__vhdWatchdog = setTimeout(() => {
+          if (!chunkSettled && window.__vhdSpeechSessionId === mySessionId) {
+            console.warn('[Widget Voice Watchdog] Chunk timed out, advancing');
+            try { window.speechSynthesis.cancel(); } catch (_) {}
+            finishChunk(false);
+          }
+        }, chunkBudgetMs);
+
+        try {
+          window.speechSynthesis.speak(utterance);
+          if (window.speechSynthesis.paused) {
             window.speechSynthesis.resume();
           }
-        }, 7000);
+        } catch (speakErr) {
+          console.warn('[Widget Voice] Speech error:', speakErr);
+          cleanupSpeech(false);
+        }
       };
 
-      utterance.onend = () => cleanupSpeech(true);
-      utterance.onerror = () => cleanupSpeech(false);
-
-      // Fallback Watchdog Timer: auto-release UI if browser drops onend
-      const maxSpeechMs = Math.max(4000, Math.round((cleanSpoken.length / 10) * 1000) + 3000);
-      window.__vhdWatchdog = setTimeout(() => {
-        if (!hasFinished) {
-          console.warn('[Widget Voice Watchdog] Speech timed out, releasing orb');
-          try { window.speechSynthesis.cancel(); } catch (_) {}
-          cleanupSpeech(true);
-        }
-      }, maxSpeechMs);
-
-      try {
-        window.speechSynthesis.speak(utterance);
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
-      } catch (speakErr) {
-        console.warn('[Widget Voice] Speech error:', speakErr);
-        cleanupSpeech(false);
-      }
+      speakNextChunk();
     }
   }
 

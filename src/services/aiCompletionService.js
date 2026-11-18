@@ -630,16 +630,18 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
                 content: cleanMessage
               }
             ],
-            max_tokens: 340,
+            max_tokens: 900,
             temperature: 0.15
           })
         });
 
         if (groqRes.ok) {
           const data = await groqRes.json();
-          if (data.choices && data.choices[0] && data.choices[0].message) {
-            const cleaned = sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
-            return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode });
+          const choice = data.choices && data.choices[0];
+          if (choice && choice.message) {
+            const wasTruncated = choice.finish_reason === 'length';
+            const cleaned = sanitizeSpokenResponse(choice.message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+            return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode, wasTruncated });
           }
         } else if (![400, 404, 429].includes(groqRes.status)) {
           break;
@@ -675,7 +677,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           },
           contents: geminiContents,
           generationConfig: {
-            maxOutputTokens: 800,
+            maxOutputTokens: 900,
             temperature: 0.2
           }
         })
@@ -683,9 +685,11 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
 
       if (geminiRes.ok) {
         const data = await geminiRes.json();
-        if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0]) {
-          const cleaned = sanitizeSpokenResponse(data.candidates[0].content.parts[0].text, cleanMessage, { ...options, agentName: agentDisplayName });
-          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode });
+        const cand = data.candidates && data.candidates[0];
+        if (cand && cand.content && cand.content.parts[0]) {
+          const wasTruncated = cand.finishReason === 'MAX_TOKENS';
+          const cleaned = sanitizeSpokenResponse(cand.content.parts[0].text, cleanMessage, { ...options, agentName: agentDisplayName });
+          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode, wasTruncated });
         }
       }
     } catch (err) {
@@ -710,16 +714,18 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
             ...validHistory,
             { role: 'user', content: cleanMessage }
           ],
-          max_tokens: 800,
+          max_tokens: 900,
           temperature: 0.15
         })
       });
 
       if (openAiRes.ok) {
         const data = await openAiRes.json();
-        if (data.choices && data.choices[0] && data.choices[0].message) {
-          const cleaned = sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
-          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode });
+        const choice = data.choices && data.choices[0];
+        if (choice && choice.message) {
+          const wasTruncated = choice.finish_reason === 'length';
+          const cleaned = sanitizeSpokenResponse(choice.message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode, wasTruncated });
         }
       }
     } catch (err) {

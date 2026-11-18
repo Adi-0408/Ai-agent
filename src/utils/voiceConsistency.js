@@ -782,10 +782,79 @@ export function resolveVoiceForText(personaName = 'Adam', text = '', explicitVoi
 let activeHeartbeatTimer = null;
 let activeWatchdogTimer = null;
 
+let activeSpeechSessionId = 0;
+
+/**
+ * Splits long replies into natural sentence chunks (< 175 chars) so Chromium/Edge
+ * SpeechSynthesis NEVER cuts off or freezes mid-answer on long explanations.
+ */
+export function splitTextIntoSpeechChunks(text, maxLen = 175) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  if (clean.length <= maxLen) return [clean];
+
+  const rawSentences = clean.match(/[^.!?।]+(?:[.!?।]+(?=\s|$)|$)/g) || [clean];
+  const chunks = [];
+  let current = '';
+
+  const pushSubChunks = (seg) => {
+    const trimmed = seg.trim();
+    if (!trimmed) return;
+    if (trimmed.length <= maxLen) {
+      chunks.push(trimmed);
+      return;
+    }
+    const parts = trimmed.split(/(?<=[,;:])\s+/);
+    let buf = '';
+    for (const p of parts) {
+      if ((buf ? buf.length + 1 : 0) + p.length <= maxLen) {
+        buf = buf ? `${buf} ${p}` : p;
+      } else {
+        if (buf) chunks.push(buf);
+        if (p.length <= maxLen) {
+          buf = p;
+        } else {
+          const words = p.split(/\s+/);
+          let wBuf = '';
+          for (const w of words) {
+            if ((wBuf ? wBuf.length + 1 : 0) + w.length <= maxLen) {
+              wBuf = wBuf ? `${wBuf} ${w}` : w;
+            } else {
+              if (wBuf) chunks.push(wBuf);
+              wBuf = w;
+            }
+          }
+          buf = wBuf;
+        }
+      }
+    }
+    if (buf) chunks.push(buf);
+  };
+
+  for (const sent of rawSentences) {
+    const s = sent.trim();
+    if (!s) continue;
+    if ((current ? current.length + 1 : 0) + s.length <= maxLen) {
+      current = current ? `${current} ${s}` : s;
+    } else {
+      if (current) chunks.push(current);
+      if (s.length <= maxLen) {
+        current = s;
+      } else {
+        pushSubChunks(s);
+        current = '';
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length > 0 ? chunks : [clean];
+}
+
 /**
  * Safely cancels any active browser speech and resets watchdog timers
  */
 export function stopCurrentSpeech() {
+  activeSpeechSessionId++;
   if (typeof window === 'undefined' || !window.speechSynthesis) return;
   if (activeHeartbeatTimer) {
     clearInterval(activeHeartbeatTimer);
@@ -802,9 +871,9 @@ export function stopCurrentSpeech() {
 }
 
 /**
- * Hardened Speech Synthesis execution with Chromium GC Pinning, Heartbeat & Watchdog.
- * Eliminates browser voice freezing, premature cutoff, and hung 'speaking' states.
- * 
+ * Hardened Sentence-Chunked Speech Synthesis execution with GC Pinning & Generous Per-Sentence Watchdog.
+ * Eliminates browser voice freezing, 15s Chromium cutoff, Windows pause/resume stops, and hung 'speaking' states.
+ *
  * @param {string} text - The text to speak aloud
  * @param {string} personaName - Preferred voice persona name (e.g. 'Clara', 'Adam')
  * @param {{ onStart?: () => void, onEnd?: () => void, onError?: (err: any) => void }} callbacks
@@ -819,6 +888,7 @@ export function speakTextWithWatchdog(text, personaName = 'Clara', callbacks = {
 
   // 1. Cleanly cancel any pending or paused speech in browser queue
   stopCurrentSpeech();
+  const mySessionId = activeSpeechSessionId;
 
   // If paused in Chrome background, force resume
   if (window.speechSynthesis.paused) {
@@ -831,19 +901,13 @@ export function speakTextWithWatchdog(text, personaName = 'Clara', callbacks = {
     return null;
   }
 
-  const utterance = new SpeechSynthesisUtterance(cleanText);
   const resolved = resolveVoiceForText(personaName, cleanText);
-  if (resolved?.voice) {
-    utterance.voice = resolved.voice;
-  }
-  utterance.pitch = resolved?.pitch || 1.0;
-  utterance.rate = resolved?.rate || 1.0;
-  utterance.lang = resolved?.lang || 'en-US';
-
-  // CRITICAL GC PINNING: Pin utterance to window so V8 GC cannot collect it mid-speech
-  window.__echoActiveUtterance = utterance;
-
+  const chunks = splitTextIntoSpeechChunks(cleanText, 175);
+  let chunkIdx = 0;
+  let hasStarted = false;
   let hasEnded = false;
+  let firstUtterance = null;
+
   const finish = (isError = false, errEvent = null) => {
     if (hasEnded) return;
     hasEnded = true;
@@ -864,44 +928,84 @@ export function speakTextWithWatchdog(text, personaName = 'Clara', callbacks = {
     }
   };
 
-  utterance.onstart = () => {
-    if (onStart) onStart();
+  const speakNextChunk = () => {
+    if (hasEnded || activeSpeechSessionId !== mySessionId) return;
+    if (chunkIdx >= chunks.length) {
+      finish(false);
+      return;
+    }
 
-    // Chromium Heartbeat: Chrome pauses synthesis if utterances run > 8 seconds.
-    // Calling pause() and immediately resume() keeps the engine alive without audio glitch.
-    if (activeHeartbeatTimer) clearInterval(activeHeartbeatTimer);
-    activeHeartbeatTimer = setInterval(() => {
-      if (window.speechSynthesis && window.speechSynthesis.speaking) {
-        window.speechSynthesis.pause();
+    const chunkText = chunks[chunkIdx++];
+    const utterance = new SpeechSynthesisUtterance(chunkText);
+    if (!firstUtterance) firstUtterance = utterance;
+    if (resolved?.voice) {
+      utterance.voice = resolved.voice;
+    }
+    utterance.pitch = resolved?.pitch || 1.0;
+    utterance.rate = resolved?.rate || 1.0;
+    utterance.lang = resolved?.lang || 'en-US';
+
+    // CRITICAL GC PINNING: Pin utterance to window so V8 GC cannot collect it mid-speech
+    window.__echoActiveUtterance = utterance;
+    let chunkSettled = false;
+
+    const finishChunk = (isError = false, errEvent = null) => {
+      if (chunkSettled) return;
+      chunkSettled = true;
+      if (activeWatchdogTimer) {
+        clearTimeout(activeWatchdogTimer);
+        activeWatchdogTimer = null;
+      }
+      if (activeSpeechSessionId !== mySessionId) {
+        finish(false);
+        return;
+      }
+      if (isError) {
+        finish(true, errEvent);
+        return;
+      }
+      speakNextChunk();
+    };
+
+    utterance.onstart = () => {
+      if (activeSpeechSessionId !== mySessionId) return;
+      if (!hasStarted) {
+        hasStarted = true;
+        if (onStart) onStart();
+      }
+    };
+
+    utterance.onend = () => finishChunk(false);
+    utterance.onerror = (e) => {
+      if (e && (e.error === 'interrupted' || e.error === 'canceled')) {
+        finish(false);
+        return;
+      }
+      finishChunk(true, e);
+    };
+
+    // Generous per-sentence watchdog (170ms/char + 6s buffer, min 12s) so slow/Indic voices NEVER get cut off mid-sentence
+    const chunkBudgetMs = Math.max(12000, Math.round(chunkText.length * 170) + 6000);
+    if (activeWatchdogTimer) clearTimeout(activeWatchdogTimer);
+    activeWatchdogTimer = setTimeout(() => {
+      if (!chunkSettled && activeSpeechSessionId === mySessionId) {
+        console.warn('[Voice Watchdog] Chunk timed out, advancing.');
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+        finishChunk(false);
+      }
+    }, chunkBudgetMs);
+
+    try {
+      window.speechSynthesis.speak(utterance);
+      if (window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
       }
-    }, 7000);
+    } catch (err) {
+      console.warn('[SpeechSynthesis] speak error:', err);
+      finish(true, err);
+    }
   };
 
-  utterance.onend = () => finish(false);
-  utterance.onerror = (e) => finish(true, e);
-
-  // Safety Fallback Watchdog Timer:
-  // If the browser drops the onend event, automatically release the UI state
-  const estimatedDurationMs = Math.max(4000, Math.round((cleanText.length / 10) * 1000) + 3000);
-  if (activeWatchdogTimer) clearTimeout(activeWatchdogTimer);
-  activeWatchdogTimer = setTimeout(() => {
-    if (!hasEnded) {
-      console.warn('[Voice Watchdog] Speech timed out, releasing speaking state.');
-      try { window.speechSynthesis.cancel(); } catch (_) {}
-      finish(false);
-    }
-  }, estimatedDurationMs);
-
-  try {
-    window.speechSynthesis.speak(utterance);
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
-    }
-  } catch (err) {
-    console.warn('[SpeechSynthesis] speak error:', err);
-    finish(true, err);
-  }
-
-  return utterance;
+  speakNextChunk();
+  return firstUtterance;
 }
