@@ -90,6 +90,10 @@ async function runTests() {
       `
     },
     {
+      name: 'README.md',
+      content: `# Sangli Junior College Portal\nA modern, responsive academic portal.\n- In the Apps Script toolbar, click Deploy as Web App\n- Configurable by Grade, Stream, and Fee\n- Downloadable PDFs for Prospectus 2026-27, syllabus\n- Optimized for desktop, tablet, and mobile\n`
+    },
+    {
       name: 'index.html',
       content: `<!DOCTYPE html><html><head><title>Sangli Junior College</title></head><body>
         <section id="courses">
@@ -190,11 +194,22 @@ async function runTests() {
     'POST',
     'application/json',
     'user_id',
-    'isSubmitting'
+    'isSubmitting',
+    '- In the Apps Script toolbar',
+    'A modern',
+    '- Configurable by Grade',
+    '- Downloadable PDFs for Prospectus 2026-27',
+    '- Optimized for desktop'
   ];
   for (const badName of garbageNames) {
-    assert(!isValidCustomerCatalogName(badName) && !widget.isValidCustomerCatalogName(badName), `Blocked code artifact: "${badName}"`);
+    assert(!isValidCustomerCatalogName(badName) && !widget.isValidCustomerCatalogName(badName), `Blocked unnecessary/code artifact: "${badName}"`);
   }
+
+  // --- TEST 5: Automatic Language Detection (Manual Language Section Removed) ---
+  console.log('\n5) Automatic Language Detection & Clean Polite Replies');
+  assert(!widgetSrc.includes('<div class="vhd-lang-bar">'), 'Manual Language bar HTML removed from public/widget.js');
+  assert(widgetSrc.includes("let currentSpeechLang = 'auto';"), 'Automatic multilingual detection stays enabled by default');
+  assert(/happy to help|Please let me know/i.test(replyStr), `Catalog reply uses warm, polite tone ("${replyStr}")`);
 
   console.log('\n==============================================================');
   console.log(` RESULT: ${passed} passed, ${failed} failed`);

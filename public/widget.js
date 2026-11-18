@@ -271,7 +271,7 @@
     const name = String(rawName || '').trim();
     if (!name || name.length < 2 || name.length > 75) return false;
 
-    if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
+    if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|-|–|—|•|▪|▸|►|◦|·|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
     if (name.includes('//') || name.includes('/*') || name.includes('*/')) return false;
     if (name.includes('=>') || name.includes('();') || name.includes('()') || name.includes('===') || name.includes('!==') || name.includes('==') || name.includes('!=') || name.includes('&&') || name.includes('||') || name.includes('+=') || name.includes('-=') || name.includes('??') || name.includes('?.') || name.includes('++') || name.includes('${')) return false;
     if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('[') || name.includes(']') || name.includes('?') || /CREATE\s+TABLE|INSERT\s+INTO|SELECT\s+.*\s+FROM/i.test(name)) return false;
@@ -293,12 +293,18 @@
     if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
     if (/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|application\/json|text\/plain|content-type|utf-8|cors|null|undefined|true|false|nan)$/i.test(name)) return false;
 
+    // Reject developer README/setup bullets & UI feature boilerplate
+    if (/\b(apps\s*script|toolbar|optimized\s+for|responsive|configurable\s+by|mobile[- ]first|dark\s*mode|light\s*mode|desktop,\s*tablet|tablet\s+and\s+mobile|desktop\s+and\s+mobile|viewport|readme|changelog|setup\s+guide|installation|git\s+clone|npm\s+|yarn\s+|vite|webpack|tailwind|react\s+app|next\.?js|firestore|firebase|supabase|webhook|localhost|browser|sidebar|navbar|dropdown|tooltip|modal|animation|css|html|javascript|typescript|json\s+file|sql\s+file|source\s+code|repository|github|vercel|netlify|deployment|deploy\s+as|click\s+deploy|copy\s+the|paste\s+the|downloadable\s+pdfs?)\b/i.test(name)) return false;
+
     if (/^(generate|create|build|run|click|install|download|configure|setup|update|test|verify|deploy|fix|add|remove|delete|edit|include|allow|ensure|enable|disable|check|select|choose|press|provide|support|optimize|use|using|implement)\b/i.test(name)) return false;
     if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|sample\b|untitled\b|sr\.?no\b|action\b|name\b|product\b|item\b|price\b|stock\b|total\b|status\b|features?\b|services?\b|welcome\b|about\b|privacy\b|terms\b|copyright\b|faq\b)/i.test(name)) return false;
     if (/\b(tell me about|how to|what is|why do|can you|about us|contact us|privacy policy|terms of service|features? overview|welcome to)\b/i.test(name)) return false;
+    if (/^(?:a|an|the|this|that|these|those)\s+(?:modern|simple|clean|fast|smart|easy|interactive|complete|comprehensive|responsive|lightweight|powerful|scalable|flexible|built|custom|new|full|basic|advanced|user|web|online|digital|automated)\b/i.test(name)) return false;
+    if (/^(?:in\s+the|on\s+the|at\s+the|for\s+the|to\s+the|from\s+the|with\s+the|by\s+the|built\s+with|powered\s+by|designed\s+for|made\s+for|optimized\s+for|step\s+\d+)\b/i.test(name)) return false;
 
     const hasPrice = Boolean(record && record.price !== undefined && String(record.price).trim() !== '');
     const hasStock = Boolean(record && (record.stock !== undefined && record.stock !== null && !isNaN(Number(record.stock))));
+    if (!hasPrice && !hasStock && /^(?:a|an|the)\s+[a-z]+$/i.test(name)) return false;
     if (!hasPrice && !hasStock && !/\s/.test(name)) {
       const knownBrands = /^(iPhone|iPad|iMac|iPod|eBay|eBook|OnePlus|PayPal|YouTube|LinkedIn|WhatsApp|PlayStation|MacBook|AirPods|ThinkPad|PowerPoint|WordPress|FastAPI|NextJS|GraphQL)$/i;
       if (!knownBrands.test(name)) {
@@ -1064,8 +1070,19 @@
         { label: 'Get Started', query: 'How do I get started?' }
       ]
     };
-    const quickChips = (agentConfig.siteBlueprint && Array.isArray(agentConfig.siteBlueprint.quickActions) && agentConfig.siteBlueprint.quickActions.length > 0)
-      ? agentConfig.siteBlueprint.quickActions.slice(0, 3)
+    const rawQuickChips = (agentConfig.siteBlueprint && Array.isArray(agentConfig.siteBlueprint.quickActions) && agentConfig.siteBlueprint.quickActions.length > 0)
+      ? agentConfig.siteBlueprint.quickActions
+          .filter(c => c && c.label && !/^(result\s*price|total\s*cost|output|calc)/i.test(c.label.trim()))
+          .map(c => {
+            const rawLbl = String(c.label || '').trim();
+            // Fix any legacy truncated chip labels (e.g. "Classes 11th & 12th Ac" -> clean word-boundary label)
+            const cleanLbl = rawLbl.length > 20 ? rawLbl.split(/\s+/).slice(0, 3).join(' ') : rawLbl;
+            return { label: cleanLbl, query: c.query || cleanLbl };
+          })
+          .slice(0, 3)
+      : [];
+    const quickChips = rawQuickChips.length > 0
+      ? rawQuickChips
       : (defaultChipsByArch[initialArch] || [
           { label: 'Explore Options', query: 'What do you offer?' },
           { label: 'Pricing', query: 'What are the prices?' },
@@ -1083,19 +1100,10 @@
             <div class="vhd-avatar">${(agentConfig.name || 'AI').substring(0, 2).toUpperCase()}</div>
             <div>
               <div class="vhd-agent-title">${agentConfig.name}</div>
-              <div class="vhd-agent-status">Online · Voice & Navigation Guide</div>
+              <div class="vhd-agent-status">Online · Smart Voice &amp; Navigation Guide</div>
             </div>
           </div>
           <button class="vhd-close-btn" id="vhd-close" title="Close">✕</button>
-        </div>
-        <div class="vhd-lang-bar">
-          <div class="vhd-lang-title">🌐 Language</div>
-          <div class="vhd-lang-pills" id="vhd-lang-pills">
-            <button class="vhd-lang-btn active" data-lang="auto">Auto</button>
-            <button class="vhd-lang-btn" data-lang="en-IN">EN</button>
-            <button class="vhd-lang-btn" data-lang="hi-IN">हिंदी</button>
-            <button class="vhd-lang-btn" data-lang="mr-IN">मराठी</button>
-          </div>
         </div>
         <div class="vhd-body" id="vhd-body">
           <div class="vhd-msg vhd-msg-agent">${agentConfig.greeting}</div>
@@ -1107,11 +1115,11 @@
           <button class="vhd-orb-btn" id="vhd-orb" title="Tap to Speak">
             <svg viewBox="0 0 24 24" fill="white"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
           </button>
-          <div class="vhd-voice-label" id="vhd-voice-label">Tap mic to speak (English · हिंदी · मराठी)</div>
+          <div class="vhd-voice-label" id="vhd-voice-label">Tap mic to speak — auto-detects language</div>
         </div>
         <div class="vhd-footer">
           <input type="text" class="vhd-input" id="vhd-input" placeholder="Ask anything or say 'take me to form'..." />
-          <button class="vhd-voice-btn" id="vhd-voice-btn" title="Tap to Speak (English | हिंदी | मराठी)">
+          <button class="vhd-voice-btn" id="vhd-voice-btn" title="Tap to Speak (Auto Language Detection)">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
               <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
             </svg>
@@ -1143,7 +1151,7 @@
     const input = shadow.getElementById('vhd-input');
     const sendBtn = shadow.getElementById('vhd-send');
 
-    // Multilingual State: Auto-Detect (default), English, Hindi (हिंदी), and Marathi (मराठी)
+    // Fully Automatic Multilingual Detection (English, Hindi & Marathi detected automatically per turn!)
     let currentSpeechLang = 'auto';
 
     function updateVoiceState(state) {
@@ -1158,30 +1166,6 @@
         if (voiceBtn) voiceBtn.className = 'vhd-voice-btn';
       }
     }
-    const langBtns = shadow.querySelectorAll('.vhd-lang-btn');
-    langBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        langBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentSpeechLang = btn.getAttribute('data-lang') || 'auto';
-        if (recognition) {
-          recognition.lang = currentSpeechLang === 'auto' ? 'hi-IN' : currentSpeechLang;
-        }
-        if (currentSpeechLang === 'auto') {
-          input.placeholder = 'Speak in English, हिंदी, or मराठी...';
-          if (!isListening && orb.className !== 'vhd-orb-btn speaking') voiceLabel.textContent = 'Tap to Speak (Auto-Detect)';
-        } else if (currentSpeechLang.startsWith('hi')) {
-          input.placeholder = 'हिंदी में संदेश लिखें या बोलें...';
-          if (!isListening && orb.className !== 'vhd-orb-btn speaking') voiceLabel.textContent = 'बोलने के लिए टैप करें';
-        } else if (currentSpeechLang.startsWith('mr')) {
-          input.placeholder = 'मराठीत संदेश लिहा किंवा बोला...';
-          if (!isListening && orb.className !== 'vhd-orb-btn speaking') voiceLabel.textContent = 'बोलण्यासाठी टॅप करा';
-        } else {
-          input.placeholder = 'Type a message or speak above...';
-          if (!isListening && orb.className !== 'vhd-orb-btn speaking') voiceLabel.textContent = 'Tap to Speak';
-        }
-      });
-    });
 
     // Speech Recognition setup (Browser-Native, 100% Free)
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1600,7 +1584,10 @@
       if (codePatterns.some(pat => pat.test(aStr))) return false;
       if (codePatterns.some(pat => pat.test(qStr))) return false;
 
-      if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:)/i.test(aLower)) {
+      if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|in the apps script|configurable by|optimized for desktop)/i.test(aLower)) {
+        return false;
+      }
+      if (/\b(apps\s*script|script\s*toolbar|click\s+deploy|deploy\s+as\s+web\s+app|git\s+clone|optimized\s+for\s+desktop|responsive\s+layout|mobile[- ]first|tailwind\s+css|vite\s+build|webpack|source\s+code|repository)\b/i.test(aLower + ' ' + qLower)) {
         return false;
       }
       if (/^database includes table/i.test(aLower)) return false;
@@ -3869,7 +3856,8 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
-- AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${profile.topicsList}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
+- AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${profile.topicsList}). NEVER mention technical details, setup guides, Apps Script, toolbars, CSS/responsive specs, database schemas, SQL, or developer notes. If asked about database internals or queries, politely decline: ${consumerDeclineText}
+- WARM, POLITE & WELL-MANNERED TONE: Always respond with genuine warmth, courtesy, and respect (e.g., "I would be happy to help!", "Certainly!", "Please let me know if you'd like any further details!"). Keep answers crisp, helpful, and focused strictly on what the visitor actually needs.
 - STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
 - CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
 - EXACT FORM & SECTION REDIRECTION: When [LIVE_BRIDGE_DATA] has STATUS: NAVIGATE_SECTION, confirm you are taking the visitor directly to that exact form, section, or page (mention key fields if it is a form). When asked how to apply/order/book/register, guide them using [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT].
@@ -4389,11 +4377,11 @@ ${cleanFaqBlock}`;
           const moreSuffixMr = allItems.length > 5 ? ` आणि इतर ${allItems.length - 5} पर्याय` : '';
 
           if (queryLang === 'mr-IN') {
-            replyText = `आमच्याकडे सध्या ${allItems.length} ${nounMr} उपलब्ध आहेत: ${itemSummary}${moreSuffixMr}. आपल्याला कोणत्याही पर्यायाबद्दल अधिक माहिती हवी असल्यास सांगा!`;
+            replyText = `नक्कीच! आमच्याकडे सध्या ${allItems.length} ${nounMr} उपलब्ध आहेत: ${itemSummary}${moreSuffixMr}. कृपया कोणत्या पर्यायाबद्दल अधिक माहिती हवी आहे ते सांगा, मला मदत करायला नक्की आवडेल!`;
           } else if (queryLang === 'hi-IN') {
-            replyText = `हमारे पास अभी ${allItems.length} ${nounHi} उपलब्ध हैं: ${itemSummary}${moreSuffixHi}। किसी भी विकल्प के बारे में और जानने के लिए मुझे बताएं!`;
+            replyText = `ज़रूर! हमारे पास अभी ${allItems.length} ${nounHi} उपलब्ध हैं: ${itemSummary}${moreSuffixHi}। कृपया बताएं आप किस विकल्प के बारे में विस्तार से जानना चाहेंगे, मुझे आपकी सहायता करके खुशी होगी!`;
           } else {
-            replyText = `We currently have ${allItems.length} ${nounEn} available: ${itemSummary}${moreSuffixEn}. Let me know which one you would like details on!`;
+            replyText = `I would be happy to help! We currently have ${allItems.length} ${nounEn} available: ${itemSummary}${moreSuffixEn}. Please let me know which one you would like more details on!`;
           }
         } else {
           // Check Agent Knowledge Base & Live Host Page Snippets BEFORE falling back
@@ -4404,22 +4392,22 @@ ${cleanFaqBlock}`;
             replyText = groundedCat.answer;
           } else if (hk.services && hk.services.length > 0) {
             const servList = hk.services.slice(0, 5).join(', ');
-            replyText = `We offer: ${servList}.${sec ? ` I have scrolled your screen down to our ${sec.label}!` : ''}`;
+            replyText = `I would be happy to share! We offer: ${servList}.${sec ? ` I have also scrolled your screen to our ${sec.label} section for your convenience.` : ' Please let me know which one you would like to explore!'}`;
           } else if (sec) {
             if (queryLang === 'mr-IN') {
-              replyText = `आमचा संपूर्ण कॅटलॉग थेट खालील ${sec.label} विभागात उपलब्ध आहे. मी आपल्याला तेथे नेले आहे!`;
+              replyText = `नक्कीच! आमची संपूर्ण माहिती खालील ${sec.label} विभागात उपलब्ध आहे. मी आपल्या सोयीसाठी स्क्रीन थेट तेथे नेली आहे!`;
             } else if (queryLang === 'hi-IN') {
-              replyText = `हमारा पूरा कैटलॉग नीचे ${sec.label} में उपलब्ध है। मैंने आपको वहां स्क्रॉल कर दिया है!`;
+              replyText = `ज़रूर! हमारी पूरी जानकारी नीचे ${sec.label} सेक्शन में उपलब्ध है। मैंने आपकी सुविधा के लिए स्क्रीन को सीधे वहीं स्क्रॉल कर दिया है!`;
             } else {
-              replyText = `Our full catalog is available directly in the ${sec.label} section on this page. I have scrolled your screen right to it!`;
+              replyText = `Certainly! You can view all our ${nounEn} directly in the ${sec.label} section right here. I have scrolled your screen to it for your convenience!`;
             }
           } else {
             if (queryLang === 'mr-IN') {
-              replyText = `मी डेटाबेस तपासला, परंतु सध्या या कॅटलॉगमध्ये कोणत्याही वस्तूंची नोंद नाही. आपण आमच्या सेवांबद्दल विचारू शकता.`;
+              replyText = `माफ करा, सध्या ${nounMr}ची सविस्तर यादी येथे उपलब्ध नाही. कृपया आमच्या ${profile.followUpMr}बद्दल विचारा — मला आपल्याला मदत करायला आनंद होईल!`;
             } else if (queryLang === 'hi-IN') {
-              replyText = `मैंने डेटाबेस चेक किया, लेकिन इस कैटलॉग में कोई रिकॉर्ड दर्ज नहीं है। यदि आप अन्य सेवाओं के बारे में जानना चाहते हैं, तो कृपया पूछें।`;
+              replyText = `क्षमा करें, अभी ${nounHi} की पूरी सूची यहाँ उपलब्ध नहीं है। कृपया हमारे ${profile.followUpHi} के बारे में पूछें — मुझे आपकी मदद करके खुशी होगी!`;
             } else {
-              replyText = `I checked our database, but no ${nounEn} are currently loaded in this catalog. If you would like to know about our ${profile.followUpEn}, please let me know!`;
+              replyText = `I would be glad to help! Our full ${nounEn} list isn't published right here at the moment, so please feel free to ask me about our ${profile.followUpEn} or contact our team directly.`;
             }
           }
         }
@@ -4446,11 +4434,11 @@ ${cleanFaqBlock}`;
           }
           const summary = pricedItems.slice(0, 5).map(i => `${i.name}: ${i.price}`).join(', ');
           const moreEn = pricedItems.length > 5 ? `, and ${pricedItems.length - 5} more` : '';
-          let priceReply = `Here is our ${profile.priceLabelEn} overview: ${summary}${moreEn}. Ask about any specific option for full details!`;
+          let priceReply = `Certainly! Here is our ${profile.priceLabelEn} overview: ${summary}${moreEn}. Please let me know which option you would like full details on!`;
           if (queryLang === 'mr-IN') {
-            priceReply = `आमची ${profile.priceLabelMr} रचना: ${summary}. कोणत्याही पर्यायाबद्दल सविस्तर माहितीसाठी विचारा!`;
+            priceReply = `नक्कीच! आमची ${profile.priceLabelMr} रचना खालीलप्रमाणे आहे: ${summary}. कृपया कोणत्याही पर्यायाबद्दल अधिक माहितीसाठी विचारा!`;
           } else if (queryLang === 'hi-IN') {
-            priceReply = `हमारी ${profile.priceLabelHi} जानकारी: ${summary}। किसी विशेष विकल्प के बारे में विस्तार से पूछें!`;
+            priceReply = `ज़रूर! हमारी ${profile.priceLabelHi} की जानकारी इस प्रकार है: ${summary}। कृपया किसी विशेष विकल्प के बारे में विस्तार से पूछें!`;
           }
           return {
             reply: priceReply,

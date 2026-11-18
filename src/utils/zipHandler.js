@@ -14,6 +14,7 @@ const IGNORED_PATH_PATTERNS = [
   /(^|\/)target\//i,
   /(^|\/)\.next\//i,
   /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|cargo\.lock|poetry\.lock)$/i,
+  /(^|\/)(readme|contributing|changelog|license|licence|setup|deploy|deployment|install|installation|architecture|todo|apps[_-]?script[\w-]*)\.(md|markdown|txt)$/i,
   /\.(map|min\.js|min\.css|png|jpe?g|gif|webp|ico|bmp|tiff?|avif|mp4|mov|avi|webm|mp3|wav|ogg|woff2?|ttf|eot|otf|exe|dll|so|dylib|zip|tar|gz|rar|7z)$/i
 ];
 

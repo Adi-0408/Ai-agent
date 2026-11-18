@@ -551,11 +551,11 @@ export function isCustomerSafeFaq(question, answer) {
   if (codePatterns.some(pat => pat.test(aStr))) return false;
   if (codePatterns.some(pat => pat.test(qStr))) return false;
 
-  // 3. Reject developer task notes, database query descriptions, and backend jargon
-  if (/\b(sql query|database query|database table|select query|query the database|db connection|database dump|schema dump)\b/i.test(aLower)) {
+  // 3. Reject developer task notes, repo setup docs, database query descriptions, and backend jargon
+  if (/\b(sql query|database query|database table|select query|query the database|db connection|database dump|schema dump|apps\s*script|script\s*toolbar|click\s+deploy|deploy\s+as\s+web\s+app|git\s+clone|optimized\s+for\s+desktop|responsive\s+layout|mobile[- ]first|dark\s+mode\s+toggle|tailwind\s+css|vite\s+build|webpack|source\s+code|repository)\b/i.test(aLower + ' ' + qLower)) {
     return false;
   }
-  if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|refactor)/i.test(aLower)) {
+  if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|refactor|in the apps script|configurable by|optimized for desktop)/i.test(aLower)) {
     return false;
   }
 
@@ -570,6 +570,8 @@ export function isCustomerSafeFaq(question, answer) {
  * Permanently rejects JS/TS/SQL/HTML/JSON code artifacts (spread operators "...data",
  * comments "// ...", object literals "firstName: firstName", "method: POST",
  * dot-notation SDK calls "sdkDb.collection", credentials, camelCase/snake_case vars)
+ * AND developer README/setup bullets ("- In the Apps Script toolbar", "A modern",
+ * "- Configurable by Grade", "- Optimized for desktop")
  * while preserving 100% of legitimate offerings across ALL website industries
  * (B.Sc, B.Tech, Dr. Reddy's, Pro Plan v2.0, 2.5L SUV, Std 11th Science, etc.).
  */
@@ -577,8 +579,8 @@ export function isValidCustomerCatalogName(rawName, record = null) {
   const name = String(rawName || '').trim();
   if (!name || name.length < 2 || name.length > 75) return false;
 
-  // 1. Reject leading code punctuation, spread operators (...data), comments (// /* *), brackets, quotes
-  if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
+  // 1. Reject leading code punctuation, markdown bullets (-, –, —, •), spread operators (...data), comments (// /* *), brackets, quotes
+  if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|-|–|—|•|▪|▸|►|◦|·|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
 
   // 2. Reject code comments or template/operator syntax anywhere
   if (name.includes('//') || name.includes('/*') || name.includes('*/')) return false;
@@ -596,7 +598,6 @@ export function isValidCustomerCatalogName(rawName, record = null) {
   if (/^(method|headers|body|type|status|mode|cache|credentials|redirect|referrer|signal|action|url|uri|endpoint|path|route|timeout|retries|payload|params|query|fields|collection|document|doc|ref|data|error|message|code|token|key|id|uid|user\s*id|first\s*name|last\s*name|created\s*at|updated\s*at|timestamp|content\s*type|authorization|accept|origin|host|port)\s*:/i.test(name)) return false;
 
   // 5. Reject dot-notation code/SDK chains (e.g. "sdkDb.collection", "sdk Db.collection", "db.doc", "res.json", "err.message")
-  // Strip legitimate human abbreviations & numeric versions first so "B.Sc", "B.Tech", "Dr. Reddy's", "v2.0", "2.5L", "Rs. 500" pass cleanly!
   const withoutSafeDots = name
     .replace(/\b(?:Dr|Mr|Mrs|Ms|St|Sr|Jr|Rs|No|Std|Prof|Inc|Ltd|Pvt|Co|etc)\./gi, ' ')
     .replace(/\b(?:B\.Sc|M\.Sc|B\.Tech|M\.Tech|B\.Com|M\.Com|B\.A|M\.A|B\.E|M\.E|B\.Ed|M\.Ed|Ph\.D|LL\.B|M\.B\.A|B\.B\.A|B\.C\.A|M\.C\.A|B\.Pharm|M\.Pharm|M\.B\.B\.S)\b\.?/gi, ' ')
@@ -607,13 +608,19 @@ export function isValidCustomerCatalogName(rawName, record = null) {
   if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
   if (/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|application\/json|text\/plain|content-type|utf-8|cors|null|undefined|true|false|nan)$/i.test(name)) return false;
 
-  // 7. Reject developer/UI action verbs & non-catalog questions/headings
+  // 7. Reject developer documentation, README feature specs & UI boilerplate phrases
+  if (/\b(apps\s*script|toolbar|optimized\s+for|responsive|configurable\s+by|mobile[- ]first|dark\s*mode|light\s*mode|desktop,\s*tablet|tablet\s+and\s+mobile|desktop\s+and\s+mobile|viewport|readme|changelog|setup\s+guide|installation|git\s+clone|npm\s+|yarn\s+|vite|webpack|tailwind|react\s+app|next\.?js|firestore|firebase|supabase|webhook|localhost|browser|sidebar|navbar|dropdown|tooltip|modal|animation|css|html|javascript|typescript|json\s+file|sql\s+file|source\s+code|repository|github|vercel|netlify|deployment|deploy\s+as|click\s+deploy|copy\s+the|paste\s+the|downloadable\s+pdfs?)\b/i.test(name)) return false;
+
+  // 8. Reject developer/UI action verbs & non-catalog questions/headings/prose fragments
   if (/^(generate|create|build|run|click|install|download|configure|setup|update|test|verify|deploy|fix|add|remove|delete|edit|include|allow|ensure|enable|disable|check|select|choose|press|provide|support|optimize|use|using|implement)\b/i.test(name)) return false;
   if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|sample\b|untitled\b|sr\.?no\b|action\b|features?\b|services?\b|welcome\b|about\b|privacy\b|terms\b|copyright\b|faq\b)/i.test(name)) return false;
+  if (/^(?:a|an|the|this|that|these|those)\s+(?:modern|simple|clean|fast|smart|easy|interactive|complete|comprehensive|responsive|lightweight|powerful|scalable|flexible|built|custom|new|full|basic|advanced|user|web|online|digital|automated)\b/i.test(name)) return false;
+  if (/^(?:in\s+the|on\s+the|at\s+the|for\s+the|to\s+the|from\s+the|with\s+the|by\s+the|built\s+with|powered\s+by|designed\s+for|made\s+for|optimized\s+for|step\s+\d+)\b/i.test(name)) return false;
 
-  // 8. Reject single-token snake_case or lowercase-leading camelCase code identifiers when lacking real price/stock
+  // 9. Reject single-token snake_case or lowercase-leading camelCase code identifiers when lacking real price/stock
   const hasPrice = Boolean(record && record.price !== undefined && String(record.price).trim() !== '');
   const hasStock = Boolean(record && (record.stock !== undefined && record.stock !== null && !isNaN(Number(record.stock))));
+  if (!hasPrice && !hasStock && /^(?:a|an|the)\s+[a-z]+$/i.test(name)) return false;
   if (!hasPrice && !hasStock && !/\s/.test(name)) {
     const knownBrands = /^(iPhone|iPad|iMac|iPod|eBay|eBook|OnePlus|PayPal|YouTube|LinkedIn|WhatsApp|PlayStation|MacBook|AirPods|ThinkPad|PowerPoint|WordPress|FastAPI|NextJS|GraphQL)$/i;
     if (!knownBrands.test(name)) {
@@ -640,6 +647,23 @@ export function analyzeDatabaseFile(fileName, content) {
   if (dbCreds && dbCreds.detected) {
     databaseConfig = dbCreds.config;
     databaseProvider = dbCreds.providerName;
+  }
+
+  // Skip developer repository documentation (README.md, SETUP.md, DEPLOY.md, etc.) so internal setup instructions never leak into customer catalog/KB
+  const baseDocName = String(fileName || '').split(/[\\/]/).pop().toLowerCase();
+  if (/^(readme|contributing|changelog|license|licence|setup|deploy|deployment|install|installation|architecture|todo|apps[_-]?script[\w-]*)\.(md|markdown|txt)$/i.test(baseDocName)) {
+    return {
+      type: 'database',
+      fileName,
+      recordsCount: 0,
+      schema: [],
+      knowledgeBase: [],
+      databaseRecords: [],
+      databaseConfig,
+      databaseProvider,
+      summary: `Skipped developer setup document (${fileName}) from customer catalog.`,
+      rawExcerpt: ''
+    };
   }
 
   function addDatabaseRecord(rec) {

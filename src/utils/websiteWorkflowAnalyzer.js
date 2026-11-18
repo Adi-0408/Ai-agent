@@ -155,7 +155,7 @@ function extractSections(frontendFiles, routes = []) {
   const addSection = (id, label, page, excerpt = '', pagePath = '/') => {
     const cleanId = String(id || '').replace(/^#/, '').trim();
     if (!cleanId || cleanId.length < 2 || cleanId.length > 60) return;
-    if (/^(root|app|__next|voice-helpdesk-root|modal|overlay|backdrop|icon|svg|btn|button|input|label|nav-toggle|menu-btn)/i.test(cleanId)) return;
+    if (/^(root|app|__next|voice-helpdesk-root|modal|overlay|backdrop|icon|svg|btn|button|input|label|nav-toggle|menu-btn|result[-_]|output[-_]|calc[-_]|display[-_]|total[-_]|error[-_]|status[-_]|badge[-_]|toast[-_]|alert[-_]|spinner[-_])/i.test(cleanId)) return;
     const key = `${cleanId.toLowerCase()}::${(page || '').toLowerCase()}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -406,24 +406,36 @@ function buildWorkflowsAndSummary(blueprint, archetype, brandName) {
     });
   }
 
-  // Build up to 3 quick-action chips for the widget UI
+  // Build up to 3 clean, word-boundary-safe quick-action chips for the widget UI
   const quickActions = [];
+  const cleanChipLabel = (raw, fallback) => {
+    const str = String(raw || fallback || '').replace(/\s+/g, ' ').trim();
+    if (!str) return fallback;
+    if (str.length <= 20) return str;
+    const words = str.split(' ');
+    let out = '';
+    for (const w of words) {
+      if ((out ? `${out} ${w}` : w).length <= 20) out = out ? `${out} ${w}` : w;
+      else break;
+    }
+    return out.length >= 4 ? out : fallback;
+  };
   const pushChip = (label, query, icon) => {
     if (quickActions.length >= 3) return;
-    if (quickActions.some(q => q.label.toLowerCase() === label.toLowerCase())) return;
+    if (!label || quickActions.some(q => q.label.toLowerCase() === label.toLowerCase())) return;
     quickActions.push({ label, query, icon });
   };
 
   if (catalogSection) {
-    pushChip(catalogSection.label.slice(0, 22), `Show me ${catalogSection.label}`, 'list');
+    pushChip(cleanChipLabel(catalogSection.label, 'Explore Options'), `Show me ${catalogSection.label}`, 'list');
   }
-  if (pricingSection) {
-    pushChip(pricingSection.label.slice(0, 22), `What is the ${pricingSection.label}?`, 'price');
+  if (pricingSection && !/^(result|total|output|calc)/i.test(pricingSection.id || '')) {
+    pushChip(cleanChipLabel(pricingSection.label, 'Pricing & Fees'), `What is the ${pricingSection.label}?`, 'price');
   }
   if (primaryForm) {
-    pushChip(primaryForm.title.slice(0, 22), `Take me to ${primaryForm.title}`, 'form');
+    pushChip(cleanChipLabel(primaryForm.title, 'Open Form'), `Take me to ${primaryForm.title}`, 'form');
   } else if (contactTarget) {
-    pushChip((contactTarget.label || 'Contact Us').slice(0, 22), `Take me to ${contactTarget.label || 'Contact'}`, 'nav');
+    pushChip(cleanChipLabel(contactTarget.label || 'Contact Us', 'Contact Us'), `Take me to ${contactTarget.label || 'Contact'}`, 'nav');
   }
 
   const roleMap = {

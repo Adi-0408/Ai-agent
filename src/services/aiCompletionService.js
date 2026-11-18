@@ -484,7 +484,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
 1. Pure Spoken & Chat Text: Always output neat, direct conversational paragraphs or structured numbered steps.
 2. NEVER Output JSON Or Config Schemas: You are in DIRECT CHAT / VOICE MODE. You MUST NEVER output JSON configurations, code schemas, or objects like {"agent_config": ...}.
 3. Dual-Channel Excellence: Keep answers crisp, polite, and helpful so they sound natural when spoken aloud and look neat and readable in chat.
-4. STRICT CUSTOMER-ONLY INTERACTIONS: You are talking directly to customers, shoppers, and site visitors—NOT developers or database engineers. Only answer customer questions (products, pricing, availability, store services, ordering). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline and offer to help with store products and services.`;
+4. STRICT CUSTOMER-ONLY INTERACTIONS: You are talking directly to customers, shoppers, and site visitors—NOT developers or database engineers. Only answer customer questions (products, pricing, availability, store services, ordering). NEVER show unnecessary internal data, README setup notes, Apps Script toolbars, responsive/CSS specs, technical database queries, schema questions, SQL statements, or developer backend logic. Always reply politely and warmly with only what the visitor actually needs.`;
 
   // Multi-Turn Conversational Memory & History Formatting (for ALL agents & websites)
   const rawHistory = options?.conversationHistory || options?.history || userMessage?.conversationHistory || userMessage?.history || [];
