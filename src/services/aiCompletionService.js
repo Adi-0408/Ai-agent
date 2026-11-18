@@ -17,6 +17,11 @@ import {
   buildHonestUncertaintyReply
 } from '../utils/dataAnalyticsEngine.js';
 import { resolveFrontendDataQuery } from '../utils/frontendIntelligenceExtractor.js';
+import {
+  resolveProjectArchitectureQuery,
+  splitMultiStepQuestion,
+  verifyAndPolishAnswer
+} from '../utils/projectArchitectureAnalyzer.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -504,6 +509,42 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   const baseIdentity = promptContext;
   const isCustomerMode = options?.mode === 'customer' || options?.isLiveWidget;
+
+  // Complete Project Architecture, Frontend <-> Backend Data Flows & Code Diagnostics (Studio / Project Mode Only!)
+  const projectArch = options?.projectArchitecture || options?.siteBlueprint?.projectArchitecture || userMessage?.projectArchitecture || userMessage?.siteBlueprint?.projectArchitecture || null;
+  const precomputedArchitecture = !isCustomerMode ? resolveProjectArchitectureQuery(cleanMessage, projectArch, { isCustomerMode }) : null;
+  const archLines = [];
+  if (!isCustomerMode && projectArch) {
+    if (projectArch.summary) archLines.push(`PROJECT_SUMMARY: ${projectArch.summary}`);
+    if (Array.isArray(projectArch.frameworks) && projectArch.frameworks.length > 0) {
+      archLines.push(`TECH_STACK: ${projectArch.frameworks.join(', ')}`);
+    }
+    if (Array.isArray(projectArch.dependencies) && projectArch.dependencies.length > 0) {
+      archLines.push(`DEPENDENCIES: ${projectArch.dependencies.slice(0, 12).join(', ')}`);
+    }
+    if (Array.isArray(projectArch.backendRoutes) && projectArch.backendRoutes.length > 0) {
+      archLines.push(`BACKEND_ROUTES: ${projectArch.backendRoutes.slice(0, 12).map(r => `${r.method} ${r.path} (${r.file}${r.tables?.length ? ` -> ${r.tables.join(',')}` : ''})`).join('; ')}`);
+    }
+    if (Array.isArray(projectArch.dataFlows) && projectArch.dataFlows.length > 0) {
+      archLines.push(`FRONTEND_BACKEND_DATA_FLOWS: ${projectArch.dataFlows.slice(0, 8).map(f => f.description).join(' | ')}`);
+    }
+    if (projectArch.diagnostics && projectArch.diagnostics.totalIssuesCount > 0) {
+      const diagDetails = [
+        ...(projectArch.diagnostics.missingBackendEndpoints || []).map(x => x.detail),
+        ...(projectArch.diagnostics.missingEnvVars || []).map(x => x.detail),
+        ...(projectArch.diagnostics.potentialIssues || []).map(x => x.detail)
+      ].slice(0, 6);
+      archLines.push(`CODE_DIAGNOSTICS: ${diagDetails.join(' | ')}`);
+    }
+    if (precomputedArchitecture?.summaryText) {
+      archLines.push(`DIRECT_ARCHITECTURE_ANSWER: ${precomputedArchitecture.summaryText}`);
+    }
+  }
+  const architectureContext = archLines.length > 0
+    ? `\n\n[COMPLETE_PROJECT_ARCHITECTURE_AND_DATA_FLOW]\n${archLines.join('\n')}`
+    : '';
+
+  const verifiedFallbackSummary = precomputedArchitecture?.summaryText || precomputedFrontend?.summaryText || precomputedAnalytics?.summaryText || '';
   const platformKnowledgeBlock = isCustomerMode ? '' : `
 PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Free Groq API Key (<200ms latency): Obtained for free from https://console.groq.com/keys by clicking "Create API Key". Format starts with 'gsk_'.
@@ -514,14 +555,16 @@ PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Multilingual Support: The agent supports English, Hindi (हिंदी), and Marathi (मराठी) with auto-detection for voice recognition and spoken responses.
 `;
 
-  const systemInstructions = `${baseIdentity}${analyticsContext}${frontendContext}${kbContext}${dbContext}
+  const systemInstructions = `${baseIdentity}${analyticsContext}${frontendContext}${architectureContext}${kbContext}${dbContext}
 
 CORE MISSION & ASSIGNMENT:
 You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and factual accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, comparisons, availability, dashboard summaries, statistics, charts, reports, and company policies, guiding customers every step of the way.
 
 HONEST UNCERTAINTY, ACCURACY & ZERO-HALLUCINATION PROTOCOL (CRITICAL):
-- DATABASE + FRONTEND UNIFIED REASONING: Use BOTH the Verified Live Database Records AND [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS] (displayed KPIs, statistics, charts, report tables, and cross-page summaries) to answer questions. NEVER claim information is missing simply because it is not in the database if it is present in [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS]!
-- Ground every factual claim (prices, counts, KPIs, chart trends, report figures, dates, names, eligibility, policies, specs) strictly in the verified Knowledge Base Facts, Live Database Records, [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS], and [PRECOMPUTED_ANALYTICS] provided above.
+- COMPLETE PROJECT & UNIFIED REASONING: Use ALL provided context together — Verified Live Database Records, [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS] (displayed KPIs, statistics, charts, report tables, cross-page summaries), and (when present) [COMPLETE_PROJECT_ARCHITECTURE_AND_DATA_FLOW] (frontend-backend data flows, API routes, dependencies, and code diagnostics). NEVER claim information is missing simply because it is absent from one layer when it exists in another!
+- MULTI-STEP & COMPLEX QUESTIONS: If the user asks a multi-part or compound question, address EVERY part clearly, accurately, and in logical order.
+- ANSWER VERIFICATION: Verify every route path, file name, metric, price, and count strictly against the injected context before responding.
+- Ground every factual claim (prices, counts, KPIs, chart trends, report figures, dates, names, eligibility, policies, specs) strictly in the verified Knowledge Base Facts, Live Database Records, [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS], [COMPLETE_PROJECT_ARCHITECTURE_AND_DATA_FLOW], and [PRECOMPUTED_ANALYTICS] provided above.
 - If [PRECOMPUTED_ANALYTICS] is present, report those exact computed figures, comparisons, and filtered results accurately without altering numbers.
 - HONEST UNCERTAINTY: If the user asks for a specific business fact, number, person, branch, or policy that is NOT present in your provided context, NEVER invent, guess, or fabricate an answer. Politely state that you do not have that exact detail on file right now, and offer verified related options or direct contact details if available.
 - AVOID REPETITION: Review the conversation history and NEVER repeat the exact same answer from a previous turn; instead clarify, elaborate with new verified facts, or guide to a concrete next step.
@@ -594,7 +637,8 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
         if (groqRes.ok) {
           const data = await groqRes.json();
           if (data.choices && data.choices[0] && data.choices[0].message) {
-            return sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+            const cleaned = sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+            return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode });
           }
         } else if (![400, 404, 429].includes(groqRes.status)) {
           break;
@@ -639,7 +683,8 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
       if (geminiRes.ok) {
         const data = await geminiRes.json();
         if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts[0]) {
-          return sanitizeSpokenResponse(data.candidates[0].content.parts[0].text, cleanMessage, { ...options, agentName: agentDisplayName });
+          const cleaned = sanitizeSpokenResponse(data.candidates[0].content.parts[0].text, cleanMessage, { ...options, agentName: agentDisplayName });
+          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode });
         }
       }
     } catch (err) {
@@ -672,7 +717,8 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
       if (openAiRes.ok) {
         const data = await openAiRes.json();
         if (data.choices && data.choices[0] && data.choices[0].message) {
-          return sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+          const cleaned = sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+          return verifyAndPolishAnswer(cleaned, { verifiedFallback: verifiedFallbackSummary, isCustomerMode });
         }
       }
     } catch (err) {
@@ -680,8 +726,29 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
     }
   }
 
-  // 3. Fallback to Universal Typo-Tolerant & Word-Order-Independent Local NLU Engine
+  // 3. Fallback to Universal Typo-Tolerant, Multi-Step & Project-Aware Local NLU Engine
   const rawTrimmed = cleanMessage.trim();
+
+  // Multi-Step / Compound Question Decomposition ("Which course is cheapest? And how do I apply?", "What is total revenue and how does frontend connect to backend?")
+  if (!options?._isSubClause) {
+    const subClauses = splitMultiStepQuestion(rawTrimmed);
+    if (subClauses.length >= 2) {
+      const subAnswers = [];
+      for (const clause of subClauses) {
+        const ans = await generateAIResponse(clause, promptText, kbList, '', { ...options, _isSubClause: true, throwOnMissingKey: false });
+        if (ans && !subAnswers.includes(ans)) subAnswers.push(ans.trim());
+      }
+      if (subAnswers.length >= 2) {
+        return verifyAndPolishAnswer(subAnswers.join(' '), { isCustomerMode });
+      }
+    }
+  }
+
+  // Complete Project Architecture, Frontend <-> Backend Data Flow & Code-Level Diagnostics (Studio / Project Mode)
+  if (!isCustomerMode && precomputedArchitecture && precomputedArchitecture.summaryText) {
+    return verifyAndPolishAnswer(precomputedArchitecture.summaryText, { isCustomerMode });
+  }
+
   const normalizedFull = normalizeUserQuery(rawTrimmed, dbRecords, kbList);
   const normalizedNoPunct = (normalizedFull || rawTrimmed).toLowerCase().replace(/[!?.,;:]+$/g, '').replace(/\s+/g, ' ').trim();
   const rawCleanNoPunct = rawTrimmed.replace(/[!?.,।;:]+$/g, '').replace(/\s+/g, ' ').trim();

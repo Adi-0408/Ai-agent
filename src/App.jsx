@@ -1563,6 +1563,9 @@ export default function App() {
         {
           agentName: currentAgentName,
           databaseRecords: currentAssistant?.databaseRecords || [],
+          siteBlueprint: currentAssistant?.siteBlueprint || null,
+          frontendIntelligence: currentAssistant?.siteBlueprint?.frontendIndex || null,
+          projectArchitecture: currentAssistant?.projectArchitecture || currentAssistant?.siteBlueprint?.projectArchitecture || null,
           conversationHistory: (currentThread?.messages || []).slice(-8)
         }
       );

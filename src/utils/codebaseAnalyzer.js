@@ -10,6 +10,7 @@ import { extractDatabaseCredentials } from './databaseKeyExtractor.js';
 import { extractWebsiteBlueprint } from './websiteWorkflowAnalyzer.js';
 import { parseNumericPrice, computeCatalogStats } from './dataAnalyticsEngine.js';
 import { buildCrossPageFrontendIndex } from './frontendIntelligenceExtractor.js';
+import { analyzeProjectArchitecture } from './projectArchitectureAnalyzer.js';
 
 export function detectFileType(fileName, content) {
   const lowerName = (fileName || '').toLowerCase();
@@ -1239,6 +1240,23 @@ export function analyzeFullStackFiles(fileList = []) {
       pageLabel: t.pageLabel,
       pagePath: t.pagePath
     }))
+  };
+
+  // Complete Project Architecture, Frontend <-> Backend Data Flows & Code-Level Diagnostics
+  const projectArchitecture = analyzeProjectArchitecture(fileList, result);
+  result.projectArchitecture = projectArchitecture;
+  siteBlueprint.projectArchitecture = {
+    fileCount: projectArchitecture.fileCount,
+    files: projectArchitecture.files.slice(0, 30),
+    frameworks: projectArchitecture.frameworks,
+    dependencies: projectArchitecture.dependencies.slice(0, 20),
+    configFiles: projectArchitecture.configFiles,
+    referencedEnvVars: projectArchitecture.referencedEnvVars,
+    backendRoutes: projectArchitecture.backendRoutes.slice(0, 20),
+    dbTables: projectArchitecture.dbTables.slice(0, 20),
+    dataFlows: projectArchitecture.dataFlows.slice(0, 15),
+    diagnostics: projectArchitecture.diagnostics,
+    summary: projectArchitecture.summary
   };
 
   // Merge customer-facing workflow/form FAQs & frontend KPI/chart FAQs into combinedKnowledge

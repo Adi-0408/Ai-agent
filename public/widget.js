@@ -5535,12 +5535,68 @@ ${cleanFaqBlock}`;
       return null;
     }
 
-    // Autonomous Zero-API-Key Local Reasoning Engine with Conversational Memory, Context Lock & Spoken Grammar Polish
+    // Multi-Step / Compound Question Splitter & Pre-Response Answer Verification Guard
+    function splitMultiStepQuestion(rawQuery = '') {
+      const str = String(rawQuery || '').trim();
+      if (!str || str.length < 18) return [str];
+      if (/\b(compare|comparison|difference\s+between|between\s+\S+\s+and\s+\S+)\b/i.test(str) && !/\?\s*\S/.test(str)) {
+        return [str];
+      }
+      if (str.includes('?')) {
+        const qParts = str
+          .split(/\?\s+(?:and\s+also\s+|also\s+|and\s+)?/i)
+          .map(s => s.replace(/^\s*(?:and\s+also|also|and|plus)\s+/i, '').trim())
+          .filter(s => s.length >= 6);
+        if (qParts.length >= 2) return qParts.slice(0, 2);
+      }
+      const compoundParts = str
+        .split(/(?:\s*,?\s*\band\s+also\b\s*|\s*;\s*(?:also\s+)?|\s*,?\s*\band\s+(?=(?:what|which|how|where|when|who|show|tell|explain|check|trace|list|compare|summarize|are\s+there|do\s+you)\b))/i)
+        .map(s => s.trim())
+        .filter(s => s.length >= 6);
+      return compoundParts.length >= 2 ? compoundParts.slice(0, 2) : [str];
+    }
+
+    function verifyWidgetReply(candidateReply = '', bridgeResult = null) {
+      let text = String(candidateReply || '').trim();
+      const verifiedFallback =
+        (bridgeResult && bridgeResult.status === 'FOUND_IN_FRONTEND' && bridgeResult.data?.summaryText) ||
+        (bridgeResult && bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data?.summaryText) ||
+        '';
+      const looksLikeFalseError = /\b(not\s+available\s+right\s+now|cannot\s+find|could\s+not\s+find|no\s+information\s+available|i\s+don'?t\s+have\s+(?:exact\s+)?information|unable\s+to\s+find)\b/i.test(text);
+      if ((!text || looksLikeFalseError) && verifiedFallback) {
+        text = verifiedFallback;
+      }
+      return polishSpokenReply(text);
+    }
+
+    // Autonomous Zero-API-Key Local Reasoning Engine with Multi-Step Synthesis, Conversational Memory, Context Lock & Spoken Grammar Polish
     async function inferLocalAgentResponse(userText, bridgeResult = null, history = [], context = null) {
+      // Handle complex 2-part compound questions cleanly (e.g. "Which course is cheapest? And how do I apply?")
+      if (!context || !context._inSubClause) {
+        const clauses = splitMultiStepQuestion(userText);
+        if (clauses.length >= 2) {
+          const parts = [];
+          let combinedNav = null;
+          const subCtx = context ? { ...context, _inSubClause: true } : { _inSubClause: true };
+          for (const cl of clauses) {
+            const subBridge = await resolveDatabaseBridge(cl, agentConfig, subCtx);
+            const subRes = await _inferLocalAgentResponseCore(cl, subBridge, history, subCtx);
+            const subText = typeof subRes === 'object' && subRes !== null ? (subRes.reply || '') : String(subRes || '');
+            if (typeof subRes === 'object' && subRes?.navAction && !combinedNav) combinedNav = subRes.navAction;
+            const cleanPart = polishSpokenReply(subText);
+            if (cleanPart && !parts.includes(cleanPart)) parts.push(cleanPart);
+          }
+          if (parts.length >= 2) {
+            const joined = polishSpokenReply(parts.join(' '));
+            return combinedNav ? { reply: joined, navAction: combinedNav } : joined;
+          }
+        }
+      }
+
       const res = await _inferLocalAgentResponseCore(userText, bridgeResult, history, context);
-      if (typeof res === 'string') return polishSpokenReply(res);
+      if (typeof res === 'string') return verifyWidgetReply(res, bridgeResult);
       if (res && typeof res === 'object' && typeof res.reply === 'string') {
-        return { ...res, reply: polishSpokenReply(res.reply) };
+        return { ...res, reply: verifyWidgetReply(res.reply, bridgeResult) };
       }
       return res;
     }
@@ -6612,7 +6668,7 @@ ${cleanFaqBlock}`;
         if (agentDeleted) return;
 
         typingLoader.remove();
-        reply = polishSpokenReply(reply);
+        reply = verifyWidgetReply(reply, bridgeResult);
 
         conversationContext.lastReply = reply;
         if (!Array.isArray(conversationContext.recentReplies)) conversationContext.recentReplies = [];

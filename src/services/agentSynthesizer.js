@@ -12,7 +12,7 @@ import { getUserApiKeys } from './aiCompletionService.js';
  * @returns {Promise<object>} Synthesized agent blueprint
  */
 export async function synthesizeAgentFromFilesAndPrompt(userPrompt, analysisResult, userApiConfig = {}) {
-  const { frontend, backend, database, tools, combinedKnowledge, databaseRecords, siteBlueprint, frontendIntelligence } = analysisResult;
+  const { frontend, backend, database, tools, combinedKnowledge, databaseRecords, siteBlueprint, frontendIntelligence, projectArchitecture } = analysisResult;
 
   // Resolve user's BYOK keys (never fallback to developer keys)
   const storedKeys = getUserApiKeys();
@@ -70,6 +70,20 @@ ${(() => {
     lines.push(`Cross-Page Map: ${fi.pages.slice(0, 8).map(p => `${p.pageLabel} (${p.pagePath}): ${p.summary.slice(0, 120)}`).join(' || ')}`);
   }
   return lines.join('\n') || 'Standard frontend content';
+})()}
+
+COMPLETE PROJECT ARCHITECTURE & FRONTEND-BACKEND DATA FLOWS:
+${(() => {
+  const pa = projectArchitecture || siteBlueprint?.projectArchitecture;
+  if (!pa) return 'Standard web application architecture';
+  const lines = [pa.summary];
+  if (Array.isArray(pa.dataFlows) && pa.dataFlows.length > 0) {
+    lines.push(`Data Flows: ${pa.dataFlows.slice(0, 6).map(f => f.description).join(' | ')}`);
+  }
+  if (pa.diagnostics && pa.diagnostics.totalIssuesCount > 0) {
+    lines.push(`Code Diagnostics: ${pa.diagnostics.totalIssuesCount} issue(s) detected across endpoints/configs.`);
+  }
+  return lines.join('\n');
 })()}
 ` : '';
 
