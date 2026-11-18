@@ -12,7 +12,7 @@ import { getUserApiKeys } from './aiCompletionService.js';
  * @returns {Promise<object>} Synthesized agent blueprint
  */
 export async function synthesizeAgentFromFilesAndPrompt(userPrompt, analysisResult, userApiConfig = {}) {
-  const { frontend, backend, database, tools, combinedKnowledge, databaseRecords, siteBlueprint } = analysisResult;
+  const { frontend, backend, database, tools, combinedKnowledge, databaseRecords, siteBlueprint, frontendIntelligence } = analysisResult;
 
   // Resolve user's BYOK keys (never fallback to developer keys)
   const storedKeys = getUserApiKeys();
@@ -51,6 +51,26 @@ ${(siteBlueprint.sections || []).slice(0, 12).map(s => `- ${s.label} (${s.href}$
 
 DISCOVERED PAGES / ROUTES:
 ${(siteBlueprint.routes || []).slice(0, 12).map(r => `- ${r.label} (${r.path})`).join('\n') || 'Single-page site'}
+
+FRONTEND DASHBOARD METRICS, CHARTS, REPORTS & CROSS-PAGE INSIGHTS:
+${(() => {
+  const fi = frontendIntelligence || siteBlueprint?.frontendIndex;
+  if (!fi) return 'Standard frontend content';
+  const lines = [];
+  if (Array.isArray(fi.metrics) && fi.metrics.length > 0) {
+    lines.push(`Displayed KPIs/Stats: ${fi.metrics.slice(0, 12).map(m => `${m.label}: ${m.value}${m.delta ? ` (${m.delta})` : ''} [${m.pageLabel}]`).join('; ')}`);
+  }
+  if (Array.isArray(fi.charts) && fi.charts.length > 0) {
+    lines.push(`Charts/Graphs: ${fi.charts.slice(0, 5).map(c => c.summary || c.title).join(' | ')}`);
+  }
+  if (Array.isArray(fi.reportTables) && fi.reportTables.length > 0) {
+    lines.push(`Report Tables: ${fi.reportTables.slice(0, 4).map(t => t.summary || t.title).join(' | ')}`);
+  }
+  if (Array.isArray(fi.pages) && fi.pages.length > 1) {
+    lines.push(`Cross-Page Map: ${fi.pages.slice(0, 8).map(p => `${p.pageLabel} (${p.pagePath}): ${p.summary.slice(0, 120)}`).join(' || ')}`);
+  }
+  return lines.join('\n') || 'Standard frontend content';
+})()}
 ` : '';
 
   const frontendExcerpts = frontend.slice(0, 8).map(f => `File: ${f.fileName}

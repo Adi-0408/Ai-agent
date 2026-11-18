@@ -144,10 +144,11 @@ export const UNIVERSAL_CONCEPT_VOCAB = [
   'what', 'which', 'where', 'when', 'who', 'how', 'tell', 'show', 'give', 'list', 'all', 'details', 'information',
   'overview', 'about', 'know', 'want', 'need', 'provide', 'offer', 'have', 'available', 'availability', 'stock',
   'sell', 'serve', 'teach', 'study', 'learn', 'eat', 'drink', 'browse', 'explore', 'options', 'catalog', 'catalogue', 'inventory',
-  // Money & pricing + analytical comparisons/filters
+  // Money & pricing + analytical comparisons/filters + frontend dashboards/charts/reports
   'price', 'prices', 'pricing', 'fee', 'fees', 'cost', 'costs', 'rate', 'rates', 'charge', 'charges', 'structure',
   'tuition', 'pay', 'payment', 'money', 'budget', 'rent', 'tariff', 'mrp', 'amount', 'discount', 'expensive', 'cheap', 'cheapest', 'much',
   'compare', 'comparison', 'versus', 'difference', 'differences', 'better', 'lowest', 'affordable', 'highest', 'costliest', 'under', 'below', 'above', 'between', 'average', 'range', 'total', 'many', 'count',
+  'chart', 'charts', 'graph', 'graphs', 'plot', 'trend', 'trending', 'dashboard', 'report', 'reports', 'summary', 'summarize', 'metric', 'metrics', 'stat', 'stats', 'statistics', 'kpi', 'kpis', 'revenue', 'sales', 'growth', 'analytics', 'region', 'regional', 'quarterly', 'monthly', 'weekly', 'yearly', 'conversion', 'attendance', 'across', 'pages', 'table', 'tables',
   // Categories across all 10 archetypes
   'course', 'courses', 'program', 'programs', 'stream', 'streams', 'class', 'classes', 'subject', 'subjects', 'degree', 'diploma', 'syllabus', 'curriculum', 'college', 'school', 'academy',
   'product', 'products', 'item', 'items', 'shoes', 'sneakers', 'laptop', 'phone', 'watch', 'clothing',

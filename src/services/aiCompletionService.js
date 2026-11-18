@@ -16,6 +16,7 @@ import {
   isSemanticallyRepeated,
   buildHonestUncertaintyReply
 } from '../utils/dataAnalyticsEngine.js';
+import { resolveFrontendDataQuery } from '../utils/frontendIntelligenceExtractor.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -458,6 +459,32 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     ? `\n\n[PRECOMPUTED_ANALYTICS — USE THESE EXACT NUMBERS]\nSTATUS: ANALYTICAL_RESULT\nTYPE: ${precomputedAnalytics.analysisType}\nEXACT_SUMMARY: ${precomputedAnalytics.summaryText}\nCOMPUTED_DATA: ${JSON.stringify(precomputedAnalytics.computedData)}`
     : '';
 
+  const frontendIndex = options?.frontendIntelligence || options?.siteBlueprint?.frontendIndex || userMessage?.frontendIntelligence || userMessage?.siteBlueprint?.frontendIndex || null;
+  const liveFrontendSnapshot = options?.liveFrontendSnapshot || userMessage?.liveFrontendSnapshot || null;
+  const precomputedFrontend = resolveFrontendDataQuery(cleanMessage, liveFrontendSnapshot, frontendIndex, queryLangForPrompt);
+  const frontendLines = [];
+  if (precomputedFrontend && precomputedFrontend.summaryText) {
+    frontendLines.push(`DIRECT_FRONTEND_MATCH (${precomputedFrontend.matchType}): ${precomputedFrontend.summaryText}`);
+  }
+  const combinedMetrics = [...(liveFrontendSnapshot?.metrics || []), ...(frontendIndex?.metrics || [])].slice(0, 12);
+  if (combinedMetrics.length > 0) {
+    frontendLines.push(`DISPLAYED_KPIS_AND_STATS: ${combinedMetrics.map(m => `${m.label}: ${m.value}${m.delta ? ` (${m.delta})` : ''}${m.pageLabel ? ` [${m.pageLabel}]` : ''}`).join('; ')}`);
+  }
+  const combinedCharts = [...(liveFrontendSnapshot?.charts || []), ...(frontendIndex?.charts || [])].slice(0, 4);
+  if (combinedCharts.length > 0) {
+    frontendLines.push(`DISPLAYED_CHARTS: ${combinedCharts.map(c => c.summary || c.title).join(' | ')}`);
+  }
+  const combinedTables = [...(liveFrontendSnapshot?.reportTables || []), ...(frontendIndex?.reportTables || [])].slice(0, 3);
+  if (combinedTables.length > 0) {
+    frontendLines.push(`REPORT_TABLES: ${combinedTables.map(t => t.summary || t.title).join(' | ')}`);
+  }
+  if (Array.isArray(frontendIndex?.pages) && frontendIndex.pages.length > 1) {
+    frontendLines.push(`CROSS_PAGE_SUMMARIES: ${frontendIndex.pages.slice(0, 6).map(p => `${p.pageLabel} (${p.pagePath}): ${String(p.summary || '').slice(0, 120)}`).join(' || ')}`);
+  }
+  const frontendContext = frontendLines.length > 0
+    ? `\n\n[FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS]\n${frontendLines.join('\n')}`
+    : '';
+
   const dbContext = (Array.isArray(dbRecords) && dbRecords.length > 0)
     ? `\n\nVerified Live Database Records & Catalog (${dbRecords.length} items):\n${JSON.stringify(dbRecords.slice(0, 50))}`
     : '';
@@ -479,13 +506,14 @@ PLATFORM & INTEGRATION KNOWLEDGE (EXACT FACTS):
 - Multilingual Support: The agent supports English, Hindi (हिंदी), and Marathi (मराठी) with auto-detection for voice recognition and spoken responses.
 `;
 
-  const systemInstructions = `${baseIdentity}${analyticsContext}${kbContext}${dbContext}
+  const systemInstructions = `${baseIdentity}${analyticsContext}${frontendContext}${kbContext}${dbContext}
 
 CORE MISSION & ASSIGNMENT:
-You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and factual accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, comparisons, availability, and company policies, guiding customers every step of the way.
+You are "${agentDisplayName}", the dedicated omni-channel AI Customer Support & Help Desk Agent. Your primary mission is to assist customers and website visitors with empathy, exceptional politeness, clarity, speed, and factual accuracy through BOTH real-time spoken voice and interactive chat. You answer questions about products, services, pricing, comparisons, availability, dashboard summaries, statistics, charts, reports, and company policies, guiding customers every step of the way.
 
 HONEST UNCERTAINTY, ACCURACY & ZERO-HALLUCINATION PROTOCOL (CRITICAL):
-- Ground every factual claim (prices, counts, dates, names, eligibility, policies, specs) strictly in the verified Knowledge Base Facts, Live Database Records, and [PRECOMPUTED_ANALYTICS] provided above.
+- DATABASE + FRONTEND UNIFIED REASONING: Use BOTH the Verified Live Database Records AND [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS] (displayed KPIs, statistics, charts, report tables, and cross-page summaries) to answer questions. NEVER claim information is missing simply because it is not in the database if it is present in [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS]!
+- Ground every factual claim (prices, counts, KPIs, chart trends, report figures, dates, names, eligibility, policies, specs) strictly in the verified Knowledge Base Facts, Live Database Records, [FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS], and [PRECOMPUTED_ANALYTICS] provided above.
 - If [PRECOMPUTED_ANALYTICS] is present, report those exact computed figures, comparisons, and filtered results accurately without altering numbers.
 - HONEST UNCERTAINTY: If the user asks for a specific business fact, number, person, branch, or policy that is NOT present in your provided context, NEVER invent, guess, or fabricate an answer. Politely state that you do not have that exact detail on file right now, and offer verified related options or direct contact details if available.
 - AVOID REPETITION: Review the conversation history and NEVER repeat the exact same answer from a previous turn; instead clarify, elaborate with new verified facts, or guide to a concrete next step.
@@ -771,6 +799,17 @@ Your floating voice assistant widget will appear immediately on your site, with 
 
   // Check live database records first if provided (analytical queries, ordinal, affirmation, typo-tolerant & order-independent!)
   const inputLang = detectTextLanguage(cleanMessage);
+
+  // Check Frontend Dashboard KPIs, Charts, Report Tables & Cross-Page Summaries FIRST for explicit frontend/dashboard/chart/report/summary queries
+  const isExplicitFrontendQ = /\b(chart|charts|graph|graphs|trend|trending|dashboard|summarize|summary|overview|report|reports|kpi|metric|metrics|stat|stats|statistics|across\s+(?:all\s+)?pages|on\s+the\s+[a-z0-9-]+\s+page|displayed\s+here|shown\s+here)\b/i.test(lower);
+  if (isExplicitFrontendQ && (liveFrontendSnapshot || frontendIndex)) {
+    const feDirect = resolveFrontendDataQuery(effectiveClean, liveFrontendSnapshot, frontendIndex, inputLang) ||
+                     resolveFrontendDataQuery(rawTrimmed, liveFrontendSnapshot, frontendIndex, inputLang);
+    if (feDirect && feDirect.summaryText) {
+      return feDirect.summaryText;
+    }
+  }
+
   if (Array.isArray(dbRecords) && dbRecords.length > 0) {
     // 0. Deterministic Data Analysis FIRST (Compare, Cheapest/Most Expensive, Budget Filter, Stock Filter, Counts/Range)
     const analytical = analyzeCatalogQuery(effectiveClean, dbRecords, {
@@ -833,6 +872,15 @@ Your floating voice assistant widget will appear immediately on your site, with 
         return `Our verified academic programs and courses include: ${summary}. Feel free to ask me for admission criteria, eligibility, or details on any course!`;
       }
       return `Our verified database includes: ${summary}. You can ask me for real-time availability, pricing, or details on any item!`;
+    }
+  }
+
+  // Check Frontend Displayed KPIs, Charts, Report Tables & Cross-Page Data BEFORE falling back to KB/uncertainty
+  if (liveFrontendSnapshot || frontendIndex) {
+    const feFallbackHit = resolveFrontendDataQuery(effectiveClean, liveFrontendSnapshot, frontendIndex, inputLang) ||
+                          resolveFrontendDataQuery(rawTrimmed, liveFrontendSnapshot, frontendIndex, inputLang);
+    if (feFallbackHit && feFallbackHit.summaryText) {
+      return feFallbackHit.summaryText;
     }
   }
 

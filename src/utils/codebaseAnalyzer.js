@@ -9,6 +9,7 @@
 import { extractDatabaseCredentials } from './databaseKeyExtractor.js';
 import { extractWebsiteBlueprint } from './websiteWorkflowAnalyzer.js';
 import { parseNumericPrice, computeCatalogStats } from './dataAnalyticsEngine.js';
+import { buildCrossPageFrontendIndex } from './frontendIntelligenceExtractor.js';
 
 export function detectFileType(fileName, content) {
   const lowerName = (fileName || '').toLowerCase();
@@ -1212,9 +1213,40 @@ export function analyzeFullStackFiles(fileList = []) {
   const siteBlueprint = extractWebsiteBlueprint(fileList, result.archetype, detectedSiteTitle);
   result.siteBlueprint = siteBlueprint;
 
-  // Merge customer-facing workflow/form FAQs into combinedKnowledge
+  // Whole-Website Frontend Intelligence Extraction (KPIs, Stats, Charts, Report Tables & Cross-Page Summaries)
+  const frontendIntelligence = buildCrossPageFrontendIndex(fileList, siteBlueprint.routes || []);
+  result.frontendIntelligence = frontendIntelligence;
+  siteBlueprint.frontendIndex = {
+    pages: frontendIntelligence.pages.slice(0, 15),
+    metrics: frontendIntelligence.metrics.slice(0, 30),
+    charts: frontendIntelligence.charts.slice(0, 10).map(c => ({
+      title: c.title,
+      points: (c.points || []).slice(0, 12),
+      min: c.min,
+      max: c.max,
+      trend: c.trend,
+      unit: c.unit || '',
+      summary: c.summary,
+      pageLabel: c.pageLabel,
+      pagePath: c.pagePath
+    })),
+    reportTables: frontendIntelligence.reportTables.slice(0, 8).map(t => ({
+      title: t.title,
+      headers: t.headers,
+      rowCount: t.rowCount,
+      rows: (t.rows || []).slice(0, 12),
+      summary: t.summary,
+      pageLabel: t.pageLabel,
+      pagePath: t.pagePath
+    }))
+  };
+
+  // Merge customer-facing workflow/form FAQs & frontend KPI/chart FAQs into combinedKnowledge
   if (Array.isArray(siteBlueprint.workflowFaqs) && siteBlueprint.workflowFaqs.length > 0) {
     result.combinedKnowledge.push(...siteBlueprint.workflowFaqs);
+  }
+  if (Array.isArray(frontendIntelligence.faqs) && frontendIntelligence.faqs.length > 0) {
+    result.combinedKnowledge.push(...frontendIntelligence.faqs);
   }
 
   // Strictly filter combinedKnowledge for customer safety

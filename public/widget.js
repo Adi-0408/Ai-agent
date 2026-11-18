@@ -1785,6 +1785,7 @@
       'price', 'prices', 'pricing', 'fee', 'fees', 'cost', 'costs', 'rate', 'rates', 'charge', 'charges', 'structure',
       'tuition', 'pay', 'payment', 'money', 'budget', 'rent', 'tariff', 'mrp', 'amount', 'discount', 'expensive', 'cheap', 'cheapest', 'much',
       'compare', 'comparison', 'versus', 'difference', 'differences', 'better', 'lowest', 'affordable', 'highest', 'costliest', 'under', 'below', 'above', 'between', 'average', 'range', 'total', 'many', 'count',
+      'chart', 'charts', 'graph', 'graphs', 'plot', 'trend', 'trending', 'dashboard', 'report', 'reports', 'summary', 'summarize', 'metric', 'metrics', 'stat', 'stats', 'statistics', 'kpi', 'kpis', 'revenue', 'sales', 'growth', 'analytics', 'region', 'regional', 'quarterly', 'monthly', 'weekly', 'yearly', 'conversion', 'attendance', 'across', 'pages', 'table', 'tables',
       'course', 'courses', 'program', 'programs', 'stream', 'streams', 'class', 'classes', 'subject', 'subjects', 'degree', 'diploma', 'syllabus', 'curriculum', 'college', 'school', 'academy',
       'product', 'products', 'item', 'items', 'shoes', 'sneakers', 'laptop', 'phone', 'watch', 'clothing',
       'medicine', 'medicines', 'drug', 'drugs', 'tablet', 'tablets', 'capsule', 'syrup', 'pharmacy', 'clinic', 'hospital', 'doctor',
@@ -2717,6 +2718,563 @@
       } catch (_) {}
       _pageSnippetCache = { timestamp: now, snippets: snippets.slice(0, 80) };
       return _pageSnippetCache.snippets;
+    }
+
+    // --- WHOLE-WEBSITE LIVE FRONTEND DATA EXTRACTOR, DYNAMIC DOM/SPA OBSERVER & CROSS-PAGE ENGINE ---
+    let _frontendDomVersion = 0;
+    let _frontendSnapshotCache = { timestamp: 0, domVersion: -1, snapshot: null };
+    let _dynamicObserverInitialized = false;
+
+    function invalidateFrontendCaches() {
+      _frontendDomVersion++;
+      _frontendSnapshotCache = { timestamp: 0, domVersion: -1, snapshot: null };
+      _pageSnippetCache = { timestamp: 0, snippets: [] };
+      if (typeof _catalogCache !== 'undefined') {
+        _catalogCache = { timestamp: 0, items: [] };
+      }
+    }
+
+    function initDynamicFrontendObserver() {
+      if (_dynamicObserverInitialized || typeof document === 'undefined' || !document.body) return;
+      _dynamicObserverInitialized = true;
+      let debounceTimer = null;
+      const scheduleInvalidate = () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          invalidateFrontendCaches();
+          try { extractLiveFrontendSnapshot(true); } catch (_) {}
+        }, 200);
+      };
+
+      try {
+        if (typeof MutationObserver !== 'undefined') {
+          const obs = new MutationObserver((mutations) => {
+            for (const mut of mutations) {
+              const tgt = mut.target;
+              if (tgt && tgt.nodeType === 1 && tgt.closest && tgt.closest('#voice-helpdesk-root')) continue;
+              if (tgt && tgt.parentElement && tgt.parentElement.closest && tgt.parentElement.closest('#voice-helpdesk-root')) continue;
+              scheduleInvalidate();
+              break;
+            }
+          });
+          obs.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['aria-valuenow', 'aria-selected', 'data-value', 'data-kpi', 'data-metric', 'class'] });
+        }
+      } catch (_) {}
+
+      try {
+        if (typeof window !== 'undefined') {
+          window.addEventListener('popstate', scheduleInvalidate);
+          window.addEventListener('hashchange', scheduleInvalidate);
+          if (window.history && typeof window.history.pushState === 'function' && !window.history.__vhdWrapped) {
+            const origPush = window.history.pushState.bind(window.history);
+            const origReplace = window.history.replaceState.bind(window.history);
+            window.history.pushState = function (...args) {
+              const r = origPush(...args);
+              scheduleInvalidate();
+              return r;
+            };
+            window.history.replaceState = function (...args) {
+              const r = origReplace(...args);
+              scheduleInvalidate();
+              return r;
+            };
+            window.history.__vhdWrapped = true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    function summarizeLiveChartSeries(title, labels = [], values = [], unit = '') {
+      const cleanPoints = [];
+      const len = Math.min(labels.length, values.length);
+      for (let i = 0; i < len; i++) {
+        const num = Number(values[i]);
+        if (isFinite(num)) cleanPoints.push({ label: String(labels[i]).trim(), value: num });
+      }
+      if (cleanPoints.length === 0) return null;
+      let minPt = cleanPoints[0], maxPt = cleanPoints[0], total = 0;
+      for (const pt of cleanPoints) {
+        total += pt.value;
+        if (pt.value < minPt.value) minPt = pt;
+        if (pt.value > maxPt.value) maxPt = pt;
+      }
+      const avg = Math.round((total / cleanPoints.length) * 100) / 100;
+      let trend = 'steady';
+      if (cleanPoints.length >= 2) {
+        const first = cleanPoints[0].value, last = cleanPoints[cleanPoints.length - 1].value;
+        if (last > first * 1.03) trend = 'increasing';
+        else if (last < first * 0.97) trend = 'decreasing';
+      }
+      const fmtVal = (v) => {
+        if (unit === '₹' || unit === '$' || unit === '€' || unit === '£') return typeof formatCurrencyAmount === 'function' ? formatCurrencyAmount(v, unit) : `${unit}${v}`;
+        if (unit === '%') return `${v}%`;
+        return unit ? `${v.toLocaleString('en-US')} ${unit}` : v.toLocaleString('en-US');
+      };
+      const preview = cleanPoints.slice(0, 8).map(p => `${p.label}: ${fmtVal(p.value)}`).join(', ');
+      return {
+        title,
+        points: cleanPoints.slice(0, 20),
+        min: minPt,
+        max: maxPt,
+        total: Math.round(total * 100) / 100,
+        average: avg,
+        trend,
+        unit,
+        summary: `${title} shows ${cleanPoints.length} data points (${preview}). The highest is ${maxPt.label} at ${fmtVal(maxPt.value)}, the lowest is ${minPt.label} at ${fmtVal(minPt.value)}, and the overall trend is ${trend}.`
+      };
+    }
+
+    function syncVisitedPageSummaryToSession(snapshot) {
+      if (!snapshot || typeof sessionStorage === 'undefined' || typeof window === 'undefined') return;
+      try {
+        const originKey = `vhd_crosspage_${(window.location && window.location.origin) || 'local'}`;
+        const existing = JSON.parse(sessionStorage.getItem(originKey) || '{}');
+        const pathKey = snapshot.pagePath || '/';
+        existing[pathKey] = {
+          pagePath: pathKey,
+          pageLabel: snapshot.pageLabel || 'Page',
+          summary: snapshot.summary || '',
+          metrics: (snapshot.metrics || []).slice(0, 12),
+          charts: (snapshot.charts || []).slice(0, 4).map(c => ({ title: c.title, min: c.min, max: c.max, trend: c.trend, unit: c.unit, summary: c.summary, points: (c.points || []).slice(0, 8), pageLabel: c.pageLabel, pagePath: c.pagePath })),
+          reportTables: (snapshot.reportTables || []).slice(0, 3).map(t => ({ title: t.title, headers: t.headers, rowCount: t.rowCount, rows: (t.rows || []).slice(0, 10), summary: t.summary, pageLabel: t.pageLabel, pagePath: t.pagePath })),
+          updatedAt: Date.now()
+        };
+        const keys = Object.keys(existing);
+        if (keys.length > 10) {
+          keys.sort((a, b) => (existing[a].updatedAt || 0) - (existing[b].updatedAt || 0));
+          delete existing[keys[0]];
+        }
+        sessionStorage.setItem(originKey, JSON.stringify(existing));
+      } catch (_) {}
+    }
+
+    function getCrossPageFrontendIndex(agentCfg) {
+      const staticIdx = (agentCfg && agentCfg.siteBlueprint && agentCfg.siteBlueprint.frontendIndex) ? agentCfg.siteBlueprint.frontendIndex : null;
+      const pages = [...(Array.isArray(staticIdx?.pages) ? staticIdx.pages : [])];
+      const metrics = [...(Array.isArray(staticIdx?.metrics) ? staticIdx.metrics : [])];
+      const charts = [...(Array.isArray(staticIdx?.charts) ? staticIdx.charts : [])];
+      const reportTables = [...(Array.isArray(staticIdx?.reportTables) ? staticIdx.reportTables : [])];
+
+      try {
+        if (typeof sessionStorage !== 'undefined' && typeof window !== 'undefined') {
+          const originKey = `vhd_crosspage_${(window.location && window.location.origin) || 'local'}`;
+          const visited = JSON.parse(sessionStorage.getItem(originKey) || '{}');
+          for (const v of Object.values(visited)) {
+            if (!v || !v.pagePath) continue;
+            const existingIdx = pages.findIndex(p => p.pagePath === v.pagePath);
+            if (existingIdx >= 0) pages[existingIdx] = { ...pages[existingIdx], ...v };
+            else pages.push(v);
+            if (Array.isArray(v.metrics)) metrics.unshift(...v.metrics);
+            if (Array.isArray(v.charts)) charts.unshift(...v.charts);
+            if (Array.isArray(v.reportTables)) reportTables.unshift(...v.reportTables);
+          }
+        }
+      } catch (_) {}
+
+      return { pages, metrics, charts, reportTables };
+    }
+
+    function extractLiveFrontendSnapshot(forceRefresh = false) {
+      if (typeof document === 'undefined' || !document.body) {
+        return { pagePath: '/', pageLabel: '', activeFilter: '', metrics: [], charts: [], reportTables: [], summary: '' };
+      }
+      const now = Date.now();
+      if (!forceRefresh && _frontendSnapshotCache.snapshot && _frontendSnapshotCache.domVersion === _frontendDomVersion && (now - _frontendSnapshotCache.timestamp < 2500)) {
+        return _frontendSnapshotCache.snapshot;
+      }
+
+      const pagePath = (typeof window !== 'undefined' && window.location && window.location.pathname) ? window.location.pathname : '/';
+      const h1El = document.querySelector('main h1, h1');
+      const pageLabel = (h1El && !h1El.closest('#voice-helpdesk-root') ? (h1El.textContent || '').replace(/\s+/g, ' ').trim() : '') ||
+                        (document.title ? document.title.split(/[|–—:-]/)[0].trim() : 'Current Page');
+
+      const metrics = [];
+      const seenMetric = new Set();
+      const addMetric = (rawLabel, rawValue, rawDelta = '') => {
+        const label = String(rawLabel || '').replace(/[:\-–—]+$/, '').replace(/\s+/g, ' ').trim();
+        const value = String(rawValue || '').replace(/\s+/g, ' ').trim();
+        const delta = String(rawDelta || '').replace(/\s+/g, ' ').trim();
+        if (!label || !value || label.length < 2 || label.length > 65 || value.length > 50) return;
+        if (!/\d/.test(value)) return;
+        if (/^(?:copyright|©|20\d\d|19\d\d|px|rem|em|rgb|rgba)/i.test(value)) return;
+        const k = label.toLowerCase();
+        if (seenMetric.has(k)) return;
+        seenMetric.add(k);
+        metrics.push({ label, value, delta: delta.slice(0, 40), pageLabel, pagePath });
+      };
+
+      const charts = [];
+      const seenChart = new Set();
+      const addChart = (ch) => {
+        if (!ch || !ch.title) return;
+        const k = ch.title.toLowerCase();
+        if (seenChart.has(k)) return;
+        seenChart.add(k);
+        charts.push({ ...ch, pageLabel, pagePath });
+      };
+
+      const reportTables = [];
+      const seenTable = new Set();
+      const addTable = (tb) => {
+        if (!tb || !tb.title) return;
+        const k = tb.title.toLowerCase();
+        if (seenTable.has(k)) return;
+        seenTable.add(k);
+        reportTables.push({ ...tb, pageLabel, pagePath });
+      };
+
+      let activeFilter = '';
+      try {
+        // Active tab or filter indicators
+        const activeTabs = Array.from(document.querySelectorAll('[aria-selected="true"], .tab.active, .filter.active, [data-active-filter]'))
+          .filter(el => !el.closest('#voice-helpdesk-root'))
+          .map(el => (el.getAttribute('data-active-filter') || el.textContent || '').replace(/\s+/g, ' ').trim())
+          .filter(t => t && t.length <= 40);
+        if (activeTabs.length > 0) activeFilter = Array.from(new Set(activeTabs)).slice(0, 3).join(', ');
+
+        // 1A. Host-exposed frontend metrics/charts/reports via window.EchoAIData
+        if (typeof window !== 'undefined' && window.EchoAIData) {
+          const ed = window.EchoAIData;
+          const mSrc = ed.metrics || ed.kpis || ed.stats || ed.summaryMetrics;
+          if (Array.isArray(mSrc)) {
+            mSrc.forEach(m => m && addMetric(m.label || m.name || m.title, m.value, m.delta || m.change || ''));
+          } else if (mSrc && typeof mSrc === 'object') {
+            Object.entries(mSrc).forEach(([k, v]) => {
+              if (typeof v === 'object' && v !== null) addMetric(v.label || k, v.value, v.delta || '');
+              else addMetric(k.replace(/([a-z])([A-Z])/g, '$1 $2'), v);
+            });
+          }
+          if (Array.isArray(ed.charts)) {
+            ed.charts.forEach(c => {
+              if (c && Array.isArray(c.labels) && Array.isArray(c.values)) {
+                const s = summarizeLiveChartSeries(c.title || 'Chart', c.labels, c.values, c.unit || '');
+                if (s) addChart(s);
+              } else if (c && c.summary) {
+                addChart(c);
+              }
+            });
+          }
+        }
+
+        // 1B. Explicit data-kpi / data-metric / data-stat DOM elements
+        document.querySelectorAll('[data-kpi], [data-metric], [data-stat]').forEach(el => {
+          if (el.closest('#voice-helpdesk-root')) return;
+          const lbl = el.getAttribute('data-kpi') || el.getAttribute('data-metric') || el.getAttribute('data-stat');
+          const val = el.getAttribute('data-value') || el.textContent;
+          const delta = el.getAttribute('data-delta') || '';
+          addMetric(lbl, val, delta);
+        });
+
+        // 1C. Semantic KPI / Stat / Metric / Summary / Counter Cards
+        const statCards = document.querySelectorAll('.kpi-card, .stat-card, .metric-card, .summary-card, .analytics-card, .dashboard-card, .counter-card, [class*="kpi"], [class*="stat-card"], [class*="metric-card"], [class*="summary-card"]');
+        statCards.forEach(card => {
+          if (card.closest('#voice-helpdesk-root')) return;
+          const parts = Array.from(card.querySelectorAll('span, p, div, h1, h2, h3, h4, h5, strong, b, small, label'))
+            .filter(el => el.children.length === 0)
+            .map(el => (el.textContent || '').replace(/\s+/g, ' ').trim())
+            .filter(Boolean);
+          if (parts.length >= 2) {
+            const valIdx = parts.findIndex(f => /^(?:₹|\$|€|£|rs\.?\s*)?\d[\d,.]*\s*(?:%|k|m|b|l|cr|lakh|lakhs|crore|\+|\/[a-z]+|hrs?|days?|mins?|users?|students?|orders?)?$/i.test(f));
+            if (valIdx >= 0) {
+              const val = parts[valIdx];
+              const lbl = parts.find((f, idx) => idx !== valIdx && /[a-zA-Z]{2,}/.test(f) && !/^[+\-▲▼]\s*\d/.test(f));
+              const delta = parts.find((f, idx) => idx !== valIdx && f !== lbl && /(?:[+\-▲▼]\s*\d|%|\bvs\b|\bup\b|\bdown\b)/i.test(f)) || '';
+              if (lbl) addMetric(lbl, val, delta);
+            }
+          }
+        });
+
+        // 1D. Progress bars (<progress> / role="progressbar")
+        document.querySelectorAll('progress, [role="progressbar"]').forEach(el => {
+          if (el.closest('#voice-helpdesk-root')) return;
+          const lbl = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+          const val = el.getAttribute('aria-valuenow') || el.getAttribute('value') || '';
+          const max = el.getAttribute('aria-valuemax') || el.getAttribute('max') || '100';
+          if (lbl && val !== '') addMetric(lbl, max === '100' ? `${val}%` : `${val}/${max}`);
+        });
+
+        // 2A. Live Chart.js <canvas> instances & [data-chart] elements
+        document.querySelectorAll('canvas, [data-chart]').forEach((el, idx) => {
+          if (el.closest('#voice-helpdesk-root')) return;
+          // Chart.js v3/v4 live instance inspection
+          try {
+            const chartInst = (typeof window !== 'undefined' && window.Chart && typeof window.Chart.getChart === 'function')
+              ? window.Chart.getChart(el)
+              : (el.__chartjs || null);
+            if (chartInst && chartInst.data && Array.isArray(chartInst.data.labels) && Array.isArray(chartInst.data.datasets)) {
+              const ds = chartInst.data.datasets[0];
+              if (ds && Array.isArray(ds.data)) {
+                const container = el.closest('section, article, figure, .card, div[class*="chart"]');
+                const hEl = container ? container.querySelector('h1, h2, h3, h4, figcaption') : null;
+                const cTitle = ds.label || (hEl ? hEl.textContent.trim() : '') || el.getAttribute('aria-label') || `Chart ${idx + 1}`;
+                const unit = /₹|rs\.?|inr/i.test(cTitle) ? '₹' : (/\$|usd/i.test(cTitle) ? '$' : (/%|rate|percent/i.test(cTitle) ? '%' : ''));
+                const s = summarizeLiveChartSeries(cTitle, chartInst.data.labels, ds.data, unit);
+                if (s) addChart(s);
+              }
+            }
+          } catch (_) {}
+
+          // Declarative data-chart JSON attribute (universal hook for any chart library)
+          const rawJson = el.getAttribute('data-chart');
+          if (rawJson && rawJson.trim().startsWith('{')) {
+            try {
+              const parsed = JSON.parse(rawJson);
+              if (Array.isArray(parsed.labels) && Array.isArray(parsed.values)) {
+                const s = summarizeLiveChartSeries(parsed.title || `Chart ${idx + 1}`, parsed.labels, parsed.values, parsed.unit || '');
+                if (s) addChart(s);
+              }
+            } catch (_) {}
+          }
+        });
+
+        // 2B. SVG / Recharts / Figure Chart Containers
+        document.querySelectorAll('figure, .recharts-wrapper, [class*="chart-container"], [role="img"][aria-label]').forEach(el => {
+          if (el.closest('#voice-helpdesk-root')) return;
+          const figCap = el.querySelector('figcaption');
+          const titleEl = el.querySelector('h2, h3, h4, title');
+          const aria = el.getAttribute('aria-label') || (el.querySelector('svg, canvas')?.getAttribute('aria-label')) || '';
+          const summary = (figCap ? figCap.textContent : (aria || '')).replace(/\s+/g, ' ').trim();
+          const title = (titleEl ? titleEl.textContent : '').replace(/\s+/g, ' ').trim() || summary.slice(0, 60);
+          if (summary && summary.length >= 10 && /chart|graph|trend|report|revenue|sales|growth|rate|percent|\d/i.test(summary)) {
+            addChart({ title, points: [], min: null, max: null, total: null, average: null, trend: 'reported', unit: '', summary });
+          }
+        });
+
+        // 3. Live Visible Analytical / Report Tables (all tables, including non-catalog reports!)
+        document.querySelectorAll('table').forEach((tbl, tIdx) => {
+          if (tbl.closest('#voice-helpdesk-root')) return;
+          const caption = tbl.querySelector('caption');
+          const parentSec = tbl.closest('section, article, .card, div[id], div[class*="section"]');
+          const hEl = parentSec ? parentSec.querySelector('h1, h2, h3, h4') : null;
+          const title = (caption ? caption.textContent : (hEl ? hEl.textContent : '')).replace(/\s+/g, ' ').trim() || `${pageLabel} Table ${tIdx + 1}`;
+          const headers = Array.from(tbl.querySelectorAll('thead th, tr:first-child th')).map(th => (th.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+          const bodyRows = Array.from(tbl.querySelectorAll('tbody tr, tr')).filter(tr => tr.querySelectorAll('td').length >= 2);
+          if (bodyRows.length < 1) return;
+          const parsedRows = bodyRows.slice(0, 20).map(tr => Array.from(tr.querySelectorAll('td')).map(td => (td.textContent || '').replace(/\s+/g, ' ').trim()));
+          const effHeaders = headers.length >= 2 ? headers : parsedRows[0].map((_, i) => `Column ${i + 1}`);
+          const structuredRows = parsedRows.map(cells => {
+            const obj = {};
+            effHeaders.forEach((h, i) => { obj[h] = cells[i] !== undefined ? cells[i] : ''; });
+            return obj;
+          });
+          const preview = parsedRows.slice(0, 4).map(r => `${r[0]}: ${r.slice(1, 3).join(', ')}`).join('; ');
+          addTable({
+            title,
+            headers: effHeaders.slice(0, 8),
+            rowCount: bodyRows.length,
+            rows: structuredRows,
+            summary: `${title} (${bodyRows.length} rows — columns: ${effHeaders.slice(0, 5).join(', ')}): ${preview}.`
+          });
+        });
+      } catch (_) {}
+
+      const sumParts = [];
+      if (activeFilter) sumParts.push(`Active filter: ${activeFilter}.`);
+      if (metrics.length > 0) sumParts.push(`Displayed stats: ${metrics.slice(0, 5).map(m => `${m.label} is ${m.value}${m.delta ? ` (${m.delta})` : ''}`).join(', ')}.`);
+      if (charts.length > 0) sumParts.push(`Charts: ${charts.slice(0, 2).map(c => c.title).join(', ')}.`);
+      if (reportTables.length > 0) sumParts.push(`Tables: ${reportTables.slice(0, 2).map(t => t.title).join(', ')}.`);
+
+      const snapshot = {
+        pagePath,
+        pageLabel,
+        activeFilter,
+        metrics: metrics.slice(0, 30),
+        charts: charts.slice(0, 10),
+        reportTables: reportTables.slice(0, 8),
+        summary: sumParts.join(' ').trim()
+      };
+      _frontendSnapshotCache = { timestamp: now, domVersion: _frontendDomVersion, snapshot };
+      if (metrics.length > 0 || charts.length > 0 || reportTables.length > 0) {
+        syncVisitedPageSummaryToSession(snapshot);
+      }
+      return snapshot;
+    }
+
+    function resolveFrontendDataQuery(query, liveSnapshot = null, crossPageIndex = null, queryLang = 'en-US') {
+      const rawQ = String(query || '').trim();
+      const lower = rawQ.toLowerCase();
+      if (!lower) return null;
+
+      const tokenize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 2 && !NLU_GRAMMAR_STOPWORDS.has(w));
+      const queryToks = tokenize(lower);
+      const genericUiWords = new Set(['what', 'which', 'show', 'tell', 'give', 'check', 'display', 'displayed', 'shown', 'current', 'page', 'website', 'site', 'frontend', 'screen', 'dashboard', 'summary', 'summarize', 'overview', 'report', 'reports', 'chart', 'charts', 'graph', 'graphs', 'table', 'tables', 'stat', 'stats', 'statistics', 'metric', 'metrics', 'data', 'value', 'number', 'total', 'count', 'much', 'many', 'how', 'does', 'say', 'about']);
+      const distinctiveToks = queryToks.filter(t => !genericUiWords.has(t) && !genericUiWords.has(nluStemWord(t)));
+
+      const mergedMetrics = [];
+      const seenM = new Set();
+      for (const mt of [...(liveSnapshot?.metrics || []), ...(crossPageIndex?.metrics || [])]) {
+        if (!mt || !mt.label || !mt.value) continue;
+        const k = `${mt.label.toLowerCase()}::${mt.pagePath || '/'}`;
+        if (seenM.has(k)) continue;
+        seenM.add(k);
+        mergedMetrics.push(mt);
+      }
+
+      const mergedCharts = [];
+      const seenC = new Set();
+      for (const ch of [...(liveSnapshot?.charts || []), ...(crossPageIndex?.charts || [])]) {
+        if (!ch || !ch.title) continue;
+        const k = `${ch.title.toLowerCase()}::${ch.pagePath || '/'}`;
+        if (seenC.has(k)) continue;
+        seenC.add(k);
+        mergedCharts.push(ch);
+      }
+
+      const mergedTables = [];
+      const seenT = new Set();
+      for (const tb of [...(liveSnapshot?.reportTables || []), ...(crossPageIndex?.reportTables || [])]) {
+        if (!tb || !tb.title) continue;
+        const k = `${tb.title.toLowerCase()}::${tb.pagePath || '/'}`;
+        if (seenT.has(k)) continue;
+        seenT.add(k);
+        mergedTables.push(tb);
+      }
+
+      const allPages = [];
+      if (liveSnapshot && liveSnapshot.pageLabel) {
+        allPages.push({ pageLabel: liveSnapshot.pageLabel, pagePath: liveSnapshot.pagePath || '/', summary: liveSnapshot.summary || '', isLiveCurrent: true });
+      }
+      for (const p of (Array.isArray(crossPageIndex?.pages) ? crossPageIndex.pages : [])) {
+        if (p && !allPages.some(x => x.pagePath === p.pagePath)) allPages.push({ ...p, isLiveCurrent: false });
+      }
+
+      if (mergedMetrics.length === 0 && mergedCharts.length === 0 && mergedTables.length === 0 && allPages.length === 0) return null;
+
+      const scoreMatch = (targetText, tokens) => {
+        const tToks = tokenize(targetText);
+        if (tToks.length === 0 || tokens.length === 0) return { score: 0, matched: 0 };
+        let score = 0, matched = 0;
+        for (const qt of tokens) {
+          let best = 0;
+          for (const tt of tToks) {
+            const m = fuzzyTokenMatch(qt, tt);
+            if (m > best) best = m;
+          }
+          if (best >= 3) { score += 16; matched++; }
+          else if (best === 2) { score += 10; matched++; }
+        }
+        return { score, matched };
+      };
+
+      // 1. Chart / Graph Analysis
+      const isChartQuery = /\b(chart|charts|graph|graphs|plot|trend|trending|visualization|bar\s*chart|line\s*chart|pie\s*chart)\b/i.test(lower) || /(चार्ट|ग्राफ|आलेख|ट्रेंड)/i.test(rawQ);
+      if (isChartQuery && mergedCharts.length > 0) {
+        let bestChart = mergedCharts[0], bestSc = -1;
+        if (distinctiveToks.length > 0) {
+          for (const ch of mergedCharts) {
+            const sc = scoreMatch(`${ch.title} ${ch.summary || ''} ${(ch.points || []).map(p => p.label).join(' ')}`, distinctiveToks).score;
+            if (sc > bestSc) { bestSc = sc; bestChart = ch; }
+          }
+        }
+        const fmt = (v, unit) => {
+          if (unit === '₹' || unit === '$' || unit === '€' || unit === '£') return formatCurrencyAmount(v, unit);
+          if (unit === '%') return `${v}%`;
+          return unit ? `${v.toLocaleString('en-US')} ${unit}` : v.toLocaleString('en-US');
+        };
+        let reply = bestChart.summary;
+        if (/\b(highest|maximum|max|peak|top|best)\b/i.test(lower) && bestChart.max) {
+          reply = `In ${bestChart.title}, the highest point is ${bestChart.max.label} at ${fmt(bestChart.max.value, bestChart.unit)} (overall trend is ${bestChart.trend}).`;
+        } else if (/\b(lowest|minimum|min|worst|bottom)\b/i.test(lower) && bestChart.min) {
+          reply = `In ${bestChart.title}, the lowest point is ${bestChart.min.label} at ${fmt(bestChart.min.value, bestChart.unit)} (overall trend is ${bestChart.trend}).`;
+        } else if (/\b(trend|trending|increasing|decreasing|growing|going\s+up|going\s+down|direction)\b/i.test(lower) && bestChart.points && bestChart.points.length >= 2) {
+          const first = bestChart.points[0], last = bestChart.points[bestChart.points.length - 1];
+          reply = `${bestChart.title} is ${bestChart.trend}, moving from ${first.label} (${fmt(first.value, bestChart.unit)}) to ${last.label} (${fmt(last.value, bestChart.unit)}), with a peak at ${bestChart.max.label} (${fmt(bestChart.max.value, bestChart.unit)}).`;
+        }
+        return { status: 'FOUND_IN_FRONTEND', matchType: 'chart', summaryText: reply, matchedMetrics: [], matchedCharts: [bestChart], matchedTables: [], pageRefs: [bestChart.pageLabel || 'Current Page'] };
+      }
+
+      // 2. Specific Report Table Row FIRST when query explicitly references a report/table/region OR matches multiple row tokens
+      const isReportTableQ = /\b(report|table|breakdown|regional|region|quarterly|monthly|results?|attendance|summary\s+table)\b/i.test(lower);
+      let bestRowHit = null, bestRowSc = 0;
+      if (mergedTables.length > 0 && distinctiveToks.length > 0) {
+        for (const tb of mergedTables) {
+          const titleRes = scoreMatch(`${tb.title} ${(tb.headers || []).join(' ')}`, distinctiveToks);
+          for (const row of (tb.rows || [])) {
+            const rowTxt = Object.entries(row).map(([k, v]) => `${k} ${v}`).join(' ');
+            const rowRes = scoreMatch(rowTxt, distinctiveToks);
+            const totalSc = rowRes.score * 1.5 + titleRes.score * 0.6;
+            if (rowRes.matched >= 1 && totalSc > bestRowSc) { bestRowSc = totalSc; bestRowHit = { table: tb, row, matched: rowRes.matched }; }
+          }
+        }
+      }
+      if (bestRowHit && ((isReportTableQ && bestRowSc >= 16) || (bestRowHit.matched >= 2 && bestRowSc >= 32))) {
+        const rowDesc = Object.entries(bestRowHit.row).map(([k, v]) => `${k}: ${v}`).join(', ');
+        const pNote = bestRowHit.table.pageLabel ? ` from ${bestRowHit.table.title} (${bestRowHit.table.pageLabel})` : ` from ${bestRowHit.table.title}`;
+        return { status: 'FOUND_IN_FRONTEND', matchType: 'report_table_row', summaryText: `Here is the matching record${pNote}: ${rowDesc}. Let me know if you would like the full table summary!`, matchedMetrics: [], matchedCharts: [], matchedTables: [bestRowHit.table], pageRefs: [bestRowHit.table.pageLabel || 'Current Page'] };
+      }
+
+      // 3. Specific KPI / Statistic Lookup
+      if (mergedMetrics.length > 0 && queryToks.length > 0) {
+        const scoredMetrics = mergedMetrics.map(mt => {
+          const lblL = mt.label.toLowerCase();
+          let bonus = (lower.includes(lblL) && lblL.length >= 4) ? 40 : 0;
+          const distRes = distinctiveToks.length > 0 ? scoreMatch(mt.label, distinctiveToks) : { score: 0, matched: 0 };
+          const allRes = scoreMatch(mt.label, queryToks);
+          const coverage = distinctiveToks.length > 0 ? distRes.matched / distinctiveToks.length : 0;
+          return { mt, score: bonus + distRes.score * 1.5 + allRes.score * 0.5, distMatched: distRes.matched, coverage };
+        }).sort((a, b) => b.score - a.score);
+
+        const topM = scoredMetrics[0];
+        if (topM && (topM.score >= 30 || (topM.distMatched >= 1 && topM.coverage >= 0.5 && topM.score >= 22))) {
+          const strong = scoredMetrics.filter(x => x.score >= Math.max(22, topM.score * 0.7)).slice(0, 3);
+          const details = strong.map(x => {
+            const pNote = x.mt.pageLabel && x.mt.pagePath !== (liveSnapshot?.pagePath || '/') ? ` (on ${x.mt.pageLabel})` : '';
+            return `${x.mt.label} is ${x.mt.value}${x.mt.delta ? ` (${x.mt.delta})` : ''}${pNote}`;
+          });
+          const filterNote = liveSnapshot?.activeFilter ? ` (active view: ${liveSnapshot.activeFilter})` : '';
+          const reply = queryLang === 'mr-IN'
+            ? `सध्या वेबसाइटवर दिसणारी माहिती${filterNote}: ${details.join('; ')}.`
+            : queryLang === 'hi-IN'
+              ? `वर्तमान में वेबसाइट पर दिखाई गई जानकारी${filterNote}: ${details.join('; ')}।`
+              : `Based on the live website data${filterNote}, ${details.join('; ')}. Please let me know if you would like a summary of any other metrics!`;
+          return { status: 'FOUND_IN_FRONTEND', matchType: 'metric', summaryText: reply, matchedMetrics: strong.map(x => x.mt), matchedCharts: [], matchedTables: [], pageRefs: Array.from(new Set(strong.map(x => x.mt.pageLabel || 'Current Page'))) };
+        }
+      }
+
+      // 3B. Secondary Report Table Row / General Table Summary Lookup
+      if (mergedTables.length > 0) {
+        if (bestRowHit && bestRowSc >= 24) {
+          const rowDesc = Object.entries(bestRowHit.row).map(([k, v]) => `${k}: ${v}`).join(', ');
+          const pNote = bestRowHit.table.pageLabel ? ` from ${bestRowHit.table.title} (${bestRowHit.table.pageLabel})` : ` from ${bestRowHit.table.title}`;
+          return { status: 'FOUND_IN_FRONTEND', matchType: 'report_table_row', summaryText: `Here is the matching record${pNote}: ${rowDesc}. Let me know if you would like the full table summary!`, matchedMetrics: [], matchedCharts: [], matchedTables: [bestRowHit.table], pageRefs: [bestRowHit.table.pageLabel || 'Current Page'] };
+        }
+        if (isReportTableQ) {
+          let bestTbl = mergedTables[0], bestSc = -1;
+          if (distinctiveToks.length > 0) {
+            for (const tb of mergedTables) {
+              const sc = scoreMatch(`${tb.title} ${(tb.headers || []).join(' ')} ${tb.summary}`, distinctiveToks).score;
+              if (sc > bestSc) { bestSc = sc; bestTbl = tb; }
+            }
+          }
+          return { status: 'FOUND_IN_FRONTEND', matchType: 'report_table', summaryText: bestTbl.summary, matchedMetrics: [], matchedCharts: [], matchedTables: [bestTbl], pageRefs: [bestTbl.pageLabel || 'Current Page'] };
+        }
+      }
+
+      // 4. Cross-Page Website Summary
+      if (/\b(across\s+(?:all\s+)?pages|other\s+pages|all\s+pages|on\s+the\s+[a-z0-9-]+\s+page|from\s+the\s+[a-z0-9-]+\s+page|dashboard\s+and\s+report|connect|overall\s+website|entire\s+website|whole\s+website)\b/i.test(lower) && allPages.length > 0) {
+        const matchedPages = allPages.filter(p => distinctiveToks.length === 0 || scoreMatch(`${p.pageLabel} ${p.pagePath} ${p.summary}`, distinctiveToks).score >= 10);
+        const targetPages = matchedPages.length > 0 ? matchedPages.slice(0, 3) : allPages.slice(0, 3);
+        const summaryText = `Here is the connected overview across the website: ${targetPages.map(p => `${p.pageLabel} (${p.pagePath}): ${p.summary}`).join(' ')}`;
+        return { status: 'FOUND_IN_FRONTEND', matchType: 'cross_page_summary', summaryText, matchedMetrics: mergedMetrics.slice(0, 6), matchedCharts: mergedCharts.slice(0, 3), matchedTables: mergedTables.slice(0, 2), pageRefs: targetPages.map(p => p.pageLabel) };
+      }
+
+      // 5. Explicit Page / Dashboard Summary
+      if (/\b(summarize|summary|overview|highlights?|key\s+(?:stats?|metrics?|numbers?|figures?|findings?)|what\s+(?:is|are)\s+(?:shown|displayed)\s+(?:here|on\s+this\s+page|on\s+the\s+dashboard|on\s+the\s+screen)|dashboard\s+(?:summary|stats?|metrics?|overview|report))\b/i.test(lower) ||
+          /(सारांश|आढावा|डॅशबोर्ड|डैशबोर्ड|आंकड़े)/i.test(rawQ)) {
+        const parts = [];
+        const activeLbl = liveSnapshot?.pageLabel || allPages[0]?.pageLabel || 'this page';
+        if (liveSnapshot?.activeFilter) parts.push(`Active view: ${liveSnapshot.activeFilter}.`);
+        if (mergedMetrics.length > 0) {
+          parts.push(`Key metrics on ${activeLbl} include ${mergedMetrics.slice(0, 5).map(m => `${m.label}: ${m.value}${m.delta ? ` (${m.delta})` : ''}`).join(', ')}.`);
+        }
+        if (mergedCharts.length > 0) parts.push(mergedCharts[0].summary);
+        if (mergedTables.length > 0 && parts.length < 3) parts.push(mergedTables[0].summary);
+        if (parts.length === 0 && allPages[0]?.summary) parts.push(allPages[0].summary);
+        if (parts.length > 0) {
+          return { status: 'FOUND_IN_FRONTEND', matchType: 'page_summary', summaryText: parts.join(' '), matchedMetrics: mergedMetrics.slice(0, 6), matchedCharts: mergedCharts.slice(0, 3), matchedTables: mergedTables.slice(0, 2), pageRefs: [activeLbl] };
+        }
+      }
+      return null;
     }
 
     const UNIVERSAL_STOPWORDS = new Set([
@@ -4019,6 +4577,29 @@
         }
       }
 
+      // 0.18 Explicit Live Frontend Dashboard, Chart, Graph, Report, Summary & Cross-Page Query Resolver
+      // Prevents dashboard/chart/report questions from failing when the info is displayed on the frontend rather than stored in the database!
+      const isExplicitFrontendQuery = /\b(chart|charts|graph|graphs|trend|trending|dashboard|summarize|summary|overview|report|reports|kpi|metric|metrics|stat|stats|statistics|across\s+(?:all\s+)?pages|on\s+the\s+[a-z0-9-]+\s+page|displayed\s+here|shown\s+here)\b/i.test(effectiveQuery) ||
+                                      /(चार्ट|ग्राफ|आलेख|सारांश|आढावा|डॅशबोर्ड|डैशबोर्ड|आंकड़े)/i.test(query);
+      if (isExplicitFrontendQuery && typeof resolveFrontendDataQuery === 'function') {
+        const liveSnap = typeof extractLiveFrontendSnapshot === 'function' ? extractLiveFrontendSnapshot() : null;
+        const crossIdx = typeof getCrossPageFrontendIndex === 'function' ? getCrossPageFrontendIndex(agentConfig) : null;
+        const qLang = typeof detectTextLanguage === 'function' ? detectTextLanguage(query) : 'en-US';
+        const feHit = resolveFrontendDataQuery(effectiveQuery, liveSnap, crossIdx, qLang) ||
+                      resolveFrontendDataQuery(strippedQuery, liveSnap, crossIdx, qLang);
+        if (feHit) {
+          if (context) {
+            context.activeTopic = feHit.matchType || 'frontend_data';
+            context.fallbackCount = 0;
+          }
+          return {
+            status: 'FOUND_IN_FRONTEND',
+            item: feHit.matchType || 'frontend',
+            data: feHit
+          };
+        }
+      }
+
       // 0.20 Deterministic Catalog Data Analysis BEFORE Single-Item Lookup
       // Handles: Comparisons ("compare Science and Commerce"), Superlatives ("cheapest", "most expensive", "highest stock"),
       // Budget Filters ("under ₹20,000", "between 100 and 500"), Stock Filters ("out of stock"), and Counts/Price Range!
@@ -4355,6 +4936,28 @@
         }
       }
 
+      // 3.9 Whole-Website Frontend Data Fallback BEFORE returning ITEM_NOT_FOUND!
+      // Ensures KPIs, displayed statistics, charts, report tables, and cross-page frontend metrics
+      // are answered directly instead of failing with a false database "not available" error!
+      if (typeof resolveFrontendDataQuery === 'function') {
+        const liveSnap = typeof extractLiveFrontendSnapshot === 'function' ? extractLiveFrontendSnapshot() : null;
+        const crossIdx = typeof getCrossPageFrontendIndex === 'function' ? getCrossPageFrontendIndex(agentConfig) : null;
+        const qLang = typeof detectTextLanguage === 'function' ? detectTextLanguage(query) : 'en-US';
+        const feBeforeNotFound = resolveFrontendDataQuery(effectiveQuery, liveSnap, crossIdx, qLang) ||
+                                 resolveFrontendDataQuery(strippedQuery, liveSnap, crossIdx, qLang);
+        if (feBeforeNotFound) {
+          if (context) {
+            context.activeTopic = feBeforeNotFound.matchType || 'frontend_data';
+            context.fallbackCount = 0;
+          }
+          return {
+            status: 'FOUND_IN_FRONTEND',
+            item: feBeforeNotFound.matchType || 'frontend',
+            data: feBeforeNotFound
+          };
+        }
+      }
+
       // 4. Check if query is looking for a specific item that is genuinely NOT in the database
       // NEVER trigger ITEM_NOT_FOUND for general policy/process questions ("eligibility", "return policy", "delivery", "scholarship") or affirmations ("yes", "more")
       const lower = effectiveQuery.toLowerCase();
@@ -4430,7 +5033,13 @@
         : '';
 
       let bridgeBlock = '';
-      if (bridgeResult && bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data) {
+      if (bridgeResult && bridgeResult.status === 'FOUND_IN_FRONTEND' && bridgeResult.data) {
+        const feData = bridgeResult.data;
+        bridgeBlock = `STATUS: FOUND_IN_FRONTEND
+MATCH_TYPE: ${feData.matchType || 'frontend_data'}
+PAGES: ${(feData.pageRefs || []).join(', ') || 'Current Page'}
+VERIFIED_FRONTEND_SUMMARY: ${feData.summaryText || ''}`;
+      } else if (bridgeResult && bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data) {
         const aData = bridgeResult.data;
         bridgeBlock = `STATUS: ANALYTICAL_RESULT
 ANALYSIS_TYPE: ${aData.analysisType || 'analysis'}
@@ -4557,6 +5166,45 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         ? `\n[WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT]\n${blueprintLines.join('\n')}\n`
         : '';
 
+      // Whole-Website Live Frontend Data (KPIs, Charts, Report Tables, Active Filter) + Cross-Page Insights
+      const liveFrontendSnap = (typeof extractLiveFrontendSnapshot === 'function') ? extractLiveFrontendSnapshot() : null;
+      const crossPageIdx = (typeof getCrossPageFrontendIndex === 'function') ? getCrossPageFrontendIndex(agentConfig) : null;
+      const fePromptLines = [];
+      if (liveFrontendSnap) {
+        if (liveFrontendSnap.pageLabel) fePromptLines.push(`CURRENT_PAGE: ${liveFrontendSnap.pageLabel} (${liveFrontendSnap.pagePath || '/'})`);
+        if (liveFrontendSnap.activeFilter) fePromptLines.push(`ACTIVE_VIEW_FILTER: ${liveFrontendSnap.activeFilter}`);
+        if (Array.isArray(liveFrontendSnap.metrics) && liveFrontendSnap.metrics.length > 0) {
+          fePromptLines.push(`LIVE_KPIS_AND_STATS: ${liveFrontendSnap.metrics.slice(0, 10).map(m => `${m.label}: ${m.value}${m.delta ? ` (${m.delta})` : ''}`).join('; ')}`);
+        }
+        if (Array.isArray(liveFrontendSnap.charts) && liveFrontendSnap.charts.length > 0) {
+          fePromptLines.push(`LIVE_CHARTS: ${liveFrontendSnap.charts.slice(0, 4).map(c => c.summary || c.title).join(' | ')}`);
+        }
+        if (Array.isArray(liveFrontendSnap.reportTables) && liveFrontendSnap.reportTables.length > 0) {
+          fePromptLines.push(`LIVE_REPORT_TABLES: ${liveFrontendSnap.reportTables.slice(0, 3).map(t => t.summary || t.title).join(' | ')}`);
+        }
+      }
+      const liveFrontendBlock = fePromptLines.length > 0
+        ? `\n[LIVE_FRONTEND_DASHBOARD_AND_PAGE_DATA]\n${fePromptLines.join('\n')}\n`
+        : '';
+
+      const crossLines = [];
+      if (crossPageIdx) {
+        if (Array.isArray(crossPageIdx.pages) && crossPageIdx.pages.length > 0) {
+          crossLines.push(`WEBSITE_PAGES: ${crossPageIdx.pages.slice(0, 8).map(p => `${p.pageLabel} (${p.pagePath}): ${String(p.summary || '').slice(0, 130)}`).join(' || ')}`);
+        }
+        const otherMetrics = (crossPageIdx.metrics || []).filter(m => !liveFrontendSnap || m.pagePath !== liveFrontendSnap.pagePath).slice(0, 8);
+        if (otherMetrics.length > 0) {
+          crossLines.push(`OTHER_PAGES_STATS: ${otherMetrics.map(m => `${m.label}: ${m.value} [${m.pageLabel}]`).join('; ')}`);
+        }
+        const otherCharts = (crossPageIdx.charts || []).filter(c => !liveFrontendSnap || c.pagePath !== liveFrontendSnap.pagePath).slice(0, 3);
+        if (otherCharts.length > 0) {
+          crossLines.push(`OTHER_PAGES_CHARTS: ${otherCharts.map(c => `${c.title} [${c.pageLabel}]: ${c.summary}`).join(' | ')}`);
+        }
+      }
+      const crossPageBlock = crossLines.length > 0
+        ? `\n[CROSS_PAGE_WEBSITE_INSIGHTS]\n${crossLines.join('\n')}\n`
+        : '';
+
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
@@ -4565,9 +5213,10 @@ CRITICAL RULES:
 - STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
 - CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
 - EXACT FORM & SECTION REDIRECTION: When [LIVE_BRIDGE_DATA] has STATUS: NAVIGATE_SECTION, confirm you are taking the visitor directly to that exact form, section, or page (mention key fields if it is a form). When asked how to apply/order/book/register, guide them using [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT].
-- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [ACTIVE_CONVERSATION_CONTEXT], [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT], [LIVE_HOST_WEBSITE_CONTEXT], [RELEVANT_LIVE_PAGE_FACTS], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
-- DETERMINISTIC DATA ANALYSIS: If [LIVE_BRIDGE_DATA] has STATUS: ANALYTICAL_RESULT (comparisons, cheapest/most expensive, budget filters, stock filters, counts), use the exact VERIFIED_SUMMARY and COMPUTED_DATA numbers without altering or inventing figures.
-- HONEST UNCERTAINTY PROTOCOL (CRITICAL): If the visitor asks for a specific fact, number, person, branch, date, or policy that is NOT explicitly present in your provided context, NEVER guess, assume, or fabricate an answer. Politely state that you do not have that exact detail listed on the website right now, and immediately offer verified contact details or related topics you can help with.
+- DATABASE + FRONTEND UNIFIED REASONING: Use BOTH database records (${catalogSectionLabel}) AND frontend-displayed data ([LIVE_FRONTEND_DASHBOARD_AND_PAGE_DATA], [CROSS_PAGE_WEBSITE_INSIGHTS], [RELEVANT_LIVE_PAGE_FACTS]) to answer questions. NEVER say information is unavailable just because it is missing from the database when it is displayed on the frontend (KPIs, summaries, charts, graphs, report tables, or other pages)!
+- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [LIVE_FRONTEND_DASHBOARD_AND_PAGE_DATA], [CROSS_PAGE_WEBSITE_INSIGHTS], [ACTIVE_CONVERSATION_CONTEXT], [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT], [LIVE_HOST_WEBSITE_CONTEXT], [RELEVANT_LIVE_PAGE_FACTS], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
+- DETERMINISTIC DATA ANALYSIS: If [LIVE_BRIDGE_DATA] has STATUS: ANALYTICAL_RESULT or STATUS: FOUND_IN_FRONTEND, report the exact VERIFIED_SUMMARY / VERIFIED_FRONTEND_SUMMARY and COMPUTED_DATA numbers without altering or inventing figures.
+- HONEST UNCERTAINTY PROTOCOL (CRITICAL): If the visitor asks for a specific fact, number, person, branch, date, or policy that is NOT explicitly present in your provided database, frontend, cross-page, or FAQ context, NEVER guess, assume, or fabricate an answer. Politely state that you do not have that exact detail listed on the website right now, and immediately offer verified contact details or related topics you can help with.
 - ANTI-REPETITION: Never repeat the exact same answer from a previous turn; clarify, provide new verified details, or offer concrete next steps.
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
 - If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items concisely in 1-2 sentences and confirm you have opened them.
@@ -4577,7 +5226,7 @@ CRITICAL RULES:
 
 ${liveDbBlock}[LIVE_BRIDGE_DATA]
 ${bridgeBlock}
-${activeContextBlock}${blueprintBlock}
+${activeContextBlock}${blueprintBlock}${liveFrontendBlock}${crossPageBlock}
 ${catalogSectionLabel}
 ${catalogSummary || 'Catalog empty or not loaded.'}
 
@@ -5031,8 +5680,15 @@ ${cleanFaqBlock}`;
         context.lastUserTopic = meaningfulWords.slice(0, 6).join(' ');
       }
 
-      // 1. Direct Catalog List, Pricing Overview & Analytical Query Handlers
+      // 1. Direct Catalog List, Pricing Overview, Live Frontend Data & Analytical Query Handlers
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig, context);
+      if (bridge && bridge.status === 'FOUND_IN_FRONTEND' && bridge.data && bridge.data.summaryText) {
+        if (context) {
+          context.activeTopic = bridge.data.matchType || 'frontend_data';
+          context.fallbackCount = 0;
+        }
+        return bridge.data.summaryText;
+      }
       if (bridge && bridge.status === 'ANALYTICAL_RESULT' && bridge.data && bridge.data.summaryText) {
         if (context) {
           context.activeTopic = bridge.data.analysisType || 'analytics';
@@ -5336,8 +5992,21 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // 6. Semantic Knowledge Base, On-Page FAQs & Live Host Page Content Snippet Matching
+      // 6. Semantic Knowledge Base, On-Page FAQs, Live Frontend Data & Host Page Content Snippet Matching
       const hostKnowledge = extractHostPageKnowledge();
+      if (typeof resolveFrontendDataQuery === 'function') {
+        const liveSnapForLocal = typeof extractLiveFrontendSnapshot === 'function' ? extractLiveFrontendSnapshot() : null;
+        const crossIdxForLocal = typeof getCrossPageFrontendIndex === 'function' ? getCrossPageFrontendIndex(agentConfig) : null;
+        const feLocalHit = resolveFrontendDataQuery(effectiveText, liveSnapForLocal, crossIdxForLocal, queryLang) ||
+                           resolveFrontendDataQuery(text, liveSnapForLocal, crossIdxForLocal, queryLang);
+        if (feLocalHit && feLocalHit.summaryText) {
+          if (context) {
+            context.activeTopic = feLocalHit.matchType || 'frontend_data';
+            context.fallbackCount = 0;
+          }
+          return feLocalHit.summaryText;
+        }
+      }
       const groundedHit = findGroundedKbOrSnippet();
       if (groundedHit) {
         if (context) {
@@ -5514,6 +6183,9 @@ ${cleanFaqBlock}`;
     }
 
     // Maintain multi-turn conversation memory & session logs
+    if (typeof initDynamicFrontendObserver === 'function') {
+      initDynamicFrontendObserver();
+    }
     const conversationHistory = [];
     const conversationContext = {
       activeItem: null,
