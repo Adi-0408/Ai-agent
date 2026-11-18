@@ -579,10 +579,11 @@ export function isValidCustomerCatalogName(rawName, record = null) {
   const name = String(rawName || '').trim();
   if (!name || name.length < 2 || name.length > 75) return false;
 
-  // 1. Reject leading code punctuation, markdown bullets (-, –, —, •), spread operators (...data), comments (// /* *), brackets, quotes
-  if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|-|–|—|•|▪|▸|►|◦|·|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
+  // 1. Reject leading code punctuation, single/triple dots (.replace, ...data), markdown bullets (-, –, —, •), comments (// /* *), brackets, quotes
+  if (/^\s*(\.|\/\/|\/\*|\*\/|\*|-|–|—|•|▪|▸|►|◦|·|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
 
-  // 2. Reject code comments or template/operator syntax anywhere
+  // 2. Reject code comments, JS/Python method names, or template/operator syntax anywhere
+  if (/^\.?(replace|replaceAll|trim|split|slice|splice|join|map|filter|reduce|forEach|find|some|every|includes|indexOf|match|matchAll|test|exec|push|pop|shift|unshift|concat|sort|reverse|keys|values|entries|assign|stringify|parse|toLowerCase|toUpperCase|startsWith|endsWith|substring|substr|charAt|toString|valueOf|then|catch|finally|json|text|blob|arrayBuffer|preventDefault|stopPropagation|addEventListener|querySelector|querySelectorAll|getElementById|appendChild|removeChild|setAttribute|getAttribute|setItem|getItem|removeItem)$/i.test(name)) return false;
   if (name.includes('//') || name.includes('/*') || name.includes('*/')) return false;
   if (name.includes('=>') || name.includes('();') || name.includes('()') || name.includes('===') || name.includes('!==') || name.includes('==') || name.includes('!=') || name.includes('&&') || name.includes('||') || name.includes('+=') || name.includes('-=') || name.includes('??') || name.includes('?.') || name.includes('++') || name.includes('${')) return false;
   if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('[') || name.includes(']') || name.includes('?') || /CREATE\s+TABLE|INSERT\s+INTO|SELECT\s+.*\s+FROM/i.test(name)) return false;

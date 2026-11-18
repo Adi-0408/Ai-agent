@@ -9,6 +9,28 @@
  *   5. Quick-Action Workflow Chips & Customer-Facing Workflow FAQs
  */
 
+function trimToCompleteSentence(rawText = '', maxChars = 340) {
+  const clean = String(rawText || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  if (clean.length <= maxChars) {
+    return /[.!?।]$/.test(clean) ? clean : `${clean}.`;
+  }
+  const sliced = clean.slice(0, maxChars);
+  const lastEnd = Math.max(sliced.lastIndexOf('. '), sliced.lastIndexOf('! '), sliced.lastIndexOf('? '), sliced.lastIndexOf('। '));
+  if (lastEnd >= 45) {
+    return sliced.slice(0, lastEnd + 1).trim();
+  }
+  const lastDot = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'));
+  if (lastDot >= 45) {
+    return sliced.slice(0, lastDot + 1).trim();
+  }
+  const lastSpace = sliced.lastIndexOf(' ');
+  const wordTrimmed = (lastSpace > 40 ? sliced.slice(0, lastSpace) : sliced)
+    .replace(/\b(?:with|for|to|and|or|of|in|at|by|from|the|a|an|as|on|into|through|including)\s*$/i, '')
+    .trim();
+  return /[.!?।]$/.test(wordTrimmed) ? wordTrimmed : `${wordTrimmed}.`;
+}
+
 function stripTags(html = '') {
   return String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -168,8 +190,8 @@ function extractSections(frontendFiles, routes = []) {
       href: fullHref,
       label: finalLabel,
       page: page || 'index.html',
-      excerpt: excerpt.slice(0, 140),
-      keywords: extractKeywords(cleanId, finalLabel, excerpt.slice(0, 80))
+      excerpt: trimToCompleteSentence(excerpt, 340),
+      keywords: extractKeywords(cleanId, finalLabel, excerpt.slice(0, 100))
     });
   };
 
@@ -474,23 +496,20 @@ export function generateWorkflowFaqs(blueprint, brandName = 'our website') {
 
   for (const form of (blueprint.forms || []).slice(0, 6)) {
     const fieldText = form.fields.length > 0
-      ? ` You will need to fill in: ${form.fields.slice(0, 6).join(', ')}.`
+      ? ` You will simply need to fill in ${form.fields.slice(0, 5).join(', ')}.`
       : '';
-    const locText = form.href
-      ? ` I can take you straight to the ${form.title} (${form.href}).`
-      : (form.path ? ` It is located on ${form.path}.` : '');
-
     faqs.push({
       q: `How do I fill or find the ${form.title}?`,
-      a: `To complete the ${form.title}, fill out the required fields and click "${form.submitLabel}".${fieldText}${locText}`
+      a: `I would be happy to guide you! To complete the ${form.title}, please fill in the required details and click "${form.submitLabel}".${fieldText} Just ask me to open the form and I will take you straight there.`
     });
   }
 
   for (const sec of (blueprint.sections || []).slice(0, 6)) {
     if (sec.excerpt && sec.excerpt.length >= 20) {
+      const cleanExcerpt = trimToCompleteSentence(sec.excerpt, 320);
       faqs.push({
-        q: `Where is the ${sec.label} section?`,
-        a: `The ${sec.label} section is available on this website (${sec.href}). ${sec.excerpt}`
+        q: `Tell me about ${sec.label}`,
+        a: `${sec.label}: ${cleanExcerpt}`
       });
     }
   }

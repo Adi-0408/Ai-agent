@@ -31,6 +31,7 @@ const runtimeFn = new Function('__AGENT_CONFIG__', `
   ${widgetSrc.slice(engStart, engEnd)}
   return {
     isValidCustomerCatalogName,
+    polishSpokenReply,
     getAllCatalogItems,
     resolveDatabaseBridge,
     inferLocalAgentResponse,
@@ -199,17 +200,52 @@ async function runTests() {
     'A modern',
     '- Configurable by Grade',
     '- Downloadable PDFs for Prospectus 2026-27',
-    '- Optimized for desktop'
+    '- Optimized for desktop',
+    '.replace',
+    '.trim',
+    '.map',
+    'toLowerCase'
   ];
   for (const badName of garbageNames) {
     assert(!isValidCustomerCatalogName(badName) && !widget.isValidCustomerCatalogName(badName), `Blocked unnecessary/code artifact: "${badName}"`);
   }
 
-  // --- TEST 5: Automatic Language Detection (Manual Language Section Removed) ---
-  console.log('\n5) Automatic Language Detection & Clean Polite Replies');
+  // --- TEST 5: Automatic Language Detection, Grammar Polish, Complete Sentences & Anti-Drift ---
+  console.log('\n5) Automatic Language Detection, Spoken Grammar & Complete Sentences');
   assert(!widgetSrc.includes('<div class="vhd-lang-bar">'), 'Manual Language bar HTML removed from public/widget.js');
   assert(widgetSrc.includes("let currentSpeechLang = 'auto';"), 'Automatic multilingual detection stays enabled by default');
   assert(/happy to help|Please let me know/i.test(replyStr), `Catalog reply uses warm, polite tone ("${replyStr}")`);
+  assert(!replyStr.includes('courses / programs'), `No ugly spoken slashes in reply ("${replyStr}")`);
+
+  const healedCutAnswer = widget.polishSpokenReply(
+    'The Classes 11th & 12th Academic Programs section is available on this website (#tuition-info). Specialized, high-impact tuition batches exclusively for Class 11 and Class 12 (Science, JEE & NEET). Strictly capped at 15–18 students with'
+  );
+  assert(!healedCutAnswer.includes('#tuition-info'), `Removed raw anchor (#tuition-info) from spoken reply ("${healedCutAnswer}")`);
+  assert(!/\bwith\s*\.?$/i.test(healedCutAnswer) && /[.!?]$/.test(healedCutAnswer), `Fixed cut-in-half dangling sentence ("${healedCutAnswer}")`);
+
+  const fixedSingular = widget.polishSpokenReply('We currently have 1 courses / programs available: Std 11th Science.');
+  assert(fixedSingular.includes('1 course available'), `Fixed singular grammar "1 courses / programs" -> "1 course" ("${fixedSingular}")`);
+
+  // Multi-turn FAQ/Section-based active-topic continuity (prevents going astray when activeItem is null)
+  const faqOnlyCfg = {
+    name: 'Sangli Academy',
+    archetype: 'academic',
+    databaseRecords: [{ name: '.replace' }],
+    knowledgeBase: [
+      {
+        q: 'Tell me about Classes 11th & 12th Academic Programs',
+        a: 'Classes 11th & 12th Academic Programs: Specialized tuition batches exclusively for Class 11 and Class 12 (Science, JEE & NEET) with personal mentoring.'
+      }
+    ]
+  };
+  const faqWidget = runtimeFn(faqOnlyCfg);
+  const faqCtx = { activeItem: null, activeTopic: null, lastDisplayedItems: [], fallbackCount: 0 };
+  const t1 = await faqWidget.inferLocalAgentResponse('Show me Classes 11th & 12th Academic Programs', null, [], faqCtx);
+  const t1Text = typeof t1 === 'object' ? t1.reply : t1;
+  assert(!t1Text.includes('.replace'), `Turn 1 ignores .replace completely ("${t1Text}")`);
+  const t2 = await faqWidget.inferLocalAgentResponse('give me details of that program', null, [{ role: 'user', content: 'Show me Classes 11th & 12th Academic Programs' }], faqCtx);
+  const t2Text = typeof t2 === 'object' ? t2.reply : t2;
+  assert(/Class 11 and Class 12|JEE & NEET/i.test(t2Text), `Turn 2 pronoun follow-up stays locked on active topic without going astray ("${t2Text}")`);
 
   console.log('\n==============================================================');
   console.log(` RESULT: ${passed} passed, ${failed} failed`);

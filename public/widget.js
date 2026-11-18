@@ -271,7 +271,8 @@
     const name = String(rawName || '').trim();
     if (!name || name.length < 2 || name.length > 75) return false;
 
-    if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|-|–|—|•|▪|▸|►|◦|·|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
+    if (/^\s*(\.|\/\/|\/\*|\*\/|\*|-|–|—|•|▪|▸|►|◦|·|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
+    if (/^\.?(replace|replaceAll|trim|split|slice|splice|join|map|filter|reduce|forEach|find|some|every|includes|indexOf|match|matchAll|test|exec|push|pop|shift|unshift|concat|sort|reverse|keys|values|entries|assign|stringify|parse|toLowerCase|toUpperCase|startsWith|endsWith|substring|substr|charAt|toString|valueOf|then|catch|finally|json|text|blob|arrayBuffer|preventDefault|stopPropagation|addEventListener|querySelector|querySelectorAll|getElementById|appendChild|removeChild|setAttribute|getAttribute|setItem|getItem|removeItem)$/i.test(name)) return false;
     if (name.includes('//') || name.includes('/*') || name.includes('*/')) return false;
     if (name.includes('=>') || name.includes('();') || name.includes('()') || name.includes('===') || name.includes('!==') || name.includes('==') || name.includes('!=') || name.includes('&&') || name.includes('||') || name.includes('+=') || name.includes('-=') || name.includes('??') || name.includes('?.') || name.includes('++') || name.includes('${')) return false;
     if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('[') || name.includes(']') || name.includes('?') || /CREATE\s+TABLE|INSERT\s+INTO|SELECT\s+.*\s+FROM/i.test(name)) return false;
@@ -313,6 +314,63 @@
       }
     }
     return true;
+  }
+
+  // Universal Spoken & Chat Grammar Polisher:
+  // 1. Removes raw CSS/HTML anchors "(#tuition-info)" so TTS never reads "hashtag tuition dash info"
+  // 2. Fixes singular/plural grammar ("1 courses / programs" -> "1 course") & spoken slashes
+  // 3. Fixes cut-in-half legacy FAQ answers ending mid-sentence ("...students with") cleanly at sentence boundary!
+  function polishSpokenReply(rawText) {
+    if (!rawText) return '';
+    let s = String(rawText)
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/[*_`]/g, '')
+      .replace(/\s*\(\s*(?:#[a-zA-Z0-9_-]+|\/[a-zA-Z0-9_./#-]+)\s*\)/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Fix ugly spoken slashes & singular/plural agreement
+    s = s
+      .replace(/\b1\s+courses\s*\/\s*programs\b/gi, '1 course')
+      .replace(/\b1\s+medicines\s*\/\s*products\b/gi, '1 medicine')
+      .replace(/\b1\s+dishes\s*\/\s*menu\s*items\b/gi, '1 menu item')
+      .replace(/\b1\s+plans\s*\/\s*solutions\b/gi, '1 plan')
+      .replace(/\b1\s+rooms\s*\/\s*suites\b/gi, '1 room')
+      .replace(/\b1\s+products\s*\/\s*services\b/gi, '1 option')
+      .replace(/\b1\s+(courses|programs|products|items|medicines|dishes|plans|rooms|suites|vehicles|services|options|packages|seats|units|strips|pairs|portions|slots)\b/gi, (_, plural) => {
+        const singularMap = {
+          courses: 'course', programs: 'program', products: 'product', items: 'item',
+          medicines: 'medicine', dishes: 'dish', plans: 'plan', rooms: 'room',
+          suites: 'suite', vehicles: 'vehicle', services: 'service', options: 'option',
+          packages: 'package', seats: 'seat', units: 'unit', strips: 'strip',
+          pairs: 'pair', portions: 'portion', slots: 'slot'
+        };
+        return `1 ${singularMap[plural.toLowerCase()] || plural}`;
+      })
+      .replace(/\bcourses\s*\/\s*programs\b/gi, 'courses and programs')
+      .replace(/\bmedicines\s*\/\s*products\b/gi, 'medicines and products')
+      .replace(/\bdishes\s*\/\s*menu\s*items\b/gi, 'menu items')
+      .replace(/\bplans\s*\/\s*solutions\b/gi, 'plans')
+      .replace(/\brooms\s*\/\s*suites\b/gi, 'rooms and suites')
+      .replace(/\bproducts\s*\/\s*services\b/gi, 'products and services')
+      .replace(/\s+([.,!?])/g, '$1')
+      .replace(/\.\.+/g, '.')
+      .trim();
+
+    // Fix truncated / cut-in-half sentences (e.g. "...Strictly capped at 15–18 students with")
+    if (s && !/[.!?।]$/.test(s)) {
+      const lastSentenceIdx = Math.max(s.lastIndexOf('. '), s.lastIndexOf('! '), s.lastIndexOf('? '), s.lastIndexOf('। '));
+      const endsWithDanglingWord = /\b(?:with|and|or|for|of|in|on|at|to|by|from|the|a|an|that|which|as|into|through|including|such|plus|where|when|while|featuring|offering|providing|has|have|is|are|was|were|be|been|can|will|our|your|their)\s*$/i.test(s);
+      if (lastSentenceIdx >= 35 && endsWithDanglingWord) {
+        s = s.slice(0, lastSentenceIdx + 1).trim();
+      } else if (endsWithDanglingWord) {
+        s = s.replace(/\s+\b(?:with|and|or|for|of|in|on|at|to|by|from|the|a|an|that|which|as|into|through|including|such|plus|where|when|while|featuring|offering|providing|has|have|is|are|was|were|be|been|can|will|our|your|their)\s*$/i, '').trim() + '.';
+      } else {
+        s = `${s}.`;
+      }
+    }
+
+    return s;
   }
 
   let lastConfigFetchAt = 0;
@@ -1075,9 +1133,27 @@
           .filter(c => c && c.label && !/^(result\s*price|total\s*cost|output|calc)/i.test(c.label.trim()))
           .map(c => {
             const rawLbl = String(c.label || '').trim();
-            // Fix any legacy truncated chip labels (e.g. "Classes 11th & 12th Ac" -> clean word-boundary label)
-            const cleanLbl = rawLbl.length > 20 ? rawLbl.split(/\s+/).slice(0, 3).join(' ') : rawLbl;
-            return { label: cleanLbl, query: c.query || cleanLbl };
+            const fullQuery = String(c.query || rawLbl).trim();
+            // Heal any legacy truncated chip labels (e.g. "Classes 11th &", "Student Admission Inqu", "Classes 11th & 12th Ac")
+            let cleanLbl = rawLbl;
+            if (/[&,\-\/]\s*$/.test(cleanLbl) || /\b(Ac|Inqu|Admis|Prog|Struct|Enqu|Regist|Reser|Checko|Appoi)$/i.test(cleanLbl)) {
+              if (/form|admission|apply|inquir|enquir|regist/i.test(fullQuery)) cleanLbl = 'Admission Form';
+              else if (/course|program|class|11th|12th|stream|catalog|product/i.test(fullQuery)) cleanLbl = 'Courses & Programs';
+              else if (/fee|price|pricing|cost|rate/i.test(fullQuery)) cleanLbl = 'Fee Structure';
+              else if (/book|reserv|table|room/i.test(fullQuery)) cleanLbl = 'Book Now';
+              else if (/checkout|order|cart/i.test(fullQuery)) cleanLbl = 'Checkout';
+              else cleanLbl = cleanLbl.replace(/\s*[&,\-\/]\s*$/, '').replace(/\s+\S+$/, '').trim() || 'Explore';
+            }
+            if (cleanLbl.length > 20) {
+              const words = cleanLbl.split(/\s+/);
+              let out = '';
+              for (const w of words) {
+                if ((out ? `${out} ${w}` : w).length <= 20) out = out ? `${out} ${w}` : w;
+                else break;
+              }
+              cleanLbl = out.replace(/\s*[&,\-\/]\s*$/, '').trim() || cleanLbl.slice(0, 18);
+            }
+            return { label: cleanLbl, query: fullQuery };
           })
           .slice(0, 3)
       : [];
@@ -3865,7 +3941,7 @@ CRITICAL RULES:
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
 - If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items concisely in 1-2 sentences and confirm you have opened them.
 - If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item is not currently listed, mention available options if present, and offer guidance.
-- Keep responses plain-text, conversational, professional, and under 35 words so Web Speech API TTS reads them smoothly without reading markdown symbols (*, #, \`).
+- Keep responses plain-text, polite, natural to listen to, and 2-3 complete sentences (never cut off mid-sentence, never output markdown symbols like *, #, \`, or raw #section-id anchors).
 - LANGUAGE: ${langDirective}
 
 ${liveDbBlock}[LIVE_BRIDGE_DATA]
@@ -3897,14 +3973,14 @@ ${cleanFaqBlock}`;
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Keep responses concise (up to 75 words) and trim cleanly at a sentence boundary
+        // Keep responses complete and conversational (up to 110 words), always stopping at a full sentence boundary!
         const words = cleaned.split(' ');
-        if (words.length > 75) {
-          const sliced = words.slice(0, 75).join(' ');
+        if (words.length > 110) {
+          const sliced = words.slice(0, 110).join(' ');
           const lastEnd = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'), sliced.lastIndexOf('।'));
-          cleaned = lastEnd > 40 ? sliced.slice(0, lastEnd + 1) : (sliced + '.');
+          cleaned = lastEnd > 40 ? sliced.slice(0, lastEnd + 1) : sliced;
         }
-        return cleaned;
+        return (typeof polishSpokenReply === 'function') ? polishSpokenReply(cleaned) : cleaned;
       }
 
       try {
@@ -3946,7 +4022,7 @@ ${cleanFaqBlock}`;
                 model: gModel,
                 messages: messagesPayload,
                 temperature: 0.2,
-                max_tokens: 220
+                max_tokens: 340
               }),
               signal: AbortSignal.timeout(gIdx === 0 ? 5500 : 4000)
             });
@@ -3994,7 +4070,7 @@ ${cleanFaqBlock}`;
                 contents,
                 generationConfig: {
                   temperature: 0.3,
-                  maxOutputTokens: 220
+                  maxOutputTokens: 340
                 }
               }),
               signal: AbortSignal.timeout(gIdx === 0 ? 5500 : 4000)
@@ -4054,8 +4130,17 @@ ${cleanFaqBlock}`;
       return null;
     }
 
-    // Autonomous Zero-API-Key Local Reasoning Engine with Conversational Memory & Context
+    // Autonomous Zero-API-Key Local Reasoning Engine with Conversational Memory, Context Lock & Spoken Grammar Polish
     async function inferLocalAgentResponse(userText, bridgeResult = null, history = [], context = null) {
+      const res = await _inferLocalAgentResponseCore(userText, bridgeResult, history, context);
+      if (typeof res === 'string') return polishSpokenReply(res);
+      if (res && typeof res === 'object' && typeof res.reply === 'string') {
+        return { ...res, reply: polishSpokenReply(res.reply) };
+      }
+      return res;
+    }
+
+    async function _inferLocalAgentResponseCore(userText, bridgeResult = null, history = [], context = null) {
       const text = userText.trim();
       const queryLang = detectTextLanguage(text);
 
@@ -4349,6 +4434,25 @@ ${cleanFaqBlock}`;
             return `For ${active.name}, please check our website policy section or reach out to support for exact details.`;
           }
         }
+      }
+
+      // 0.2 Universal Active-Topic Pronoun Continuity (Prevents going astray on FAQ/Section-based websites when activeItem is null!)
+      if (context && !context.activeItem && (context.activeTopic || context.lastUserTopic)) {
+        const isPronounFollowUp = /\b(that program|this program|that course|this course|that plan|this plan|that service|this service|that one|this one|in that|for that|about that|of that|in this|for this|about this|of this|for it|about it|details of that|more about that|more about this)\b/i.test(lower);
+        const topicAnchor = (context.activeTopic && !['catalog_list', 'pricing', 'procedure', 'eligibility', 'policy_docs'].includes(context.activeTopic))
+          ? context.activeTopic
+          : (context.lastUserTopic || '');
+        if (isPronounFollowUp && topicAnchor) {
+          const topicHit = findGroundedKbOrSnippet(topicAnchor);
+          if (topicHit) {
+            context.activeTopic = topicHit.topic;
+            context.fallbackCount = 0;
+            return topicHit.answer;
+          }
+        }
+      }
+      if (context && meaningfulWords.length >= 2 && !/\b(that|this|it)\b/i.test(lower)) {
+        context.lastUserTopic = meaningfulWords.slice(0, 6).join(' ');
       }
 
       // 1. Direct Catalog List Query Handler (e.g. "can you give me details of courses", "course details", "which courses do you provide", "give list of all meds", "show all products", "show menu")
@@ -5076,6 +5180,7 @@ ${cleanFaqBlock}`;
         if (agentDeleted) return;
 
         typingLoader.remove();
+        reply = polishSpokenReply(reply);
 
         conversationContext.lastReply = reply;
         conversationContext.turnCount = (conversationContext.turnCount || 0) + 1;
