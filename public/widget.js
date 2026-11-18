@@ -276,10 +276,28 @@
       return true;
     }
     try {
-      // 0. Check deletion tombstone collection in Firestore
-      try {
-        const tombstoneRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/deleted_agents/${encodeURIComponent(cleanInitialName)}`);
-        if (tombstoneRes.ok) {
+      // 0 & 1. Run tombstone check + primary agent fetch IN PARALLEL with strict 2.5s timeout!
+      const tombstoneUrls = [
+        `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/deleted_agents/${encodeURIComponent(cleanInitialName)}`
+      ];
+      if (agentId !== cleanInitialName) {
+        tombstoneUrls.push(
+          `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/deleted_agents/${encodeURIComponent(agentId)}`
+        );
+      }
+
+      const [tombstoneSettled, primarySettled] = await Promise.all([
+        Promise.allSettled(tombstoneUrls.map(u => fetch(u, { signal: AbortSignal.timeout(2500) }))),
+        Promise.allSettled([
+          fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents/${encodeURIComponent(agentId)}`, { signal: AbortSignal.timeout(2500) }),
+          agentId !== cleanInitialName
+            ? fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents/${encodeURIComponent(cleanInitialName)}`, { signal: AbortSignal.timeout(2500) })
+            : Promise.resolve(null)
+        ])
+      ]);
+
+      for (const ts of tombstoneSettled) {
+        if (ts.status === 'fulfilled' && ts.value && ts.value.ok) {
           console.warn(`[Voice Help Desk] Agent "${cleanInitialName}" has been deleted. Voice widget is disabled.`);
           try {
             localStorage.removeItem(CACHE_KEY);
@@ -289,34 +307,18 @@
           if (existingHost) existingHost.remove();
           return false;
         }
-        if (agentId !== cleanInitialName) {
-          const tombstoneRes2 = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/deleted_agents/${encodeURIComponent(agentId)}`);
-          if (tombstoneRes2.ok) {
-            console.warn(`[Voice Help Desk] Agent "${agentId}" has been deleted. Voice widget is disabled.`);
-            try {
-              localStorage.removeItem(CACHE_KEY);
-              localStorage.setItem(DELETED_KEY, 'true');
-            } catch (e) {}
-            const existingHost = document.getElementById('voice-helpdesk-root');
-            if (existingHost) existingHost.remove();
-            return false;
-          }
-        }
-      } catch (tombErr) {}
-
-      // 1. Try exact agentId
-      let res = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents/${encodeURIComponent(agentId)}`);
-      
-      // 2. Try clean human-readable name
-      if (!res.ok && agentId !== cleanInitialName) {
-        const retryRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents/${encodeURIComponent(cleanInitialName)}`);
-        if (retryRes.ok) res = retryRes;
       }
 
+      let res = (primarySettled[0]?.status === 'fulfilled' && primarySettled[0].value?.ok)
+        ? primarySettled[0].value
+        : ((primarySettled[1]?.status === 'fulfilled' && primarySettled[1].value?.ok)
+            ? primarySettled[1].value
+            : (primarySettled[0]?.status === 'fulfilled' ? primarySettled[0].value : null));
+
       // 3. Multi-strategy search across agents collection for exact matches
-      if (!res.ok) {
+      if (!res || !res.ok) {
         try {
-          const listRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents`);
+          const listRes = await fetch(`https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/agents`, { signal: AbortSignal.timeout(2500) });
           if (listRes.ok) {
             const listJson = await listRes.json();
             const docs = listJson.documents || [];
@@ -933,6 +935,61 @@
         color: #ffffff;
         box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
       }
+      /* Animated Typing & Progressive Delay Feedback Bubble */
+      .vhd-typing-bubble {
+        align-self: flex-start;
+        background: rgba(30, 41, 59, 0.88);
+        color: #cbd5e1;
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        border-radius: 16px;
+        border-bottom-left-radius: 4px;
+        padding: 10px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-width: 85%;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.25);
+        animation: vhdFadeSlide 0.22s ease-out;
+      }
+      .vhd-typing-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .vhd-typing-dots {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 14px;
+      }
+      .vhd-typing-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #38bdf8, #818cf8);
+        animation: vhdTypingBounce 1.25s infinite ease-in-out;
+      }
+      .vhd-typing-dot:nth-child(2) { animation-delay: 0.16s; }
+      .vhd-typing-dot:nth-child(3) { animation-delay: 0.32s; }
+      @keyframes vhdTypingBounce {
+        0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+        40% { transform: translateY(-4px); opacity: 1; }
+      }
+      @keyframes vhdFadeSlide {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .vhd-typing-status {
+        font-size: 11.5px;
+        color: #94a3b8;
+        line-height: 1.35;
+        transition: opacity 0.2s ease;
+      }
+      .vhd-send-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none !important;
+      }
     `;
 
     // Build dynamic 1-tap workflow shortcut chips from Stage-1 siteBlueprint (or archetype defaults)
@@ -1375,6 +1432,89 @@
 
       body.appendChild(div);
       body.scrollTop = body.scrollHeight;
+    }
+
+    // Animated Typing Indicator with Progressive Late-Answer Messages (English, Hindi, Marathi)
+    function showTypingIndicator(lang = 'en-US', opts = {}) {
+      const stage1Ms = Number(opts.stage1Ms || 2200);
+      const stage2Ms = Number(opts.stage2Ms || 5500);
+
+      const copy = lang === 'mr-IN'
+        ? {
+            s0: 'विचार करत आहे…',
+            s1: 'वेबसाइटवरील माहिती तपासत आहे, कृपया थोडा वेळ थांबा…',
+            s2: 'नेहमीपेक्षा थोडा जास्त वेळ लागत आहे — आपले उत्तर जवळजवळ तयार आहे…'
+          }
+        : lang === 'hi-IN'
+          ? {
+              s0: 'सोच रहा हूँ…',
+              s1: 'वेबसाइट की जानकारी देख रहा हूँ, कृपया प्रतीक्षा करें…',
+              s2: 'थोड़ा अधिक समय लग रहा है — आपका उत्तर लगभग तैयार है…'
+            }
+          : {
+              s0: 'Thinking…',
+              s1: 'Checking website details, please wait a moment…',
+              s2: 'Taking a little longer than usual — almost ready with your answer…'
+            };
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'vhd-typing-bubble';
+      wrapper.setAttribute('role', 'status');
+      wrapper.setAttribute('aria-live', 'polite');
+
+      const row = document.createElement('div');
+      row.className = 'vhd-typing-row';
+
+      const dots = document.createElement('div');
+      dots.className = 'vhd-typing-dots';
+      for (let i = 0; i < 3; i++) {
+        const dot = document.createElement('span');
+        dot.className = 'vhd-typing-dot';
+        dots.appendChild(dot);
+      }
+
+      const statusEl = document.createElement('span');
+      statusEl.className = 'vhd-typing-status';
+      statusEl.textContent = copy.s0;
+
+      row.appendChild(dots);
+      row.appendChild(statusEl);
+      wrapper.appendChild(row);
+
+      body.appendChild(wrapper);
+      body.scrollTop = body.scrollHeight;
+
+      let removed = false;
+      const t1 = setTimeout(() => {
+        if (removed) return;
+        statusEl.textContent = copy.s1;
+        if (voiceLabel) voiceLabel.textContent = copy.s1;
+        body.scrollTop = body.scrollHeight;
+      }, stage1Ms);
+
+      const t2 = setTimeout(() => {
+        if (removed) return;
+        statusEl.textContent = copy.s2;
+        if (voiceLabel) voiceLabel.textContent = 'Almost ready…';
+        body.scrollTop = body.scrollHeight;
+      }, stage2Ms);
+
+      return {
+        element: wrapper,
+        setStage(msg) {
+          if (!removed && msg) {
+            statusEl.textContent = msg;
+            body.scrollTop = body.scrollHeight;
+          }
+        },
+        remove() {
+          if (removed) return;
+          removed = true;
+          clearTimeout(t1);
+          clearTimeout(t2);
+          if (wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+        }
+      };
     }
 
     // --- REAL-TIME LIVE WEBSITE DATABASE & INVENTORY BRIDGE ---
@@ -3390,29 +3530,39 @@
         return res;
       }
 
-      // Tier 3.5: Live External Database Bridge (Firebase / Supabase via uploaded user keys)
+      // Tier 3.5: Live External Database Bridge (Parallelized via Promise.allSettled: max ~1.8s instead of 22.5s!)
       if (agentConfig && agentConfig.databaseConfig) {
         const dbConf = agentConfig.databaseConfig;
         if (dbConf.type === 'firebase' && dbConf.projectId && targetItem) {
           try {
             const probeCollections = ['products', 'inventory', 'medicines', 'items', 'catalog', 'services', 'menu', 'store', 'shop'];
-            for (const col of probeCollections) {
-              const url = `https://firestore.googleapis.com/v1/projects/${dbConf.projectId}/databases/(default)/documents/${col}${dbConf.apiKey ? `?key=${dbConf.apiKey}` : ''}`;
-              const res = await fetch(url, { signal: AbortSignal.timeout(2500) });
-              if (res.ok) {
+            const targetLower = targetItem.toLowerCase();
+            const settled = await Promise.allSettled(
+              probeCollections.map(async (col) => {
+                const url = `https://firestore.googleapis.com/v1/projects/${dbConf.projectId}/databases/(default)/documents/${col}${dbConf.apiKey ? `?key=${dbConf.apiKey}` : ''}`;
+                const res = await fetch(url, { signal: AbortSignal.timeout(1800) });
+                if (!res.ok) return null;
                 const data = await res.json();
                 if (data && Array.isArray(data.documents)) {
-                  for (const doc of data.documents) {
-                    const flat = parseFirestoreFields(doc.fields);
-                    if (flat.name && (flat.name.toLowerCase().includes(targetItem.toLowerCase()) || targetItem.toLowerCase().includes(flat.name.toLowerCase()))) {
-                      return {
-                        status: 'FOUND_IN_LIVE_API',
-                        item: targetItem,
-                        data: flat
-                      };
+                  const flatDocs = data.documents.map(doc => parseFirestoreFields(doc.fields));
+                  const matched = matchInInventory(flatDocs, targetItem) || matchInInventory(flatDocs, strippedQuery);
+                  if (matched) return matched;
+                  for (const flat of flatDocs) {
+                    if (flat.name && (flat.name.toLowerCase().includes(targetLower) || targetLower.includes(flat.name.toLowerCase()))) {
+                      return flat;
                     }
                   }
                 }
+                return null;
+              })
+            );
+            for (const outcome of settled) {
+              if (outcome.status === 'fulfilled' && outcome.value) {
+                return {
+                  status: 'FOUND_IN_LIVE_API',
+                  item: targetItem,
+                  data: outcome.value
+                };
               }
             }
           } catch (e) {
@@ -3421,24 +3571,28 @@
         } else if (dbConf.type === 'supabase' && dbConf.supabaseUrl && dbConf.supabaseKey && targetItem) {
           try {
             const probeTables = ['products', 'inventory', 'medicines', 'items', 'catalog', 'services', 'menu'];
-            for (const tbl of probeTables) {
-              const url = `${dbConf.supabaseUrl}/rest/v1/${tbl}?name=ilike.*${encodeURIComponent(targetItem)}*&limit=1`;
-              const res = await fetch(url, {
-                headers: {
-                  'apikey': dbConf.supabaseKey,
-                  'Authorization': `Bearer ${dbConf.supabaseKey}`
-                },
-                signal: AbortSignal.timeout(2500)
-              });
-              if (res.ok) {
+            const settled = await Promise.allSettled(
+              probeTables.map(async (tbl) => {
+                const url = `${dbConf.supabaseUrl}/rest/v1/${tbl}?name=ilike.*${encodeURIComponent(targetItem)}*&limit=1`;
+                const res = await fetch(url, {
+                  headers: {
+                    'apikey': dbConf.supabaseKey,
+                    'Authorization': `Bearer ${dbConf.supabaseKey}`
+                  },
+                  signal: AbortSignal.timeout(1800)
+                });
+                if (!res.ok) return null;
                 const rows = await res.json();
-                if (Array.isArray(rows) && rows[0]) {
-                  return {
-                    status: 'FOUND_IN_LIVE_API',
-                    item: targetItem,
-                    data: rows[0]
-                  };
-                }
+                return Array.isArray(rows) && rows[0] ? rows[0] : null;
+              })
+            );
+            for (const outcome of settled) {
+              if (outcome.status === 'fulfilled' && outcome.value) {
+                return {
+                  status: 'FOUND_IN_LIVE_API',
+                  item: targetItem,
+                  data: outcome.value
+                };
               }
             }
           } catch (e) {
@@ -3755,7 +3909,8 @@ ${cleanFaqBlock}`;
             ? ['llama-3.1-8b-instant']
             : [targetModel, 'llama-3.1-8b-instant'];
 
-          for (const gModel of groqCandidates) {
+          for (let gIdx = 0; gIdx < groqCandidates.length; gIdx++) {
+            const gModel = groqCandidates[gIdx];
             const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
               headers: {
@@ -3768,7 +3923,7 @@ ${cleanFaqBlock}`;
                 temperature: 0.2,
                 max_tokens: 220
               }),
-              signal: AbortSignal.timeout(8000)
+              signal: AbortSignal.timeout(gIdx === 0 ? 5500 : 4000)
             });
 
             if (groqRes.ok) {
@@ -3801,7 +3956,8 @@ ${cleanFaqBlock}`;
           }
 
           const geminiCandidates = Array.from(new Set([geminiModel, 'gemini-2.0-flash', 'gemini-1.5-flash']));
-          for (const gModel of geminiCandidates) {
+          for (let gIdx = 0; gIdx < geminiCandidates.length; gIdx++) {
+            const gModel = geminiCandidates[gIdx];
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${trimmedKey}`;
             const geminiRes = await fetch(geminiUrl, {
               method: 'POST',
@@ -3816,7 +3972,7 @@ ${cleanFaqBlock}`;
                   maxOutputTokens: 220
                 }
               }),
-              signal: AbortSignal.timeout(8000)
+              signal: AbortSignal.timeout(gIdx === 0 ? 5500 : 4000)
             });
 
             if (geminiRes.ok) {
@@ -4793,98 +4949,135 @@ ${cleanFaqBlock}`;
       }, 400);
     }
 
-    // Process Message with User-Provided API Key (Groq / Gemini / OpenAI with Local Semantic Fallback)
+    let isHandlingMessage = false;
+
+    // Process Message with 0ms Instant UI Feedback, Animated Typing Indicator & Progressive Delay Messages
     async function handleUserMessage(userText) {
-      // Re-verify if agent has been deleted before responding
-      const stillActive = await fetchAgentConfig();
-      if (!stillActive) {
-        const existing = document.getElementById('voice-helpdesk-root');
-        if (existing) existing.remove();
-        return;
-      }
+      const cleanInput = String(userText || '').trim();
+      if (!cleanInput || isHandlingMessage) return;
 
-      appendMsg(userText, 'user');
-      conversationHistory.push({ role: 'user', content: userText });
-      sessionLogMessages.push({ role: 'user', text: userText, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+      isHandlingMessage = true;
+      if (sendBtn) sendBtn.disabled = true;
+
+      // 0ms Instant Optimistic UI: Show visitor question & animated typing bubble BEFORE any network await!
+      const detectedQueryLang = detectTextLanguage(cleanInput);
+      appendMsg(cleanInput, 'user');
+      conversationHistory.push({ role: 'user', content: cleanInput });
+      sessionLogMessages.push({ role: 'user', text: cleanInput, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
       orb.className = 'vhd-orb-btn listening';
-      voiceLabel.textContent = 'Thinking...';
+      voiceLabel.textContent = detectedQueryLang === 'mr-IN' ? 'विचार करत आहे…' : detectedQueryLang === 'hi-IN' ? 'सोच रहा हूँ…' : 'Thinking…';
 
-      const detectedQueryLang = detectTextLanguage(userText);
+      const typingLoader = showTypingIndicator(detectedQueryLang);
+
       if (recognition && currentSpeechLang === 'auto') {
         recognition.lang = detectedQueryLang;
       }
 
+      // Non-blocking background config/deletion sync (never delays the visitor's question!)
+      let agentDeleted = false;
+      fetchAgentConfig().then((stillActive) => {
+        if (stillActive === false) {
+          agentDeleted = true;
+          typingLoader.remove();
+          const existing = document.getElementById('voice-helpdesk-root');
+          if (existing) existing.remove();
+        }
+      }).catch(() => {});
+
       let reply = '';
       let navAction = null;
-      const apiKey = (currentScript && (currentScript.getAttribute('data-api-key') || currentScript.getAttribute('data-key'))) ||
-                     agentConfig.apiKey ||
-                     window.AI_AGENT_API_KEY ||
-                     '';
 
-      // 1. Deterministically resolve Live Real-Time Website Database Bridge first
-      const bridgeResult = await resolveDatabaseBridge(userText, agentConfig, conversationContext);
+      try {
+        const apiKey = (currentScript && (currentScript.getAttribute('data-api-key') || currentScript.getAttribute('data-key'))) ||
+                       agentConfig.apiKey ||
+                       window.AI_AGENT_API_KEY ||
+                       '';
 
-      // Determine interactive navigation or highlight action
-      if (bridgeResult) {
-        if (bridgeResult.status === 'NAVIGATE_SECTION') {
-          const sec = bridgeResult.data || resolveExactRedirectTarget(userText, agentConfig?.siteBlueprint) || findHostSection(userText);
-          if (sec) {
-            executeRedirectAction(sec, true);
-            navAction = {
-              label: sec.isCrossPage ? `Go to ${sec.label}` : (sec.targetType === 'form' ? `Open ${sec.label}` : `Jump to ${sec.label}`),
-              sectionInfo: sec.element ? sec : null,
-              redirectTarget: sec,
-              redirectUrl: sec.isCrossPage ? sec.redirectUrl : null,
-              isCrossPage: Boolean(sec.isCrossPage),
-              targetType: sec.targetType || 'section'
-            };
+        // 1. Deterministically resolve Live Real-Time Website Database Bridge first
+        const bridgeResult = await resolveDatabaseBridge(cleanInput, agentConfig, conversationContext);
+        if (agentDeleted) return;
+
+        // Determine interactive navigation or highlight action
+        if (bridgeResult) {
+          if (bridgeResult.status === 'NAVIGATE_SECTION') {
+            const sec = bridgeResult.data || resolveExactRedirectTarget(cleanInput, agentConfig?.siteBlueprint) || findHostSection(cleanInput);
+            if (sec) {
+              executeRedirectAction(sec, true);
+              navAction = {
+                label: sec.isCrossPage ? `Go to ${sec.label}` : (sec.targetType === 'form' ? `Open ${sec.label}` : `Jump to ${sec.label}`),
+                sectionInfo: sec.element ? sec : null,
+                redirectTarget: sec,
+                redirectUrl: sec.isCrossPage ? sec.redirectUrl : null,
+                isCrossPage: Boolean(sec.isCrossPage),
+                targetType: sec.targetType || 'section'
+              };
+            }
+          } else if (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API') {
+            if (bridgeResult.data) conversationContext.activeItem = bridgeResult.data;
+            const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
+            if (sec) scrollToHostSection(sec);
+            const cleanBtnName = cleanScrapedItemTitle(bridgeResult.data?.name || 'Item').name.substring(0, 25);
+            navAction = sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec } : null;
+          } else if (bridgeResult.status === 'FOUND_CATALOG_LIST' || bridgeResult.status === 'FOUND_PRICE_OVERVIEW') {
+            if (Array.isArray(bridgeResult.data) && bridgeResult.data.length > 0) {
+              conversationContext.lastDisplayedItems = bridgeResult.data;
+              conversationContext.catalogOffset = Math.min(5, bridgeResult.data.length);
+              conversationContext.activeTopic = bridgeResult.status === 'FOUND_PRICE_OVERVIEW' ? 'pricing' : 'catalog_list';
+            }
+            const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
+            if (sec) scrollToHostSection(sec);
+            navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null;
           }
-        } else if (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API') {
-          if (bridgeResult.data) conversationContext.activeItem = bridgeResult.data;
-          const sec = findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
-          if (sec) scrollToHostSection(sec);
-          const cleanBtnName = cleanScrapedItemTitle(bridgeResult.data?.name || 'Item').name.substring(0, 25);
-          navAction = sec ? { label: `View ${cleanBtnName}`, sectionInfo: sec } : null;
-        } else if (bridgeResult.status === 'FOUND_CATALOG_LIST' || bridgeResult.status === 'FOUND_PRICE_OVERVIEW') {
-          if (Array.isArray(bridgeResult.data) && bridgeResult.data.length > 0) {
-            conversationContext.lastDisplayedItems = bridgeResult.data;
-            conversationContext.catalogOffset = Math.min(5, bridgeResult.data.length);
-            conversationContext.activeTopic = bridgeResult.status === 'FOUND_PRICE_OVERVIEW' ? 'pricing' : 'catalog_list';
+        }
+
+        // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database & website context
+        if (apiKey) {
+          const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext);
+          reply = await callLLMWithBYOK(cleanInput, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
+          if (reply) conversationContext.fallbackCount = 0;
+        }
+
+        // 3. Fallback to Local Semantic Knowledge Reasoner ONLY if BYOK failed or API key missing
+        if (!reply) {
+          const localRes = await inferLocalAgentResponse(cleanInput, bridgeResult, conversationHistory, conversationContext);
+          if (typeof localRes === 'object' && localRes !== null) {
+            reply = localRes.reply || '';
+            if (!navAction) navAction = localRes.navAction || null;
+          } else {
+            reply = localRes;
           }
-          const sec = findHostSection('courses') || findHostSection('inventory') || findHostSection('products') || findHostSection('menu') || findHostSection('pricing');
-          if (sec) scrollToHostSection(sec);
-          navAction = sec ? { label: `View ${sec.label}`, sectionInfo: sec } : null;
         }
+
+        if (agentDeleted) return;
+
+        typingLoader.remove();
+
+        conversationContext.lastReply = reply;
+        conversationContext.turnCount = (conversationContext.turnCount || 0) + 1;
+        conversationHistory.push({ role: 'assistant', content: reply });
+        sessionLogMessages.push({ role: 'agent', text: reply, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+        recordSessionLogToAgentFolder(sessionLogMessages);
+
+        orb.className = 'vhd-orb-btn speaking';
+        voiceLabel.textContent = 'Speaking...';
+        appendMsg(reply, 'agent', navAction);
+        speakReply(reply);
+      } catch (err) {
+        console.warn('[Echo AI Widget] Error handling message:', err);
+        typingLoader.remove();
+        const fallbackMsg = detectedQueryLang === 'mr-IN'
+          ? 'क्षमस्व, उत्तर तयार करताना थोडी तांत्रिक अडचण आली. कृपया पुन्हा विचारा!'
+          : detectedQueryLang === 'hi-IN'
+            ? 'क्षमा करें, उत्तर तैयार करने में थोड़ी समस्या आई। कृपया पुनः पूछें!'
+            : 'Sorry, I ran into a quick hiccup preparing that answer. Please try asking again!';
+        appendMsg(fallbackMsg, 'agent');
+        orb.className = 'vhd-orb-btn';
+        voiceLabel.textContent = 'Tap to Speak';
+      } finally {
+        typingLoader.remove();
+        isHandlingMessage = false;
+        if (sendBtn) sendBtn.disabled = false;
       }
-
-      // 2. Call BYOK LLM (Groq / Gemini / OpenAI) with live database & website context
-      if (apiKey) {
-        const customerSystemPrompt = buildCustomerSystemPrompt(agentConfig, bridgeResult, detectedQueryLang, conversationContext);
-        reply = await callLLMWithBYOK(userText, customerSystemPrompt, conversationHistory, apiKey, agentConfig.model);
-        if (reply) conversationContext.fallbackCount = 0;
-      }
-
-      // 3. Fallback to Local Semantic Knowledge Reasoner ONLY if BYOK failed or API key missing
-      if (!reply) {
-        const localRes = await inferLocalAgentResponse(userText, bridgeResult, conversationHistory, conversationContext);
-        if (typeof localRes === 'object' && localRes !== null) {
-          reply = localRes.reply || '';
-          if (!navAction) navAction = localRes.navAction || null;
-        } else {
-          reply = localRes;
-        }
-      }
-
-      conversationContext.lastReply = reply;
-      conversationContext.turnCount = (conversationContext.turnCount || 0) + 1;
-      conversationHistory.push({ role: 'assistant', content: reply });
-      sessionLogMessages.push({ role: 'agent', text: reply, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
-      recordSessionLogToAgentFolder(sessionLogMessages);
-
-      orb.className = 'vhd-orb-btn speaking';
-      voiceLabel.textContent = 'Speaking...';
-      appendMsg(reply, 'agent', navAction);
-      speakReply(reply);
     }
 
     // Deterministic Persona Voice Profiles

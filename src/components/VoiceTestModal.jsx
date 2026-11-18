@@ -28,6 +28,7 @@ import { generateAIResponse, getUserApiKeys, transcribeAudioWithGroqWhisper } fr
 export default function VoiceTestModal({ isOpen, onClose, assistant }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [thinkingStage, setThinkingStage] = useState(0); // 0: Thinking, 1: Checking details (2.2s), 2: Taking a moment (5.5s)
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
   const [audioLevel, setAudioLevel] = useState(0); // 0 to 100
@@ -90,7 +91,21 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, interimTranscript, isThinking]);
+  }, [messages, interimTranscript, isThinking, thinkingStage]);
+
+  useEffect(() => {
+    if (!isThinking) {
+      setThinkingStage(0);
+      return;
+    }
+    setThinkingStage(0);
+    const t1 = setTimeout(() => setThinkingStage(1), 2200);
+    const t2 = setTimeout(() => setThinkingStage(2), 5500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [isThinking]);
 
   // Cleanly stops all active recording, audio analysis, and speech recognition
   const stopRecordingSession = () => {
@@ -660,6 +675,27 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
               )}
             </div>
           ))}
+          {isThinking && (
+            <div className="flex gap-2.5 justify-start animate-fadeIn" role="status" aria-live="polite">
+              <div className="w-6 h-6 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 mt-0.5">
+                <Bot size={13} />
+              </div>
+              <div className="px-3.5 py-2.5 rounded-2xl rounded-bl-none bg-white border border-indigo-200/80 text-slate-600 shadow-2xs flex items-center gap-2.5 max-w-[82%]">
+                <span className="inline-flex items-center gap-1 shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 dot-1" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 dot-2" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 dot-3" />
+                </span>
+                <span className="text-[11.5px] font-medium text-slate-600">
+                  {thinkingStage === 0
+                    ? 'Thinking…'
+                    : thinkingStage === 1
+                      ? 'Checking website details, please wait a moment…'
+                      : 'Taking a little longer than usual — almost ready…'}
+                </span>
+              </div>
+            </div>
+          )}
           <div ref={chatBottomRef} />
         </div>
 
@@ -669,7 +705,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
             type="text"
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
+            onKeyDown={(e) => e.key === 'Enter' && !isThinking && handleSendText()}
             placeholder="Type a test question or tap mic to speak..."
             className="flex-1 h-9 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white"
           />
@@ -692,10 +728,11 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           <button
             type="button"
             onClick={handleSendText}
-            className="h-9 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-2xs shrink-0"
+            disabled={isThinking || !textInput.trim()}
+            className="h-9 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-2xs shrink-0"
             title="Send message"
           >
-            <span>Send</span>
+            <span>{isThinking ? 'Sending…' : 'Send'}</span>
             <Send size={12} />
           </button>
         </div>
