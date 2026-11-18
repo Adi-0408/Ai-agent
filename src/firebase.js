@@ -330,6 +330,53 @@ export async function saveAgent(agent) {
 }
 
 /**
+ * Lightweight merge-patch for uploadedFiles Drive sync metadata (driveFileId, driveWebViewLink, storageStatus)
+ * without overwriting newer files or re-uploading the full agent prompt/KB.
+ */
+export async function patchAgentUploadedFiles(agentNameOrId, updatesMap = {}) {
+  try {
+    const titleId = getCleanTitleId(agentNameOrId);
+    if (!titleId || !updatesMap || Object.keys(updatesMap).length === 0) return false;
+
+    const agentRef = doc(db, AGENTS_COLLECTION, titleId);
+    const agentInfoRef = doc(db, AGENT_INFO_COLLECTION, titleId);
+    const snap = await getDoc(agentRef);
+    if (!snap.exists()) return false;
+
+    const existingFiles = Array.isArray(snap.data()?.uploadedFiles) ? snap.data().uploadedFiles : [];
+    if (existingFiles.length === 0) return false;
+
+    let changed = false;
+    const mergedFiles = existingFiles.map((f) => {
+      const patch = updatesMap[f.id] || updatesMap[f.name];
+      if (!patch) return f;
+      changed = true;
+      return sanitizeForFirestore({ ...f, ...patch });
+    });
+
+    if (!changed) return false;
+
+    const patchPayload = sanitizeForFirestore({
+      uploadedFiles: mergedFiles,
+      updatedAt: serverTimestamp()
+    });
+
+    await Promise.all([
+      setDoc(agentRef, patchPayload, { merge: true }),
+      setDoc(agentInfoRef, patchPayload, { merge: true })
+    ]);
+
+    try {
+      localStorage.removeItem(`agent_cache_${titleId}`);
+    } catch (_) {}
+    return true;
+  } catch (err) {
+    console.warn('patchAgentUploadedFiles warning:', err);
+    return false;
+  }
+}
+
+/**
  * Delete an agent and its corresponding conversation.
  * Writes a tombstone record to deleted_agents so live embed widgets immediately deactivate.
  */

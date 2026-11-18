@@ -57,6 +57,32 @@ function doPost(e) {
       return respondJson({ status: 'success', success: true, message: 'Connected to Echo_AI_Agent_Files' });
     }
 
+    if (action === 'upload_batch' && Array.isArray(payload.files)) {
+      var batchAssistant = sanitizeName(payload.assistantName || 'Shared Workspace');
+      var bRootIt = DriveApp.getFoldersByName(ROOT_FOLDER_NAME);
+      var bRoot = bRootIt.hasNext() ? bRootIt.next() : DriveApp.createFolder(ROOT_FOLDER_NAME);
+      var bAgent = getOrCreateSubFolder(bRoot, batchAssistant);
+      var tierCache = {};
+      var batchResults = [];
+      for (var i = 0; i < payload.files.length; i++) {
+        var item = payload.files[i] || {};
+        var iTierLabel = getTierLabel((item.tier || 'database').toString().toLowerCase());
+        if (!tierCache[iTierLabel]) tierCache[iTierLabel] = getOrCreateSubFolder(bAgent, iTierLabel);
+        var iFolder = tierCache[iTierLabel];
+        var iName = item.fileName || ('file_' + i + '.txt');
+        var iContent = typeof item.content === 'string' ? item.content : JSON.stringify(item.content || '', null, 2);
+        var iFile = iFolder.createFile(iName, iContent, resolveMimeType(iName, item.mimeType));
+        batchResults.push({
+          id: item.id || '',
+          fileName: iName,
+          fileId: iFile.getId(),
+          webViewLink: iFile.getUrl(),
+          folderPath: ROOT_FOLDER_NAME + ' / ' + batchAssistant + ' / ' + iTierLabel
+        });
+      }
+      return respondJson({ status: 'success', success: true, results: batchResults });
+    }
+
     var fileName = payload.fileName || payload.filename || ('file_' + new Date().getTime() + '.txt');
     var rawContent = payload.content !== undefined ? payload.content : (payload.data !== undefined ? payload.data : '');
     var assistantName = sanitizeName(payload.assistantName || 'Shared Workspace');

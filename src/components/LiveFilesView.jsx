@@ -28,6 +28,7 @@ import { extractDatabaseCredentials, fetchExternalDatabaseRecords } from '../uti
 import { isZipFile, expandFileList } from '../utils/zipHandler';
 import {
   saveFileToLocalStore,
+  saveFilesBatchToLocalStore,
   getFileFromLocalStore,
   deleteFileFromLocalStore
 } from '../utils/localFileStore';
@@ -36,6 +37,7 @@ import {
   connectGoogleDrive,
   disconnectDrive,
   uploadFileToDrive,
+  syncAgentFilesToDriveInBackground,
   listAssistantDriveFiles,
   fetchDriveFileContent,
   deleteDriveFile,
@@ -170,7 +172,10 @@ export default function LiveFilesView({
       showNotice('error', 'Failed to unpack .zip archive: ' + zipErr.message);
     }
 
-    for (const file of fileList) {
+    const uploadedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // 1. Read & analyze all files concurrently via Promise.all
+    const preparedItems = (await Promise.all(fileList.map(async (file, idx) => {
       try {
         const isText = file.textContent !== undefined
           ? !file.textContent.startsWith('[Binary File:')
@@ -189,96 +194,116 @@ export default function LiveFilesView({
         }
 
         const tier = detectFileType(file.name, isText ? content : '');
-        const fileId = `f_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-        await saveFileToLocalStore({
-          id: fileId,
-          name: file.name,
-          relativePath: file.relativePath || file.name,
-          mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
-          type: tier,
-          content,
-          blob: file,
-          assistantName: targetName
-        });
-
-        let driveMeta = {
-          storageStatus: 'local_cached',
-          driveFolderPath: `Echo AI Agents / ${targetName} / ${tier === 'frontend' ? 'Frontend' : tier === 'backend' ? 'Backend' : 'Database'}`
-        };
-
-        if (driveReady) {
-          try {
-            driveMeta = await uploadFileToDrive({
-              fileBlob: file,
-              fileName: file.name,
-              mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
-              assistantName: targetName,
-              tier,
-              content
-            });
-          } catch (driveErr) {
-            console.warn('Drive upload error for', file.name, driveErr);
-            driveMeta.storageStatus = 'drive_failed';
-            driveMeta.storageError = driveErr.message;
-          }
-        }
+        const fileId = `f_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 7)}`;
 
         let itemsCount = 0;
+        const fileKb = [];
+        const fileDbRecs = [];
+        let fileDbCreds = null;
+
         if (isText && (file.name.endsWith('.json') || file.type === 'application/json')) {
           const parsed = parseJsonFile(content);
           if (parsed.success) {
             const extracted = extractKnowledgeFromJson(parsed.data, targetName, 'Website');
             itemsCount = extracted?.itemsExtracted || 0;
             if (extracted?.knowledgeBase && extracted.knowledgeBase.length > 0) {
-              newExtractedKb.push(...extracted.knowledgeBase);
+              fileKb.push(...extracted.knowledgeBase);
             }
           }
         } else if (tier === 'database' && isText) {
           const dbAnalysis = analyzeDatabaseFile(file.name, content);
           itemsCount = dbAnalysis?.knowledgeBase?.length || 0;
           if (dbAnalysis?.knowledgeBase && dbAnalysis.knowledgeBase.length > 0) {
-            newExtractedKb.push(...dbAnalysis.knowledgeBase);
+            fileKb.push(...dbAnalysis.knowledgeBase);
           }
           if (dbAnalysis?.databaseRecords && dbAnalysis.databaseRecords.length > 0) {
-            newDbRecords.push(...dbAnalysis.databaseRecords);
+            fileDbRecs.push(...dbAnalysis.databaseRecords);
           }
         }
 
-        // Check for database credentials (Firebase, Supabase, Airtable, REST)
         if (isText) {
           const dbCreds = extractDatabaseCredentials(file.name, content);
           if (dbCreds.detected && dbCreds.config) {
-            detectedDbConfig = dbCreds.config;
-            detectedDbProvider = dbCreds.providerName;
+            fileDbCreds = dbCreds;
           }
         }
 
-        newRecords.push({
-          id: fileId,
-          name: file.name,
-          relativePath: file.relativePath || file.name,
-          size: `${(file.size / 1024).toFixed(1)} KB`,
-          sizeBytes: file.size,
-          mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
-          type: tier,
-          categoryLabel: tier === 'frontend' ? 'Frontend (UI/Pages)' : tier === 'backend' ? 'Backend (APIs/Routes)' : 'Database (Records/Catalog)',
-          uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        return {
+          fileId,
+          file,
+          isText,
+          content,
+          tier,
           itemsCount,
-          isBinary: !isText,
-          contentPreview: isText ? content.slice(0, 5000) : '',
-          ...driveMeta
-        });
+          fileKb,
+          fileDbRecs,
+          fileDbCreds
+        };
       } catch (err) {
         console.error('Error processing file upload:', file.name, err);
+        return null;
       }
+    }))).filter(Boolean);
+
+    // 2. Persist ALL files locally in ONE single batched IndexedDB transaction (< 30ms)
+    await saveFilesBatchToLocalStore(
+      preparedItems.map((it) => ({
+        id: it.fileId,
+        name: it.file.name,
+        relativePath: it.file.relativePath || it.file.name,
+        mimeType: it.file.type || (it.isText ? 'text/plain' : 'application/octet-stream'),
+        type: it.tier,
+        content: it.content,
+        blob: it.file,
+        assistantName: targetName
+      }))
+    );
+
+    const driveSyncQueue = [];
+    for (const it of preparedItems) {
+      if (it.fileKb.length > 0) newExtractedKb.push(...it.fileKb);
+      if (it.fileDbRecs.length > 0) newDbRecords.push(...it.fileDbRecs);
+      if (it.fileDbCreds) {
+        detectedDbConfig = it.fileDbCreds.config;
+        detectedDbProvider = it.fileDbCreds.providerName;
+      }
+
+      const driveMeta = {
+        storageStatus: driveReady ? 'syncing' : 'local_cached',
+        driveFolderPath: `Echo AI Agents / ${targetName} / ${it.tier === 'frontend' ? 'Frontend' : it.tier === 'backend' ? 'Backend' : 'Database'}`
+      };
+
+      newRecords.push({
+        id: it.fileId,
+        name: it.file.name,
+        relativePath: it.file.relativePath || it.file.name,
+        size: `${(it.file.size / 1024).toFixed(1)} KB`,
+        sizeBytes: it.file.size,
+        mimeType: it.file.type || (it.isText ? 'text/plain' : 'application/octet-stream'),
+        type: it.tier,
+        categoryLabel: it.tier === 'frontend' ? 'Frontend (UI/Pages)' : it.tier === 'backend' ? 'Backend (APIs/Routes)' : 'Database (Records/Catalog)',
+        uploadedAt: uploadedTime,
+        itemsCount: it.itemsCount,
+        isBinary: !it.isText,
+        contentPreview: it.isText ? it.content.slice(0, 1500) : '',
+        ...driveMeta
+      });
+
+      driveSyncQueue.push({
+        id: it.fileId,
+        name: it.file.name,
+        mimeType: it.file.type || (it.isText ? 'text/plain' : 'application/octet-stream'),
+        type: it.tier,
+        content: it.content,
+        rawFile: it.file
+      });
     }
 
     if (hasZip) {
       showNotice('success', `Unpacked & indexed ${newRecords.length} files from archive into Knowledge Base!`);
     }
 
-    // If database credentials were discovered, probe live database to pull real-time records
+    // If database credentials were discovered, probe live database concurrently (~0.5-2.5s max)
     if (detectedDbConfig) {
       try {
         const liveResult = await fetchExternalDatabaseRecords(detectedDbConfig);
@@ -316,16 +341,29 @@ export default function LiveFilesView({
           }
         }
       }
-      if (targetAssistant && onUpdateAssistantFiles) {
-        onUpdateAssistantFiles(targetId, updatedFileList, updatedKb, updatedDbRecords, detectedDbConfig);
-      }
+      await onUpdateAssistantFiles(targetId, updatedFileList, updatedKb, updatedDbRecords, detectedDbConfig);
     }
 
     setIsUploading(false);
     if (e.target) e.target.value = '';
 
+    // 3. Kick off concurrent background Google Drive sync (non-blocking)
+    if (driveReady && driveSyncQueue.length > 0) {
+      syncAgentFilesToDriveInBackground({
+        agentId: targetName,
+        files: driveSyncQueue,
+        onComplete: (results) => {
+          const syncedCount = (results || []).filter(r => r?.ok).length;
+          if (syncedCount > 0) {
+            showNotice('success', `Synced ${syncedCount}/${driveSyncQueue.length} file(s) to Google Drive for "${targetName}"!`);
+          }
+        }
+      });
+    }
+
     const kbCountMsg = newExtractedKb.length > 0 ? ` and indexed ${newExtractedKb.length} Q&A facts` : '';
-    showNotice('success', `Saved ${newRecords.length} file(s) inside "${targetName}"${kbCountMsg}!`);
+    const driveHint = driveReady ? ' (syncing to Google Drive in background...)' : '';
+    showNotice('success', `Saved ${newRecords.length} file(s) inside "${targetName}"${kbCountMsg}${driveHint}`);
   };
 
   // Delete file from a specific assistant
@@ -621,6 +659,13 @@ export default function LiveFilesView({
                               <span>•</span>
                               <span className="text-emerald-700 flex items-center gap-1 font-medium">
                                 <HardDrive size={10} /> Stored in Drive
+                              </span>
+                            </>
+                          ) : f.storageStatus === 'syncing' ? (
+                            <>
+                              <span>•</span>
+                              <span className="text-indigo-600 flex items-center gap-1 font-medium animate-pulse">
+                                <HardDrive size={10} /> Syncing to Drive…
                               </span>
                             </>
                           ) : (

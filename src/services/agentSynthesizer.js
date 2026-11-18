@@ -53,23 +53,23 @@ DISCOVERED PAGES / ROUTES:
 ${(siteBlueprint.routes || []).slice(0, 12).map(r => `- ${r.label} (${r.path})`).join('\n') || 'Single-page site'}
 ` : '';
 
-  const frontendExcerpts = frontend.map(f => `File: ${f.fileName}
+  const frontendExcerpts = frontend.slice(0, 8).map(f => `File: ${f.fileName}
 Site Title: ${f.siteTitle || 'N/A'}
-Site Description: ${f.siteDesc || 'N/A'}
-Discovered Products/Fleet: ${(f.discoveredProducts || []).join(', ') || 'N/A'}
-Pages/Headings: ${f.pages.slice(0, 8).join(', ')}
-Forms: ${f.forms.join(', ')}`).join('\n\n');
+Site Description: ${(f.siteDesc || 'N/A').slice(0, 180)}
+Discovered Products/Fleet: ${(f.discoveredProducts || []).slice(0, 10).join(', ') || 'N/A'}
+Pages/Headings: ${f.pages.slice(0, 6).join(', ')}
+Forms: ${f.forms.slice(0, 5).join(', ')}`).join('\n\n').slice(0, 2200);
 
-  const backendExcerpts = backend.map(b => `File: ${b.fileName}
-${b.summary}
+  const backendExcerpts = backend.slice(0, 6).map(b => `File: ${b.fileName}
+${(b.summary || '').slice(0, 200)}
 Endpoints:
-${b.endpoints.map(e => ` - ${e.method} ${e.path} (${e.name})`).join('\n')}`).join('\n\n');
+${b.endpoints.slice(0, 8).map(e => ` - ${e.method} ${e.path} (${e.name})`).join('\n')}`).join('\n\n').slice(0, 1600);
 
-  const databaseExcerpts = database.map(d => `File: ${d.fileName}
-${d.summary}
-Schema: ${d.schema.join(', ')}
+  const databaseExcerpts = database.slice(0, 6).map(d => `File: ${d.fileName}
+${(d.summary || '').slice(0, 200)}
+Schema: ${d.schema.slice(0, 8).join(', ')}
 Key Data/Specs:
-${d.knowledgeBase.slice(0, 10).map(k => ` - Q: ${k.q} -> A: ${k.a.substring(0, 120)}`).join('\n')}`).join('\n\n');
+${d.knowledgeBase.slice(0, 8).map(k => ` - Q: ${k.q} -> A: ${k.a.substring(0, 100)}`).join('\n')}`).join('\n\n').slice(0, 1600);
 
   const topFacts = combinedKnowledge.slice(0, 15).map(k => `- Q: "${k.q}" -> A: "${k.a.substring(0, 120)}"`).join('\n');
 
@@ -145,7 +145,11 @@ Respond ONLY with a valid JSON object matching this structure (no markdown forma
   let rawResponse = '';
 
   const callGroqSynthesis = async () => {
-    for (const modelId of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
+    const groqPlan = [
+      { modelId: 'llama-3.3-70b-versatile', timeoutMs: 7000 },
+      { modelId: 'llama-3.1-8b-instant', timeoutMs: 5000 }
+    ];
+    for (const { modelId, timeoutMs } of groqPlan) {
       try {
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -155,14 +159,15 @@ Respond ONLY with a valid JSON object matching this structure (no markdown forma
           },
           body: JSON.stringify({
             model: modelId,
+            response_format: { type: 'json_object' },
             messages: [
               { role: 'system', content: 'You are an AI system architect. First understand the website workflow, forms, and structure, then output valid JSON only.' },
               { role: 'user', content: metaPrompt }
             ],
-            temperature: 0.3,
-            max_tokens: 1800
+            temperature: 0.25,
+            max_tokens: 1500
           }),
-          signal: AbortSignal.timeout(10000)
+          signal: AbortSignal.timeout(timeoutMs)
         });
 
         if (res.ok) {
@@ -178,16 +183,24 @@ Respond ONLY with a valid JSON object matching this structure (no markdown forma
   };
 
   const callGeminiSynthesis = async () => {
-    for (const modelId of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+    const geminiPlan = [
+      { modelId: 'gemini-2.5-flash', timeoutMs: 7000 },
+      { modelId: 'gemini-2.0-flash', timeoutMs: 5000 }
+    ];
+    for (const { modelId, timeoutMs } of geminiPlan) {
       try {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${effectiveGeminiKey}`;
         const res = await fetch(geminiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: metaPrompt }] }]
+            contents: [{ parts: [{ text: metaPrompt }] }],
+            generationConfig: {
+              temperature: 0.25,
+              responseMimeType: 'application/json'
+            }
           }),
-          signal: AbortSignal.timeout(10000)
+          signal: AbortSignal.timeout(timeoutMs)
         });
 
         if (res.ok) {

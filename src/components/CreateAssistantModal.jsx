@@ -22,8 +22,8 @@ import { extractKnowledgeFromJson, parseJsonFile } from '../utils/aiKnowledgeExt
 import { detectFileType, analyzeFullStackFiles, detectWebsiteArchetype, getArchetypeMetadata } from '../utils/codebaseAnalyzer';
 import { fetchExternalDatabaseRecords } from '../utils/databaseKeyExtractor';
 import { saveAgent } from '../firebase';
-import { saveFileToLocalStore } from '../utils/localFileStore';
-import { isDriveConnected, uploadFileToDrive } from '../services/googleDriveService';
+import { saveFilesBatchToLocalStore } from '../utils/localFileStore';
+import { isDriveConnected, syncAgentFilesToDriveInBackground } from '../services/googleDriveService';
 import { getUserApiKeys, validateUserApiKey, saveUserApiKeys } from '../services/aiCompletionService';
 import { isZipFile, expandFileList } from '../utils/zipHandler';
 
@@ -108,8 +108,7 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
         setUploadedFileName(fileList.map(f => f.name).join(', '));
       }
 
-      const processedFiles = [];
-      for (const file of fileList) {
+      const processedFiles = await Promise.all(fileList.map(async (file, idx) => {
         let content = file.textContent;
         const isText = content !== undefined
           ? !content.startsWith('[Binary File:')
@@ -130,8 +129,8 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
         }
 
         const tier = detectFileType(file.name, isText ? content : '');
-        processedFiles.push({
-          id: `f_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        return {
+          id: `f_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
           name: file.name,
           relativePath: file.relativePath || file.name,
           mimeType: file.type || (isText ? 'text/plain' : 'application/octet-stream'),
@@ -142,8 +141,8 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
           isBinary: !isText,
           rawFile: file,
           content
-        });
-      }
+        };
+      }));
 
       setPendingRawFiles(processedFiles);
 
@@ -283,61 +282,47 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
       setIsSaving(true);
       const agentId = name.trim().replace(/\//g, '-');
       const driveReady = isDriveConnected();
-      const storedUploadedFiles = [];
+      const uploadedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      for (const f of pendingRawFiles) {
-        await saveFileToLocalStore({
-          id: f.id,
-          name: f.name,
-          mimeType: f.mimeType || 'text/plain',
-          type: f.type || 'database',
-          content: f.content || '',
-          blob: f.rawFile || null,
-          assistantName: agentId
-        });
-
-        let driveMeta = {
-          storageStatus: 'local_pending',
-          driveFolderPath: `Echo AI Agents / ${agentId} / ${f.type === 'frontend' ? 'Frontend' : f.type === 'backend' ? 'Backend' : 'Database'}`
-        };
-
-        if (driveReady) {
-          try {
-            driveMeta = await uploadFileToDrive({
-              fileBlob: f.rawFile || null,
-              fileName: f.name,
-              mimeType: f.mimeType || 'text/plain',
-              assistantName: agentId,
-              tier: f.type || 'database',
-              content: f.content || ''
-            });
-          } catch (err) {
-            console.warn('Drive upload error during create:', f.name, err);
-          }
-        }
-
-        storedUploadedFiles.push({
-          id: f.id,
-          name: f.name,
-          relativePath: f.relativePath || f.name,
-          mimeType: f.mimeType || 'text/plain',
-          size: f.size || '1 KB',
-          sizeBytes: f.sizeBytes || 1024,
-          type: f.type || 'database',
-          categoryLabel: f.categoryLabel || 'Database (Records/Catalog)',
-          isBinary: Boolean(f.isBinary),
-          uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          contentPreview: !f.isBinary && typeof f.content === 'string' ? f.content.slice(0, 5000) : '',
-          ...driveMeta
-        });
+      // 1. Persist ALL uploaded files locally in ONE single IndexedDB transaction (< 30ms)
+      if (pendingRawFiles.length > 0) {
+        await saveFilesBatchToLocalStore(
+          pendingRawFiles.map((f) => ({
+            id: f.id,
+            name: f.name,
+            relativePath: f.relativePath || f.name,
+            mimeType: f.mimeType || 'text/plain',
+            type: f.type || 'database',
+            content: f.content || '',
+            blob: f.rawFile || null,
+            assistantName: agentId
+          }))
+        );
       }
+
+      // 2. Build lean Firestore metadata (full content lives in IndexedDB + Google Drive)
+      const storedUploadedFiles = pendingRawFiles.map((f) => ({
+        id: f.id,
+        name: f.name,
+        relativePath: f.relativePath || f.name,
+        mimeType: f.mimeType || 'text/plain',
+        size: f.size || '1 KB',
+        sizeBytes: f.sizeBytes || 1024,
+        type: f.type || 'database',
+        categoryLabel: f.categoryLabel || 'Database (Records/Catalog)',
+        isBinary: Boolean(f.isBinary),
+        uploadedAt: uploadedTime,
+        contentPreview: !f.isBinary && typeof f.content === 'string' ? f.content.slice(0, 1500) : '',
+        storageStatus: driveReady ? 'syncing' : 'local_cached',
+        driveFolderPath: `Echo AI Agents / ${agentId} / ${f.type === 'frontend' ? 'Frontend' : f.type === 'backend' ? 'Backend' : 'Database'}`
+      }));
 
       const payload = {
         id: agentId,
         name: name.trim(),
         role: extractedData?.role || `${websiteName.trim() || 'Website'} Help Desk Assistant`,
         archetype: extractedData?.archetype || 'general',
-        model: model || 'Groq Qwen 27B (<200ms Free)',
+        model: model || 'Groq Llama 3.1 8B (<200ms Instant)',
         voice: voice || 'Clara',
         prompt: extractedData ? extractedData.systemPrompt : `You are ${name.trim()}, a helpful voice assistant for ${websiteName.trim() || 'the website'}.`,
         greeting: extractedData ? extractedData.greeting : `Hello! I am ${name.trim()}. How can I assist you today?`,
@@ -357,7 +342,18 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         updatedAt: new Date().toISOString()
       };
 
+      // 3. Save agent immediately (~200-500ms) so it's live right away!
       await saveAgent(payload);
+
+      // 4. Kick off fast concurrent Google Drive sync in the background (non-blocking)
+      if (driveReady && pendingRawFiles.length > 0) {
+        const filesSnapshot = pendingRawFiles.map((f) => ({ ...f, skipExistingCheck: true }));
+        syncAgentFilesToDriveInBackground({
+          agentId,
+          files: filesSnapshot
+        });
+      }
+
       if (onAssistantCreated) {
         onAssistantCreated(payload);
       }

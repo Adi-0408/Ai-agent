@@ -14,6 +14,7 @@ import { generateAIResponse, AI_KEYS, getUserApiKeys, hasValidUserApiKey, saveUs
 import {
   isDriveConnected,
   uploadFileToDrive,
+  syncAgentFilesToDriveInBackground,
   getDriveConnectionStatus,
   connectGoogleDrive,
   disconnectDrive,
@@ -23,6 +24,7 @@ import {
 } from './services/googleDriveService';
 import {
   saveFileToLocalStore,
+  saveFilesBatchToLocalStore,
   getFileFromLocalStore,
   clearAllFilesFromLocalStore,
   deleteAgentFilesFromLocalStore
@@ -369,66 +371,63 @@ export default function App() {
       contentPreview: rest.contentPreview || (typeof content === 'string' && !rest.isBinary ? content.slice(0, 15000) : '')
     }));
 
-  // Store files in IndexedDB + Google Drive (if connected) under Echo AI Agents/<Assistant Name>/<Frontend|Backend|Database>
+  // Store files locally in 1 batched IndexedDB transaction (< 30ms) and return lean Firestore records
+  // Google Drive upload runs concurrently in the background AFTER saveAgent() so deployment is instant!
   const storeAndUploadAgentFiles = async (assistantNameLabel, fileItems = []) => {
     const cleanAgentName = (assistantNameLabel || 'Voice Assistant').trim().replace(/\//g, '-') || 'Voice Assistant';
     const driveReady = isDriveConnected();
-    const storedRecords = [];
+    const uploadedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    for (const f of fileItems) {
+    const prepared = (fileItems || []).map((f, idx) => {
       const tier = f.type || detectFileType(f.name, f.content || '');
       const categoryLabel =
         f.categoryLabel ||
         (tier === 'frontend' ? 'Frontend (UI/Pages)' : tier === 'backend' ? 'Backend (APIs/Routes)' : 'Database (Records/Catalog)');
-      const fileId = f.id || `f_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-
-      await saveFileToLocalStore({
+      const fileId = f.id || `f_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+      return {
+        ...f,
         id: fileId,
-        name: f.name,
-        mimeType: f.mimeType || 'text/plain',
-        type: tier,
-        content: f.content || f.contentPreview || '',
-        blob: f.rawFile || f.blob || null,
-        assistantName: cleanAgentName
-      });
-
-      let driveMeta = {
-        storageStatus: 'local_pending',
-        driveFolderPath: `Echo AI Agents / ${cleanAgentName} / ${tier === 'frontend' ? 'Frontend' : tier === 'backend' ? 'Backend' : 'Database'}`
-      };
-
-      if (driveReady) {
-        try {
-          driveMeta = await uploadFileToDrive({
-            fileBlob: f.rawFile || f.blob || null,
-            fileName: f.name,
-            mimeType: f.mimeType || 'text/plain',
-            assistantName: cleanAgentName,
-            tier,
-            content: f.content || f.contentPreview || ''
-          });
-        } catch (err) {
-          console.warn('Drive upload skipped/failed for', f.name, err);
-        }
-      }
-
-      storedRecords.push({
-        id: fileId,
-        name: f.name,
-        mimeType: f.mimeType || 'text/plain',
-        size: f.size || '1.0 KB',
-        sizeBytes: f.sizeBytes || 0,
         type: tier,
         categoryLabel,
-        itemsCount: f.itemsCount || 0,
-        uploadedAt: f.uploadedAt || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isBinary: Boolean(f.isBinary),
-        contentPreview: f.contentPreview || (typeof f.content === 'string' && !f.isBinary ? f.content.slice(0, 15000) : ''),
-        ...driveMeta
-      });
+        mimeType: f.mimeType || 'text/plain',
+        content: f.content || f.contentPreview || '',
+        uploadedAt: f.uploadedAt || uploadedTime
+      };
+    });
+
+    if (prepared.length > 0) {
+      await saveFilesBatchToLocalStore(
+        prepared.map((f) => ({
+          id: f.id,
+          name: f.name,
+          relativePath: f.relativePath || f.name,
+          mimeType: f.mimeType,
+          type: f.type,
+          content: f.content,
+          blob: f.rawFile || f.blob || null,
+          assistantName: cleanAgentName
+        }))
+      );
     }
 
-    return storedRecords;
+    const storedRecords = prepared.map((f) => ({
+      id: f.id,
+      name: f.name,
+      relativePath: f.relativePath || f.name,
+      mimeType: f.mimeType,
+      size: f.size || '1.0 KB',
+      sizeBytes: f.sizeBytes || 0,
+      type: f.type,
+      categoryLabel: f.categoryLabel,
+      itemsCount: f.itemsCount || 0,
+      uploadedAt: f.uploadedAt,
+      isBinary: Boolean(f.isBinary),
+      contentPreview: !f.isBinary && typeof f.content === 'string' ? f.content.slice(0, 1500) : '',
+      storageStatus: driveReady ? 'syncing' : 'local_cached',
+      driveFolderPath: `Echo AI Agents / ${cleanAgentName} / ${f.type === 'frontend' ? 'Frontend' : f.type === 'backend' ? 'Backend' : 'Database'}`
+    }));
+
+    return { storedRecords, preparedFiles: prepared, driveReady };
   };
 
   // Persist updated uploaded files list specifically on the targeted assistant
@@ -1113,10 +1112,10 @@ export default function App() {
         ? agent.sourceFiles
         : composerAttachedFiles;
 
-      // Persist & upload all frontend, backend, database files to IndexedDB & Google Drive
-      const storedFiles = sourceFiles && sourceFiles.length > 0
+      // 1. Batch-save all frontend, backend, database files locally (<30ms) & prepare lean Firestore metadata
+      const { storedRecords, preparedFiles, driveReady } = sourceFiles && sourceFiles.length > 0
         ? await storeAndUploadAgentFiles(cleanName, sourceFiles)
-        : [];
+        : { storedRecords: [], preparedFiles: [], driveReady: false };
 
       const payload = {
         id: cleanName,
@@ -1136,12 +1135,21 @@ export default function App() {
         databaseConfig: agent.databaseConfig || null,
         siteBlueprint: agent.siteBlueprint || null,
         tools: agent.tools || [],
-        uploadedFiles: sanitizeFilesForFirestore(storedFiles),
+        uploadedFiles: sanitizeFilesForFirestore(storedRecords),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
 
+      // 2. Save agent to Firestore immediately (~250ms) so it is live right away
       await saveAgent(payload);
+
+      // 3. Kick off concurrent background Google Drive sync (non-blocking)
+      if (driveReady && preparedFiles.length > 0) {
+        syncAgentFilesToDriveInBackground({
+          agentId: cleanName,
+          files: preparedFiles.map((f) => ({ ...f, skipExistingCheck: true }))
+        });
+      }
 
       setAssistantsList((prev) => [payload, ...prev.filter((a) => a.id !== payload.id)]);
       setSelectedAssistantId(payload.id);

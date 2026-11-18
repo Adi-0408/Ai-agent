@@ -12,7 +12,9 @@ const IGNORED_PATH_PATTERNS = [
   /(^|\/)dist\//i,
   /(^|\/)build\//i,
   /(^|\/)target\//i,
-  /(^|\/)\.next\//i
+  /(^|\/)\.next\//i,
+  /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|cargo\.lock|poetry\.lock)$/i,
+  /\.(map|min\.js|min\.css|png|jpe?g|gif|webp|ico|bmp|tiff?|avif|mp4|mov|avi|webm|mp3|wav|ogg|woff2?|ttf|eot|otf|exe|dll|so|dylib|zip|tar|gz|rar|7z)$/i
 ];
 
 const TEXT_EXTENSIONS_REGEX = /\.(html?|css|scss|sass|less|jsx?|tsx?|mjs|cjs|vue|svelte|json|sql|csv|tsv|txt|md|markdown|xml|ya?ml|py|go|java|php|rb|rs|prisma|env|sh|bat|ini|toml|graphql|gql|log|c|cpp|h|hpp|cs|swift|kt|dart)$/i;
@@ -106,52 +108,57 @@ export async function extractFilesFromZip(zipFile, onProgress) {
   });
 
   const total = entries.length;
-
-  for (let i = 0; i < total; i++) {
-    const { relativePath, entry } = entries[i];
-    const fileName = relativePath.split('/').pop();
-    const isText = isTextFileName(fileName);
-    const mime = getMimeType(fileName, isText);
-
-    let content = '';
-    let fileBlob = null;
-
-    if (isText) {
-      try {
-        content = (await entry.async('text')).replace(/\0/g, ' ');
-      } catch (err) {
-        content = `[Failed to read text entry: ${err.message}]`;
-      }
-      fileBlob = new Blob([content], { type: mime });
-    } else {
-      const u8 = await entry.async('uint8array');
-      fileBlob = new Blob([u8], { type: mime });
-      content = `[Binary File: ${fileName}, size: ${(fileBlob.size / 1024).toFixed(1)} KB]`;
+  const FileClass = typeof File !== 'undefined' ? File : class extends Blob {
+    constructor(parts, name, opts) {
+      super(parts, opts);
+      this.name = name;
+      this.lastModified = opts?.lastModified || Date.now();
     }
+  };
 
-    const FileClass = typeof File !== 'undefined' ? File : class extends Blob {
-      constructor(parts, name, opts) {
-        super(parts, opts);
-        this.name = name;
-        this.lastModified = opts?.lastModified || Date.now();
+  let completed = 0;
+  const BATCH_SIZE = 10;
+
+  for (let start = 0; start < total; start += BATCH_SIZE) {
+    const slice = entries.slice(start, start + BATCH_SIZE);
+    const batchOut = await Promise.all(slice.map(async ({ relativePath, entry }) => {
+      const fileName = relativePath.split('/').pop();
+      const isText = isTextFileName(fileName);
+      const mime = getMimeType(fileName, isText);
+
+      let content = '';
+      let fileBlob = null;
+
+      if (isText) {
+        try {
+          content = (await entry.async('text')).replace(/\0/g, ' ');
+        } catch (err) {
+          content = `[Failed to read text entry: ${err.message}]`;
+        }
+        fileBlob = new Blob([content], { type: mime });
+      } else {
+        const u8 = await entry.async('uint8array');
+        fileBlob = new Blob([u8], { type: mime });
+        content = `[Binary File: ${fileName}, size: ${(fileBlob.size / 1024).toFixed(1)} KB]`;
       }
-    };
 
-    const fileObj = new FileClass([fileBlob], fileName, {
-      type: mime,
-      lastModified: entry.date ? entry.date.getTime() : Date.now()
-    });
+      const fileObj = new FileClass([fileBlob], fileName, {
+        type: mime,
+        lastModified: entry.date ? entry.date.getTime() : Date.now()
+      });
 
-    fileObj.relativePath = relativePath;
-    fileObj.textContent = content;
-    fileObj.isFromZip = true;
-    fileObj.zipArchiveName = zipFile.name || 'archive.zip';
+      fileObj.relativePath = relativePath;
+      fileObj.textContent = content;
+      fileObj.isFromZip = true;
+      fileObj.zipArchiveName = zipFile.name || 'archive.zip';
 
-    extractedFiles.push(fileObj);
-
-    if (onProgress) {
-      onProgress(i + 1, total, fileName);
-    }
+      completed++;
+      if (onProgress) {
+        onProgress(completed, total, fileName);
+      }
+      return fileObj;
+    }));
+    extractedFiles.push(...batchOut);
   }
 
   return extractedFiles;

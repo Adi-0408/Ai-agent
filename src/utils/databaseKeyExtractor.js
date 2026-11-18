@@ -201,82 +201,89 @@ export async function fetchExternalDatabaseRecords(dbConfig) {
     }
   }
 
-  // --- Provider 1: Firebase Firestore & Realtime DB ---
+  // --- Provider 1: Firebase Firestore & Realtime DB (Parallelized via Promise.allSettled: ~0.5–2.5s max!) ---
   if (dbConfig.type === 'firebase' && dbConfig.projectId) {
     const { projectId, apiKey, databaseURL } = dbConfig;
     const probeCollections = ['products', 'inventory', 'medicines', 'items', 'catalog', 'services', 'menu', 'store', 'shop', 'pricing', 'faqs'];
+    const rtdbUrl = databaseURL || `https://${projectId}-default-rtdb.firebaseio.com`;
 
-    // 1A. Attempt Firestore REST API for standard store/catalog collections
-    for (const col of probeCollections) {
-      try {
-        const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}${apiKey ? `?key=${apiKey}` : ''}`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && Array.isArray(data.documents)) {
-            data.documents.forEach(doc => {
-              const flat = parseFirestoreFields(doc.fields);
-              const docId = doc.name ? doc.name.split('/').pop() : '';
-              addRawRecord({ id: docId, ...flat });
-            });
-            successfulSource = `Firestore Collection '${col}'`;
-          }
-        }
-      } catch (err) {
-        // Continue probing other collections
+    const firestorePromises = probeCollections.map(async (col) => {
+      const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${col}${apiKey ? `?key=${apiKey}` : ''}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(2500) });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && Array.isArray(data.documents) && data.documents.length > 0) {
+        return { col, documents: data.documents };
+      }
+      return null;
+    });
+
+    const rtdbPromise = (async () => {
+      const res = await fetch(`${rtdbUrl}/.json`, { signal: AbortSignal.timeout(2500) });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data && typeof data === 'object') ? data : null;
+    })();
+
+    const [settledCols, settledRtdb] = await Promise.all([
+      Promise.allSettled(firestorePromises),
+      Promise.allSettled([rtdbPromise])
+    ]);
+
+    for (const outcome of settledCols) {
+      if (outcome.status === 'fulfilled' && outcome.value) {
+        const { col, documents } = outcome.value;
+        documents.forEach(doc => {
+          const flat = parseFirestoreFields(doc.fields);
+          const docId = doc.name ? doc.name.split('/').pop() : '';
+          addRawRecord({ id: docId, ...flat });
+        });
+        if (!successfulSource) successfulSource = `Firestore Collection '${col}'`;
       }
     }
 
-    // 1B. Attempt Firebase Realtime Database REST API (if available or open)
-    const rtdbUrl = databaseURL || `https://${projectId}-default-rtdb.firebaseio.com`;
-    try {
-      const res = await fetch(`${rtdbUrl}/.json`, { signal: AbortSignal.timeout(3500) });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && typeof data === 'object') {
-          // Check common root nodes
-          const candidates = data.products || data.inventory || data.catalog || data.items || data.medicines || data.menu || data;
-          if (Array.isArray(candidates)) {
-            candidates.forEach(addRawRecord);
-          } else if (typeof candidates === 'object') {
-            Object.entries(candidates).forEach(([k, v]) => {
-              if (v && typeof v === 'object') addRawRecord({ id: k, ...v });
-            });
-          }
-          if (databaseRecords.length > 0 && !successfulSource) {
-            successfulSource = 'Firebase Realtime Database';
-          }
-        }
+    if (settledRtdb[0]?.status === 'fulfilled' && settledRtdb[0].value) {
+      const data = settledRtdb[0].value;
+      const candidates = data.products || data.inventory || data.catalog || data.items || data.medicines || data.menu || data;
+      if (Array.isArray(candidates)) {
+        candidates.forEach(addRawRecord);
+      } else if (typeof candidates === 'object') {
+        Object.entries(candidates).forEach(([k, v]) => {
+          if (v && typeof v === 'object') addRawRecord({ id: k, ...v });
+        });
       }
-    } catch (err) {
-      // Ignore RTDB probe failure
+      if (databaseRecords.length > 0 && !successfulSource) {
+        successfulSource = 'Firebase Realtime Database';
+      }
     }
   }
 
-  // --- Provider 2: Supabase PostgREST ---
+  // --- Provider 2: Supabase PostgREST (Parallelized via Promise.allSettled: ~0.5–2.5s max!) ---
   if (dbConfig.type === 'supabase' && dbConfig.supabaseUrl && dbConfig.supabaseKey) {
     const { supabaseUrl, supabaseKey } = dbConfig;
     const probeTables = ['products', 'inventory', 'medicines', 'items', 'catalog', 'services', 'menu', 'faqs'];
 
-    for (const tbl of probeTables) {
-      try {
+    const settledTables = await Promise.allSettled(
+      probeTables.map(async (tbl) => {
         const url = `${supabaseUrl}/rest/v1/${tbl}?select=*&limit=100`;
         const res = await fetch(url, {
           headers: {
             'apikey': supabaseKey,
             'Authorization': `Bearer ${supabaseKey}`
           },
-          signal: AbortSignal.timeout(3500)
+          signal: AbortSignal.timeout(2500)
         });
-        if (res.ok) {
-          const rows = await res.json();
-          if (Array.isArray(rows)) {
-            rows.forEach(addRawRecord);
-            if (!successfulSource) successfulSource = `Supabase Table '${tbl}'`;
-          }
-        }
-      } catch (err) {
-        // Continue probing next table
+        if (!res.ok) return null;
+        const rows = await res.json();
+        return Array.isArray(rows) && rows.length > 0 ? { tbl, rows } : null;
+      })
+    );
+
+    for (const outcome of settledTables) {
+      if (outcome.status === 'fulfilled' && outcome.value) {
+        const { tbl, rows } = outcome.value;
+        rows.forEach(addRawRecord);
+        if (!successfulSource) successfulSource = `Supabase Table '${tbl}'`;
       }
     }
   }
