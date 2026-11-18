@@ -209,15 +209,27 @@ export default function ApiKeyModal({
             </span>
           </label>
 
-          <a
-            href={activeProvider === 'groq' ? "https://console.groq.com/keys" : "https://aistudio.google.com/app/apikey"}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition-colors"
-          >
-            <span>Get Free Key in 10s</span>
-            <ExternalLink size={11} />
-          </a>
+          <div className="flex items-center gap-2">
+            <a
+              href="https://console.groq.com/keys"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition-colors"
+            >
+              <span>Get Groq Key</span>
+              <ExternalLink size={11} />
+            </a>
+            <span className="text-slate-300">|</span>
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-800 flex items-center gap-1 transition-colors"
+            >
+              <span>Get Gemini Key</span>
+              <ExternalLink size={11} />
+            </a>
+          </div>
         </div>
 
         {/* Input with Show/Hide and Clear */}

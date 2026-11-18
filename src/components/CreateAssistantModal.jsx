@@ -471,21 +471,33 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
 
           {/* AI API Key Section (Mandatory Groq or Gemini Key) */}
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
               <label className="font-bold text-slate-800 flex items-center gap-1.5">
                 <KeyRound size={13} className="text-indigo-600" />
                 <span>AI API Key for this Assistant (Groq or Gemini)</span>
                 <span className="text-[10px] text-rose-500 font-bold">*Required</span>
               </label>
-              <a
-                href="https://console.groq.com/keys"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-indigo-600 hover:text-indigo-800 text-[11px] font-semibold inline-flex items-center gap-0.5"
-              >
-                <span>Get Free Key</span>
-                <ExternalLink size={10} />
-              </a>
+              <div className="flex items-center gap-2.5">
+                <a
+                  href="https://console.groq.com/keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-600 hover:text-indigo-800 text-[11px] font-semibold inline-flex items-center gap-0.5 transition-colors"
+                >
+                  <span>Get Groq Key</span>
+                  <ExternalLink size={10} />
+                </a>
+                <span className="text-slate-300">|</span>
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 hover:text-emerald-800 text-[11px] font-semibold inline-flex items-center gap-0.5 transition-colors"
+                >
+                  <span>Get Gemini Key</span>
+                  <ExternalLink size={10} />
+                </a>
+              </div>
             </div>
 
             <div className="space-y-2 pt-0.5">

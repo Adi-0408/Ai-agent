@@ -68,6 +68,7 @@ import {
   Info,
   Star,
   AudioWaveform,
+  Loader2,
   BookOpen,
   Code2,
   ExternalLink,
@@ -179,6 +180,8 @@ export default function App() {
   const [isDriveSetupModalOpen, setIsDriveSetupModalOpen] = useState(false);
   const [driveStatus, setDriveStatus] = useState(() => getDriveConnectionStatus());
   const [isComposerMicListening, setIsComposerMicListening] = useState(false);
+  const [isLaunchingTestWidget, setIsLaunchingTestWidget] = useState(false);
+  const widgetLaunchPollRef = useRef(null);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const composerRecognitionRef = useRef(null);
 
@@ -746,6 +749,12 @@ export default function App() {
     const apiKey = target.apiKey || getUserApiKeys().activeKey || '';
     const voice = target.voice || selectedVoice || 'Adam';
 
+    if (widgetLaunchPollRef.current) {
+      clearInterval(widgetLaunchPollRef.current);
+      widgetLaunchPollRef.current = null;
+    }
+    setIsLaunchingTestWidget(true);
+
     // Mount and auto-open the floating voice widget cleanly at the bottom-right corner
     try {
       const existingRoot = document.getElementById('voice-helpdesk-root');
@@ -759,8 +768,29 @@ export default function App() {
       script.setAttribute('data-api-key', apiKey);
       script.setAttribute('data-auto-open', 'true');
       script.defer = true;
+      script.onerror = () => {
+        if (widgetLaunchPollRef.current) {
+          clearInterval(widgetLaunchPollRef.current);
+          widgetLaunchPollRef.current = null;
+        }
+        setIsLaunchingTestWidget(false);
+      };
       document.body.appendChild(script);
-    } catch (e) {}
+
+      const startedAt = Date.now();
+      widgetLaunchPollRef.current = setInterval(() => {
+        const mountedRoot = document.getElementById('voice-helpdesk-root');
+        const panelOpen = mountedRoot?.shadowRoot?.querySelector('#vhd-panel.open');
+        const elapsed = Date.now() - startedAt;
+        if (panelOpen || (mountedRoot && elapsed > 1200) || elapsed > 5500) {
+          clearInterval(widgetLaunchPollRef.current);
+          widgetLaunchPollRef.current = null;
+          setIsLaunchingTestWidget(false);
+        }
+      }, 120);
+    } catch (e) {
+      setIsLaunchingTestWidget(false);
+    }
   };
 
   const handleToggleComposerMic = async () => {
@@ -2296,12 +2326,26 @@ export default function App() {
                       {/* Talk Live Button */}
                       <button
                         type="button"
+                        disabled={isLaunchingTestWidget}
                         onClick={() => handleLaunchTestWidget(currentAssistant)}
-                        className="h-8 px-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer"
+                        className={`h-8 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
+                          isLaunchingTestWidget
+                            ? 'bg-indigo-100 border-indigo-400 text-indigo-800 ring-2 ring-indigo-400/35 animate-pulse cursor-wait'
+                            : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700 active:scale-95'
+                        }`}
                         title="Test voice audio in browser specifically for this assistant"
                       >
-                        <AudioWaveform size={13} />
-                        <span>Test Mic</span>
+                        {isLaunchingTestWidget ? (
+                          <>
+                            <Loader2 size={13} className="animate-spin text-indigo-600" />
+                            <span>Starting Mic...</span>
+                          </>
+                        ) : (
+                          <>
+                            <AudioWaveform size={13} />
+                            <span>Test Mic</span>
+                          </>
+                        )}
                       </button>
 
                       {/* Agent API Key & Embed Code */}
@@ -3559,19 +3603,25 @@ export default function App() {
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => {
-                                          const script = document.createElement('script');
-                                          script.src = '/widget.js';
-                                          script.setAttribute('data-agent-id', msg.synthesizedAgent.id);
-                                          script.setAttribute('data-api-key', msg.synthesizedAgent.apiKey || getUserApiKeys().activeKey || '');
-                                          script.defer = true;
-                                          document.body.appendChild(script);
-                                          alert(`Voice Help Desk active for "${msg.synthesizedAgent.name}"! Look at the bottom-right of your screen.`);
-                                        }}
-                                        className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+                                        disabled={isLaunchingTestWidget}
+                                        onClick={() => handleLaunchTestWidget(msg.synthesizedAgent)}
+                                        className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer ${
+                                          isLaunchingTestWidget
+                                            ? 'bg-indigo-100 border-indigo-400 text-indigo-800 animate-pulse cursor-wait'
+                                            : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700'
+                                        }`}
                                       >
-                                        <AudioWaveform size={12} />
-                                        <span>Test Voice</span>
+                                        {isLaunchingTestWidget ? (
+                                          <>
+                                            <Loader2 size={12} className="animate-spin" />
+                                            <span>Starting Mic...</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <AudioWaveform size={12} />
+                                            <span>Test Voice</span>
+                                          </>
+                                        )}
                                       </button>
                                       <button
                                         type="button"
@@ -4099,6 +4149,33 @@ export default function App() {
           onClose={() => setIsDriveSetupModalOpen(false)}
           onConnected={(status) => setDriveStatus(status)}
         />
+      )}
+
+      {/* Floating Bottom-Right Mic Launch Animation while Widget Initializes */}
+      {isLaunchingTestWidget && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-4 py-3 rounded-2xl bg-slate-900/95 text-white border border-indigo-500/40 shadow-2xl shadow-indigo-500/25 backdrop-blur-md animate-fadeIn"
+        >
+          <div className="relative flex items-center justify-center w-9 h-9">
+            <span className="absolute inset-0 rounded-full bg-indigo-500/35 animate-ping" />
+            <div className="relative w-9 h-9 rounded-full bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center shadow-md">
+              <Loader2 size={16} className="animate-spin text-white" />
+            </div>
+          </div>
+          <div className="pr-1">
+            <div className="text-xs font-bold tracking-tight flex items-center gap-1.5">
+              <span>Launching Voice Widget</span>
+              <span className="inline-flex items-center gap-0.5">
+                <span className="w-1 h-1 rounded-full bg-cyan-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1 h-1 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </span>
+            </div>
+            <div className="text-[10.5px] text-slate-300">Connecting assistant &amp; warming up mic…</div>
+          </div>
+        </div>
       )}
     </div>
   );

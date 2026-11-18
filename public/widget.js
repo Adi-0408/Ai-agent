@@ -895,6 +895,11 @@
         width: 16px;
         height: 16px;
       }
+      .vhd-orb-btn.connecting {
+        animation: pulseConnecting 0.9s infinite ease-in-out;
+        background: linear-gradient(135deg, #6366f1, #06b6d4);
+        box-shadow: 0 0 18px rgba(56, 189, 248, 0.7);
+      }
       .vhd-orb-btn.listening {
         animation: pulseOrb 1.4s infinite;
         background: linear-gradient(135deg, #ef4444, #f97316);
@@ -904,6 +909,11 @@
         animation: pulseSpeaking 1.2s infinite;
         background: linear-gradient(135deg, #10b981, #06b6d4);
         box-shadow: 0 0 18px rgba(16, 185, 129, 0.7);
+      }
+      @keyframes pulseConnecting {
+        0% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); opacity: 0.9; }
+        50% { transform: scale(1.08); box-shadow: 0 0 0 9px rgba(99, 102, 241, 0); opacity: 1; }
+        100% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); opacity: 0.9; }
       }
       @keyframes pulseOrb {
         0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.65); }
@@ -968,6 +978,12 @@
         background: rgba(56, 189, 248, 0.16);
         border-color: #38bdf8;
         color: #ffffff;
+      }
+      .vhd-voice-btn.connecting {
+        background: rgba(56, 189, 248, 0.22);
+        border-color: #38bdf8;
+        color: #7dd3fc;
+        animation: pulseConnecting 0.9s infinite ease-in-out;
       }
       .vhd-voice-btn.listening {
         background: rgba(239, 68, 68, 0.22);
@@ -1212,7 +1228,7 @@
     shadow.querySelectorAll('.vhd-chip-btn').forEach(chip => {
       chip.addEventListener('click', () => {
         const q = chip.getAttribute('data-query');
-        if (q) handleUserMessage(q);
+        if (q) handleUserMessage(q, { source: 'text' });
       });
     });
 
@@ -1230,8 +1246,24 @@
     // Fully Automatic Multilingual Detection (English, Hindi & Marathi detected automatically per turn!)
     let currentSpeechLang = 'auto';
 
+    // Voice-Only Hands-Free Loop State
+    let lastInputWasVoice = false;
+    let userManuallyStoppedMic = false;
+    let isAutoResumedListening = false;
+    let autoResumeTimer = null;
+
+    function cancelAutoResumeTimer() {
+      if (autoResumeTimer) {
+        clearTimeout(autoResumeTimer);
+        autoResumeTimer = null;
+      }
+    }
+
     function updateVoiceState(state) {
-      if (state === 'listening') {
+      if (state === 'connecting') {
+        orb.className = 'vhd-orb-btn connecting';
+        if (voiceBtn) voiceBtn.className = 'vhd-voice-btn connecting';
+      } else if (state === 'listening') {
         orb.className = 'vhd-orb-btn listening';
         if (voiceBtn) voiceBtn.className = 'vhd-voice-btn listening';
       } else if (state === 'speaking') {
@@ -1266,9 +1298,9 @@
         finalRecordedTranscript = '';
         lastCapturedSpokenText = '';
         updateVoiceState('listening');
-        voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Listening to your voice...' :
-                                 currentSpeechLang.startsWith('hi') ? 'आपकी आवाज़ सुन रहे हैं...' :
-                                 currentSpeechLang.startsWith('mr') ? 'तुमचा आवाज ऐकत आहोत...' :
+        const activeLang = (conversationContext && conversationContext.activeLang) || currentSpeechLang;
+        voiceLabel.textContent = activeLang.startsWith('hi') ? 'आपकी आवाज़ सुन रहे हैं...' :
+                                 activeLang.startsWith('mr') ? 'तुमचा आवाज ऐकत आहोत...' :
                                  'Listening to your voice...';
       };
 
@@ -1300,19 +1332,31 @@
           try { widgetMediaRecorder.stop(); } catch (_) {}
         }
         if (event?.error === 'not-allowed' || event?.error === 'permission-denied') {
+          lastInputWasVoice = false;
+          userManuallyStoppedMic = true;
           voiceLabel.textContent = 'Mic blocked! Allow in URL bar';
           appendMsg('Microphone access was denied. Please click the camera/lock icon in your address bar and allow microphone permissions.', 'agent');
         } else if (event?.error === 'no-speech') {
-          voiceLabel.textContent = 'No voice heard. Tap to retry';
+          if (isAutoResumedListening) {
+            // User stayed silent after auto-resume: cleanly exit hands-free loop
+            lastInputWasVoice = false;
+            isAutoResumedListening = false;
+            voiceLabel.textContent = 'Tap to Speak';
+          } else {
+            voiceLabel.textContent = 'No voice heard. Tap to retry';
+          }
         } else if (event?.error === 'audio-capture') {
+          lastInputWasVoice = false;
+          userManuallyStoppedMic = true;
           voiceLabel.textContent = 'No microphone device found';
         } else {
-          voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Tap to Speak' : 'Tap to Speak';
+          voiceLabel.textContent = 'Tap to Speak';
         }
       };
 
       recognition.onend = async () => {
         isListening = false;
+        const wasManualCancel = userManuallyStoppedMic;
         if (widgetMediaRecorder && widgetMediaRecorder.state !== 'inactive') {
           try { widgetMediaRecorder.stop(); } catch (e) {}
         }
@@ -1321,14 +1365,23 @@
           activeStream = null;
         }
 
+        // If user explicitly clicked to stop listening and spoke nothing, stay idle
+        const directPreview = (finalRecordedTranscript || lastCapturedSpokenText).trim();
+        if (wasManualCancel && !directPreview) {
+          updateVoiceState('');
+          voiceLabel.textContent = 'Tap to Speak';
+          return;
+        }
+
         const apiKey = (currentScript && (currentScript.getAttribute('data-api-key') || currentScript.getAttribute('data-key'))) ||
                        agentConfig.apiKey || window.AI_AGENT_API_KEY || '';
 
         // 1. Acoustic Auto-Detection with Groq Whisper (Language Identification LID)
         if (widgetAudioChunks.length > 0 && apiKey && apiKey.startsWith('gsk_')) {
           const audioBlob = new Blob(widgetAudioChunks, { type: 'audio/webm' });
-          if (audioBlob.size > 1500) {
-            voiceLabel.textContent = 'Auto-detecting language...';
+          if (audioBlob.size > 1500 && (directPreview || !isAutoResumedListening)) {
+            updateVoiceState('connecting');
+            voiceLabel.textContent = 'Processing voice...';
             try {
               const formData = new FormData();
               formData.append('file', audioBlob, 'audio.webm');
@@ -1363,19 +1416,21 @@
                 if (!isAllowedLanguage) {
                   console.warn('[Echo AI Voice] Rejecting unsupported voice input language:', detectedLID);
                   voiceLabel.textContent = 'Please speak in English, हिंदी, or मराठी';
+                  lastInputWasVoice = false;
                   return;
                 }
 
                 if (cleanWhisper && !isHallucination) {
                   finalRecordedTranscript = '';
                   lastCapturedSpokenText = '';
+                  isAutoResumedListening = false;
                   if (detectedLID) {
                     const tag = detectedLID.includes('marathi') ? '🚩 मराठी' :
                                 detectedLID.includes('hindi') ? '🇮🇳 हिंदी' :
                                 detectedLID.includes('english') ? '🇬🇧 English' : '🇮🇳 Indian English';
                     voiceLabel.textContent = `Detected ${tag}...`;
                   }
-                  handleUserMessage(cleanWhisper);
+                  handleUserMessage(cleanWhisper, { source: 'voice', whisperLang: detectedLID });
                   return;
                 }
               }
@@ -1390,13 +1445,20 @@
         if (directSpoken) {
           finalRecordedTranscript = '';
           lastCapturedSpokenText = '';
-          handleUserMessage(directSpoken);
+          isAutoResumedListening = false;
+          handleUserMessage(directSpoken, { source: 'voice' });
           return;
+        }
+
+        // Nothing heard: exit hands-free loop cleanly
+        if (isAutoResumedListening) {
+          lastInputWasVoice = false;
+          isAutoResumedListening = false;
         }
 
         if (orb.className !== 'vhd-orb-btn speaking') {
           updateVoiceState('');
-          voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Tap to Speak (Auto-Detect)' : 'Tap to Speak';
+          voiceLabel.textContent = currentSpeechLang === 'auto' ? 'Tap to Speak' : 'Tap to Speak';
         }
       };
     } else {
@@ -1409,8 +1471,14 @@
     });
     closeBtn.addEventListener('click', () => {
       panel.classList.remove('open');
+      cancelAutoResumeTimer();
+      userManuallyStoppedMic = true;
+      lastInputWasVoice = false;
+      isAutoResumedListening = false;
       if (window.speechSynthesis) window.speechSynthesis.cancel();
-      if (recognition && isListening) recognition.stop();
+      if (recognition && isListening) {
+        try { recognition.stop(); } catch (_) {}
+      }
       if (activeStream) {
         activeStream.getTracks().forEach(track => track.stop());
         activeStream = null;
@@ -1424,6 +1492,99 @@
       }, 300);
     }
 
+    // Dedicated Voice Start Helper (supports both user tap and automatic post-answer resume)
+    const startVoiceListening = async ({ isAutoResume = false } = {}) => {
+      if (!recognition) {
+        if (!isAutoResume) {
+          alert('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
+        }
+        return;
+      }
+      if (isListening || isHandlingMessage) return;
+      if (isAutoResume && (!panel.classList.contains('open') || userManuallyStoppedMic)) return;
+
+      cancelAutoResumeTimer();
+      userManuallyStoppedMic = false;
+      isAutoResumedListening = Boolean(isAutoResume);
+
+      // Instant 0ms visual feedback while OS microphone & recognizer initialize
+      updateVoiceState('connecting');
+      const initLang = (conversationContext && conversationContext.activeLang) || currentSpeechLang;
+      voiceLabel.textContent = initLang.startsWith('hi') ? 'माइक शुरू हो रहा है...' :
+                               initLang.startsWith('mr') ? 'माईक सुरू होत आहे...' :
+                               'Starting mic...';
+
+      if (window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+      }
+
+      // Sync recognition language with active conversation language
+      if (currentSpeechLang === 'auto') {
+        const activeLang = (conversationContext && conversationContext.activeLang) || 'en-IN';
+        recognition.lang = activeLang === 'en-US' ? 'en-IN' : activeLang;
+      } else {
+        recognition.lang = currentSpeechLang;
+      }
+
+      // Keep microphone stream open while recording
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          activeStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
+          });
+        }
+      } catch (permErr) {
+        lastInputWasVoice = false;
+        userManuallyStoppedMic = true;
+        voiceLabel.textContent = 'Mic blocked! Allow in URL bar';
+        if (!isAutoResume) {
+          appendMsg('Microphone permission was denied. Please click the camera/lock icon in your address bar to allow access.', 'agent');
+        }
+        return;
+      }
+
+      widgetAudioChunks = [];
+      if (activeStream && typeof MediaRecorder !== 'undefined') {
+        try {
+          widgetMediaRecorder = new MediaRecorder(activeStream);
+          widgetMediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) widgetAudioChunks.push(e.data);
+          };
+          widgetMediaRecorder.start(250);
+        } catch (e) {}
+      }
+
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn('Recognition start error:', e);
+        try {
+          recognition.abort();
+          setTimeout(() => {
+            if (!userManuallyStoppedMic && !isListening) {
+              try { recognition.start(); } catch (_) {}
+            }
+          }, 150);
+        } catch (e2) {}
+      }
+    };
+
+    const stopVoiceListening = ({ isManualStop = false } = {}) => {
+      cancelAutoResumeTimer();
+      if (isManualStop) {
+        userManuallyStoppedMic = true;
+        lastInputWasVoice = false;
+        isAutoResumedListening = false;
+      }
+      if (recognition && isListening) {
+        try { recognition.stop(); } catch (_) {}
+      }
+    };
+
     // Unified Voice Recording Handler (Instant <50ms Barge-in Response)
     const toggleVoiceRecording = async () => {
       if (!recognition) {
@@ -1431,69 +1592,35 @@
         return;
       }
 
-      // If agent is speaking, cancel speech and reset state immediately (Barge-in)
+      cancelAutoResumeTimer();
+
+      // If agent is speaking, cancel speech and immediately start listening (Barge-in)
       if (window.speechSynthesis && (window.speechSynthesis.speaking || orb.classList.contains('speaking'))) {
         try { window.speechSynthesis.cancel(); } catch (_) {}
         if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
         if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
         window.__vhdActiveUtterance = null;
         updateVoiceState('');
+        await startVoiceListening({ isAutoResume: false });
+        return;
       }
 
       if (isListening) {
-        recognition.stop();
+        stopVoiceListening({ isManualStop: true });
       } else {
-        if (window.speechSynthesis) window.speechSynthesis.cancel();
-
-        // Keep microphone stream open while recording
-        try {
-          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            activeStream = await navigator.mediaDevices.getUserMedia({
-              audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-              }
-            });
-          }
-        } catch (permErr) {
-          voiceLabel.textContent = 'Mic blocked! Allow in URL bar';
-          appendMsg('Microphone permission was denied. Please click the camera/lock icon in your address bar to allow access.', 'agent');
-          return;
-        }
-
-        widgetAudioChunks = [];
-        if (activeStream && typeof MediaRecorder !== 'undefined') {
-          try {
-            widgetMediaRecorder = new MediaRecorder(activeStream);
-            widgetMediaRecorder.ondataavailable = (e) => {
-              if (e.data && e.data.size > 0) widgetAudioChunks.push(e.data);
-            };
-            widgetMediaRecorder.start(250);
-          } catch (e) {}
-        }
-
-        try {
-          recognition.start();
-        } catch (e) {
-          console.warn('Recognition start error:', e);
-          try {
-            recognition.abort();
-            setTimeout(() => recognition.start(), 150);
-          } catch (e2) {}
-        }
+        await startVoiceListening({ isAutoResume: false });
       }
     };
 
     orb.addEventListener('click', toggleVoiceRecording);
     if (voiceBtn) voiceBtn.addEventListener('click', toggleVoiceRecording);
 
-    // Send text message
+    // Send text message (never triggers hands-free mic auto-listen)
     function submitText() {
       const txt = input.value.trim();
       if (txt) {
         input.value = '';
-        handleUserMessage(txt);
+        handleUserMessage(txt, { source: 'text' });
       }
     }
     sendBtn.addEventListener('click', submitText);
@@ -5097,11 +5224,11 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         ? `\n[ACTIVE_CONVERSATION_CONTEXT]\n${activeContextLines.join('\n')}\nNOTE: If the customer asks a follow-up ("what do you provide in that", "the first one", "fees", "yes", "tell me more", "how to apply/order"), resolve it directly from this context and NEVER ask a generic welcome prompt!\n`
         : '';
 
-      let langDirective = 'Speak in clear, natural English.';
+      let langDirective = 'Speak in clear, natural English. However, if the visitor mixes Marathi or Hindi words/grammar with English (Marathish or Hinglish), reply strictly in natural Marathi (मराठी) or Hindi (हिंदी) in Devanagari script instead of English.';
       if (queryLang === 'mr-IN') {
-        langDirective = 'Reply strictly in natural, polite Marathi (मराठी).';
+        langDirective = 'Reply strictly in natural, polite Marathi (मराठी, Devanagari script). Even if the visitor mixes English words (like admission, form, course, fees, college, doctor, price, timing) into their Marathi question, you MUST answer completely in Marathi — you may keep common English proper nouns naturally inside Marathi sentences, but NEVER switch the reply into full English!';
       } else if (queryLang === 'hi-IN') {
-        langDirective = 'Reply strictly in natural, polite Hindi (हिंदी).';
+        langDirective = 'Reply strictly in natural, polite Hindi (हिंदी, Devanagari script). Even if the visitor mixes English words (like admission, form, course, fees, college, doctor, price, timing) into their Hindi question, you MUST answer completely in Hindi — you may keep common English proper nouns naturally inside Hindi sentences, but NEVER switch the reply into full English!';
       }
 
       const hostKnowledge = extractHostPageKnowledge();
@@ -5420,7 +5547,7 @@ ${cleanFaqBlock}`;
 
     async function _inferLocalAgentResponseCore(userText, bridgeResult = null, history = [], context = null) {
       const text = userText.trim();
-      const queryLang = detectTextLanguage(text);
+      const queryLang = (context && context.resolvedTurnLang) || detectTextLanguage(text, { previousLang: context?.activeLang });
 
       // 0. Immediate STANDALONE Greeting, Gratitude & Farewell Handler (English, Hindi, Marathi)
       // Never triggers when user writes a greeting followed by an actual question (e.g. "hey i want know about the courses")
@@ -6349,16 +6476,43 @@ ${cleanFaqBlock}`;
 
     let isHandlingMessage = false;
 
+    function isFarewellQuery(text) {
+      if (!text || typeof text !== 'string') return false;
+      const clean = text.trim();
+      const lower = clean.toLowerCase();
+      return (
+        /\b(bye+|goodbye|good\s*bye|see\s+you|take\s+care|alvida|stop\s+listening|stop\s+mic|turn\s+off\s+mic)\b/i.test(lower) ||
+        /(अलविदा|बाय|बंद\s*करा|माइक\s*बंद|माईक\s*बंद)/.test(clean)
+      );
+    }
+
     // Process Message with 0ms Instant UI Feedback, Animated Typing Indicator & Progressive Delay Messages
-    async function handleUserMessage(userText) {
+    async function handleUserMessage(userText, options = {}) {
       const cleanInput = String(userText || '').trim();
       if (!cleanInput || isHandlingMessage) return;
+
+      const inputSource = options?.source === 'voice' ? 'voice' : 'text';
+      const whisperLang = options?.whisperLang || '';
+      const isVoiceTurn = inputSource === 'voice';
+
+      cancelAutoResumeTimer();
+      lastInputWasVoice = isVoiceTurn;
+      if (isVoiceTurn) {
+        userManuallyStoppedMic = false;
+      }
 
       isHandlingMessage = true;
       if (sendBtn) sendBtn.disabled = true;
 
       // 0ms Instant Optimistic UI: Show visitor question & animated typing bubble BEFORE any network await!
-      const detectedQueryLang = detectTextLanguage(cleanInput);
+      const prevActiveLang = conversationContext.activeLang || '';
+      const detectedQueryLang = detectTextLanguage(cleanInput, {
+        whisperLang,
+        previousLang: prevActiveLang
+      });
+      conversationContext.activeLang = detectedQueryLang;
+      conversationContext.resolvedTurnLang = detectedQueryLang;
+
       appendMsg(cleanInput, 'user');
       conversationHistory.push({ role: 'user', content: cleanInput });
       sessionLogMessages.push({ role: 'user', text: cleanInput, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
@@ -6368,7 +6522,7 @@ ${cleanFaqBlock}`;
       const typingLoader = showTypingIndicator(detectedQueryLang);
 
       if (recognition && currentSpeechLang === 'auto') {
-        recognition.lang = detectedQueryLang;
+        recognition.lang = detectedQueryLang === 'en-US' ? 'en-IN' : detectedQueryLang;
       }
 
       // Non-blocking background config/deletion sync (never delays the visitor's question!)
@@ -6471,7 +6625,8 @@ ${cleanFaqBlock}`;
         orb.className = 'vhd-orb-btn speaking';
         voiceLabel.textContent = 'Speaking...';
         appendMsg(reply, 'agent', navAction);
-        speakReply(reply);
+        const shouldAutoListen = isVoiceTurn && !isFarewellQuery(cleanInput);
+        speakReply(reply, { shouldAutoListen });
       } catch (err) {
         console.warn('[Echo AI Widget] Error handling message:', err);
         typingLoader.remove();
@@ -6490,12 +6645,16 @@ ${cleanFaqBlock}`;
       }
     }
 
-    // Deterministic Persona Voice Profiles
+    // Deterministic Persona Voice Profiles (Prioritizing True Single-Voice Multilingual Neural Voices)
     const VOICE_SPECS = {
       adam: {
         name: 'Adam',
         gender: 'male',
         primaryVoices: [
+          'Microsoft AndrewMultilingual Online (Natural) - English (United States)',
+          'Microsoft BrianMultilingual Online (Natural) - English (United States)',
+          'Microsoft AndrewMultilingual',
+          'Microsoft BrianMultilingual',
           'Microsoft Guy Online (Natural) - English (United States)',
           'Microsoft Christopher Online (Natural) - English (United States)',
           'Microsoft Guy',
@@ -6505,7 +6664,7 @@ ${cleanFaqBlock}`;
           'Daniel',
           'Alex'
         ],
-        keywords: ['guy', 'christopher', 'david', 'mark', 'daniel', 'alex', 'male', 'natural'],
+        keywords: ['andrewmultilingual', 'brianmultilingual', 'guy', 'christopher', 'david', 'mark', 'daniel', 'alex', 'male', 'natural'],
         pitch: 0.90,
         rate: 0.97
       },
@@ -6513,6 +6672,10 @@ ${cleanFaqBlock}`;
         name: 'Rachel',
         gender: 'female',
         primaryVoices: [
+          'Microsoft AvaMultilingual Online (Natural) - English (United States)',
+          'Microsoft EmmaMultilingual Online (Natural) - English (United States)',
+          'Microsoft AvaMultilingual',
+          'Microsoft EmmaMultilingual',
           'Microsoft Jenny Online (Natural) - English (United States)',
           'Microsoft Aria Online (Natural) - English (United States)',
           'Microsoft Jenny',
@@ -6523,7 +6686,7 @@ ${cleanFaqBlock}`;
           'Samantha',
           'Victoria'
         ],
-        keywords: ['jenny', 'aria', 'zira', 'samantha', 'karen', 'victoria', 'female', 'natural'],
+        keywords: ['avamultilingual', 'emmamultilingual', 'jenny', 'aria', 'zira', 'samantha', 'karen', 'victoria', 'female', 'natural'],
         pitch: 1.02,
         rate: 0.98
       },
@@ -6531,6 +6694,8 @@ ${cleanFaqBlock}`;
         name: 'Clara',
         gender: 'female',
         primaryVoices: [
+          'Microsoft EmmaMultilingual Online (Natural) - English (United States)',
+          'Microsoft AvaMultilingual Online (Natural) - English (United States)',
           'Microsoft Jenny Online (Natural) - English (United States)',
           'Microsoft Jenny',
           'Microsoft Aria Online (Natural) - English (United States)',
@@ -6539,7 +6704,7 @@ ${cleanFaqBlock}`;
           'Samantha',
           'Victoria'
         ],
-        keywords: ['jenny', 'aria', 'zira', 'samantha', 'karen', 'victoria', 'female'],
+        keywords: ['emmamultilingual', 'avamultilingual', 'jenny', 'aria', 'zira', 'samantha', 'karen', 'victoria', 'female'],
         pitch: 1.05,
         rate: 1.0
       },
@@ -6547,6 +6712,8 @@ ${cleanFaqBlock}`;
         name: 'Elliot',
         gender: 'male',
         primaryVoices: [
+          'Microsoft BrianMultilingual Online (Natural) - English (United States)',
+          'Microsoft AndrewMultilingual Online (Natural) - English (United States)',
           'Microsoft Guy Online (Natural) - English (United States)',
           'Microsoft Guy',
           'Microsoft David',
@@ -6554,7 +6721,7 @@ ${cleanFaqBlock}`;
           'Daniel',
           'Alex'
         ],
-        keywords: ['guy', 'david', 'mark', 'daniel', 'alex', 'male'],
+        keywords: ['brianmultilingual', 'andrewmultilingual', 'guy', 'david', 'mark', 'daniel', 'alex', 'male'],
         pitch: 0.95,
         rate: 1.0
       },
@@ -6722,112 +6889,323 @@ ${cleanFaqBlock}`;
       return { voice: null, pitch: spec.pitch, rate: spec.rate };
     }
 
+    const MULTILINGUAL_MALE_VOICES = [
+      'microsoft andrewmultilingual online (natural)',
+      'microsoft brianmultilingual online (natural)',
+      'microsoft andrewmultilingual',
+      'microsoft brianmultilingual',
+      'microsoft remymultilingual',
+      'microsoft florianmultilingual',
+      'microsoft giuseppemultilingual'
+    ];
+    const MULTILINGUAL_FEMALE_VOICES = [
+      'microsoft avamultilingual online (natural)',
+      'microsoft emmamultilingual online (natural)',
+      'microsoft avamultilingual',
+      'microsoft emmamultilingual',
+      'microsoft viviennemultilingual',
+      'microsoft seraphinamultilingual'
+    ];
+    const KNOWN_FEMALE_INDIC_TOKENS = [
+      'aarohi', 'swara', 'kalpana', 'heera', 'neerja', 'ananya', 'kavya', 'priya',
+      'female', 'woman', 'google हिन्दी', 'mr-in-x-mra', 'hi-in-x-hia'
+    ];
+    const KNOWN_MALE_MARATHI_PRIORITY = [
+      'microsoft manohar online (natural)', 'microsoft manohar', 'manohar', 'mr-in-x-mrb', 'google marathi male'
+    ];
+    const KNOWN_MALE_HINDI_PRIORITY = [
+      'microsoft madhur online (natural)', 'microsoft madhur', 'madhur',
+      'microsoft hemant online (natural)', 'microsoft hemant', 'hemant',
+      'hi-in-x-hie', 'hi-in-x-hid', 'google hindi male'
+    ];
+    const KNOWN_FEMALE_MARATHI_PRIORITY = [
+      'microsoft aarohi online (natural)', 'microsoft aarohi', 'aarohi', 'mr-in-x-mra', 'google marathi'
+    ];
+    const KNOWN_FEMALE_HINDI_PRIORITY = [
+      'microsoft swara online (natural)', 'microsoft swara', 'swara',
+      'microsoft kalpana online (natural)', 'microsoft kalpana', 'kalpana',
+      'google हिन्दी', 'hi-in-x-hia'
+    ];
+    const lockedLangVoices = {};
+    let loggedWidgetBaritoneFallback = false;
+
+    function normalizeWidgetLangHint(hint) {
+      if (!hint) return '';
+      const h = String(hint).toLowerCase().trim();
+      if (h === 'mr' || h === 'mr-in' || h.includes('marathi') || h.includes('मराठी')) return 'mr-IN';
+      if (h === 'hi' || h === 'hi-in' || h.includes('hindi') || h.includes('हिंदी') || h.includes('हिन्दी')) return 'hi-IN';
+      if (h === 'en' || h === 'en-us' || h === 'en-in' || h.includes('english')) return 'en-US';
+      return '';
+    }
+
+    const MR_DEVANAGARI_SET = new Set([
+      'आहे', 'आहेत', 'नाही', 'नाहीत', 'काय', 'कसे', 'कसा', 'कशी', 'करा', 'करावे',
+      'होय', 'मला', 'तुम्ही', 'आपण', 'आपले', 'आपली', 'आपल्या', 'नमस्कार', 'सांगा',
+      'सांगू', 'पाहिजे', 'झाले', 'झाली', 'झाला', 'करतो', 'करते', 'आहात', 'माझे',
+      'माझं', 'माझी', 'तुझे', 'तुझं', 'तुझी', 'कुठे', 'कधी', 'कोण', 'कोणते', 'कोणता',
+      'कोणती', 'कसं', 'आमचे', 'आमची', 'आमचा', 'तुमचे', 'तुमची', 'तुमचा', 'नक्की',
+      'छान', 'विचारू', 'शकता', 'शकतो', 'शकते', 'द्या', 'येथे', 'तिथे', 'बद्दल',
+      'आज', 'उद्या', 'काल', 'कळवा', 'माहिती', 'प्रवेश', 'किती', 'दाखवा', 'भरा',
+      'भरायचा', 'भरायचे', 'भरायची', 'करायचा', 'करायचे', 'करायची', 'मिळते', 'मिळतात',
+      'मिळेल', 'हवे', 'हवा', 'हवी', 'असेल', 'असतात', 'कृपया', 'धन्यवाद', 'आभार'
+    ]);
+    const HI_DEVANAGARI_SET = new Set([
+      'है', 'हैं', 'हो', 'हूँ', 'हूं', 'था', 'थी', 'थे', 'क्या', 'कैसे', 'कैसा',
+      'कैसी', 'कहाँ', 'कहा', 'कब', 'कौन', 'कौनसा', 'कौनसी', 'कितना', 'कितनी', 'कितने',
+      'बताओ', 'बताइए', 'बताएं', 'बताये', 'चाहिए', 'आपकी', 'आपका', 'आपके', 'मेरा',
+      'मेरी', 'मेरे', 'हमारा', 'हमारी', 'हमारे', 'मुझे', 'हमे', 'हमें', 'नहीं',
+      'शुक्रिया', 'नमस्ते', 'कृपया', 'करना', 'करने', 'करनी', 'करते', 'करता', 'करती',
+      'सकते', 'सकता', 'सकती', 'होगा', 'होगी', 'होंगे', 'होता', 'होती', 'होते',
+      'की', 'के', 'का', 'को', 'में', 'से', 'पर', 'बारे', 'लिए', 'मिलता', 'मिलती',
+      'मिलेगा', 'मिलेगी', 'भरना', 'भरें', 'दीजिए', 'वाला', 'वाली', 'वाले', 'अभी',
+      'यहाँ', 'वहाँ', 'ठीक', 'अच्छा', 'क्यों', 'क्योंकि'
+    ]);
+    const MR_ROMAN_SET = new Set([
+      'kasa', 'kase', 'kashi', 'kashala', 'ahes', 'aahes', 'ahe', 'aahe', 'ahet', 'aahet',
+      'nahit', 'kaay', 'kay', 'tumhi', 'tumi', 'mala', 'amhi', 'aamhi', 'sanga', 'sangu',
+      'sang', 'pahije', 'zhala', 'jhala', 'zhali', 'jhali', 'zhal', 'kuthe', 'kuth',
+      'aapan', 'aple', 'apli', 'apla', 'aapla', 'aapli', 'aaple', 'shakto', 'shakte',
+      'shakta', 'vichara', 'baddal', 'sathi', 'madhye', 'madhe', 'udya', 'kiti',
+      'tumche', 'tumcha', 'tumchi', 'aamche', 'amche', 'amcha', 'amchi', 'tula',
+      'majha', 'maza', 'mazi', 'maze', 'bharaycha', 'bharayche', 'bharaychi',
+      'karaycha', 'karayche', 'karaychi', 'karave', 'karto', 'karte', 'kartat',
+      'konte', 'konta', 'konti', 'mahiti', 'dakhva', 'milte', 'miltat', 'milnar',
+      'asel', 'asnar', 'asta', 'astat', 'hava', 'havi', 'namaskar', 'dhanyavad',
+      'aabhar', 'krupaya', 'nakki', 'chhan', 'yethe', 'tithe', 'kadhi', 'kon', 'hoy',
+      'paryant', 'pasun', 'kade', 'cha', 'chi', 'che', 'chya', 'bhara', 'ghya', 'dya'
+    ]);
+    const HI_ROMAN_SET = new Set([
+      'kya', 'kaise', 'kaisa', 'kaisi', 'hai', 'hain', 'hoon', 'hun', 'nahin',
+      'namaste', 'shukriya', 'kripya', 'mujhe', 'mujhko', 'aap', 'aapka', 'aapki',
+      'aapke', 'mera', 'meri', 'mere', 'humara', 'hamara', 'hamari', 'tumhara',
+      'hume', 'humein', 'batao', 'bataiye', 'bataye', 'batana', 'bata', 'chahiye',
+      'chaiye', 'hoga', 'hogi', 'honge', 'hota', 'hoti', 'hote', 'theek', 'thik',
+      'accha', 'achha', 'kahan', 'kidhar', 'kitna', 'kitni', 'kitne', 'konsa',
+      'konsi', 'kaunsa', 'kaunsi', 'kyu', 'kyun', 'kab', 'kaun', 'milega', 'milegi',
+      'milta', 'milti', 'karna', 'karne', 'karni', 'karo', 'kijiye', 'kariye',
+      'bharna', 'bhare', 'bhariye', 'dijiye', 'dena', 'lena', 'jaana', 'jana',
+      'sakta', 'sakti', 'sakte', 'baare', 'wala', 'wali', 'wale', 'iske', 'iska',
+      'iski', 'uske', 'uska', 'uski', 'abhi', 'yahan', 'wahan', 'mein', 'ki', 'ke', 'ko'
+    ]);
+    const SHARED_INDIC_SET = new Set(['nahi', 'ka', 'aaj', 'kal', 'hum']);
+    const MR_BIGRAMS_RE = /\b(ahe\s+ka|aahe\s+ka|nahi\s+ka|kasa\s+bharaycha|kashi\s+bharaychi|kase\s+bharayche|kasa\s+karaycha|kay\s+ahe|kay\s+aahe|kiti\s+ahe|kiti\s+aahe|chi\s+fee|chi\s+fees|cha\s+fee|cha\s+fees|che\s+timing|cha\s+timing|baddal\s+sanga|baddal\s+mahiti)\b/g;
+    const HI_BIGRAMS_RE = /\b(ke\s+bare|ke\s+baare|bare\s+me|baare\s+me|bare\s+mein|baare\s+mein|ki\s+fee|ki\s+fees|ka\s+fee|ka\s+fees|me\s+bata|mein\s+bata|ke\s+liye|ka\s+time|ka\s+timing|ki\s+timing|kab\s+hai|kya\s+hai|kitna\s+hai|kitni\s+hai|kitne\s+hai|kaise\s+kare|kaise\s+bhare)\b/g;
+
     // Detect language from text: 'mr-IN' (Marathi), 'hi-IN' (Hindi), or 'en-US' (English)
-    function detectTextLanguage(text) {
+    // Handles English words mixed inside Marathi/Hindi sentences (code-mixing) + Whisper LID + sticky context
+    function detectTextLanguage(text, options = {}) {
       if (!text || typeof text !== 'string') return 'en-US';
       const clean = text.trim();
+      if (!clean) return 'en-US';
 
-      // 1. Devanagari script detection (\u0900 to \u097F)
+      const lower = clean.toLowerCase();
+      const whisperHint = normalizeWidgetLangHint(options?.whisperLang);
+      const prevHint = normalizeWidgetLangHint(options?.previousLang);
+
+      // 0. Explicit language switch requests
+      if (/\b(?:speak|talk|reply|answer|switch|change)\s+(?:to\s+|in\s+)?marathi\b/i.test(lower) || /मराठी(?:त|मध्ये)/.test(clean)) {
+        return 'mr-IN';
+      }
+      if (/\b(?:speak|talk|reply|answer|switch|change)\s+(?:to\s+|in\s+)?hindi\b/i.test(lower) || /(?:हिंदी|हिन्दी)\s*में/.test(clean)) {
+        return 'hi-IN';
+      }
+      if (/\b(?:speak|talk|reply|answer|switch|change)\s+(?:to\s+|in\s+)?english\b/i.test(lower) || /\benglish\s+please\b/i.test(lower)) {
+        return 'en-US';
+      }
+
+      // 1. Devanagari script detection (\u0900 to \u097F) — Unicode-safe tokenization
       const devanagariMatches = clean.match(/[\u0900-\u097F]/g);
       if (devanagariMatches && devanagariMatches.length > 0) {
         let mrScore = 0;
         let hiScore = 0;
 
-        // Distinctive Marathi markers
-        const mrWords = /\b(आहे|आहेत|नाही|नाहीत|काय|कसे|कसा|कशी|करा|करावे|होय|मला|तुम्ही|आपण|आपले|आपली|आपल्या|नमस्कार|सांगा|सांगू|पाहिजे|झाले|झाली|झाला|करतो|करते|आहात|माझे|माझं|तुझे|तुझं|कुठे|कधी|कोण|कसं|आमचे|तुमचे|का|नक्की|छान|विचारू|शकता|द्या|येथे|बद्दल|वार|आज|उद्या|काल|कळवा)\b/g;
-        const mrSuffixes = /(ंच्या|च्या|तील|वरून|साठी|बद्दल|कडून|नुसार)/g;
-        const mrVerbEndings = /(तोय|तेय|ताहेत|तात|णार|लेलं)/g;
+        if (clean.includes('ळ')) mrScore += 4;
 
-        const mrW = clean.match(mrWords);
-        if (mrW) mrScore += mrW.length * 2;
-        const mrS = clean.match(mrSuffixes);
-        if (mrS) mrScore += mrS.length * 2;
-        const mrV = clean.match(mrVerbEndings);
-        if (mrV) mrScore += mrV.length * 2;
-
-        // Distinctive Hindi markers
-        const hiWords = /\b(है|हैं|हो|हूँ|हूं|था|थी|थे|क्या|कैसे|कैसा|कैसी|कहाँ|कहा|बताओ|बताइए|चाहिए|आपकी|आपका|आपके|मुझे|हमे|हमें|नहीं|शुक्रिया|नमस्ते|करना|करते|करता|करती|सकते|सकता|सकती|होगा|होगी|होंगे)\b/g;
-        const hiW = clean.match(hiWords);
-        if (hiW) hiScore += hiW.length * 2;
+        const tokens = clean.split(/[\s,?.!।;:'"()\-/]+/).filter(Boolean);
+        for (const tok of tokens) {
+          if (MR_DEVANAGARI_SET.has(tok)) mrScore += 3;
+          if (HI_DEVANAGARI_SET.has(tok)) hiScore += 3;
+          if (/(ंच्या|च्या|तील|वरून|साठी|बद्दल|कडून|नुसार|मध्ये|तून|पर्यंत|पासून)$/.test(tok)) mrScore += 3;
+          if (/(यचा|यचे|यची|तोय|तेय|ताहेत|तात|णार|लेलं|लेला|लेली|लेले)$/.test(tok)) mrScore += 3;
+        }
 
         if (mrScore > hiScore) return 'mr-IN';
         if (hiScore > mrScore) return 'hi-IN';
 
-        if (/(आहे|च्या|सांगा|काय)/.test(clean)) return 'mr-IN';
+        if (whisperHint === 'mr-IN' || whisperHint === 'hi-IN') return whisperHint;
+        if (prevHint === 'mr-IN' || prevHint === 'hi-IN') return prevHint;
+
+        if (/(आहे|च्या|सांगा|काय|कसा|कसे|कशी|नाही|माहिती|प्रवेश)/.test(clean)) return 'mr-IN';
         return 'hi-IN';
       }
 
-      // 2. Romanized Hindi (Hinglish) & Romanized Marathi (Marathish) detection
-      const lower = clean.toLowerCase();
+      // 2. Romanized Hindi (Hinglish) & Romanized Marathi (Marathish) detection — code-mix resilient
       let mrRomanScore = 0;
       let hiRomanScore = 0;
+      let sharedCount = 0;
 
-      const mrRoman = /\b(kasa|kashi|ahes|ahe|ahet|nahit|kaay|tumhi|tumi|mala|amhi|aamhi|sanga|sangu|pahije|zhala|jhala|zhal|kuthe|aapan|aple|apli|shakto|shakte|vichara|baddal|sathi|madhye|aaj|udya|kiti|tumche|aamche|tula)\b/g;
-      const hiRoman = /\b(kya|kaise|kaisa|kaisi|hai|hain|nahin|namaste|shukriya|mujhe|aap|hum|batao|bataiye|chahiye|hoga|hogi|theek|accha|achha|kahan|kidhar|kitna|kripya)\b/g;
+      const romanTokens = lower.replace(/[^a-z'\s]/g, ' ').split(/\s+/).filter(Boolean);
+      for (const tok of romanTokens) {
+        if (MR_ROMAN_SET.has(tok)) mrRomanScore += 3;
+        if (HI_ROMAN_SET.has(tok)) hiRomanScore += 3;
+        if (SHARED_INDIC_SET.has(tok)) sharedCount += 1;
+      }
 
-      const mrM = lower.match(mrRoman);
-      if (mrM) mrRomanScore += mrM.length;
-      const hiM = lower.match(hiRoman);
-      if (hiM) hiRomanScore += hiM.length;
+      const mrBi = lower.match(MR_BIGRAMS_RE);
+      if (mrBi) mrRomanScore += mrBi.length * 3;
+      const hiBi = lower.match(HI_BIGRAMS_RE);
+      if (hiBi) hiRomanScore += hiBi.length * 3;
 
-      if (mrRomanScore > hiRomanScore) return 'mr-IN';
-      if (hiRomanScore > mrRomanScore) return 'hi-IN';
+      if (mrRomanScore > hiRomanScore && mrRomanScore >= 2) return 'mr-IN';
+      if (hiRomanScore > mrRomanScore && hiRomanScore >= 2) return 'hi-IN';
+
+      if (mrRomanScore > 0 || hiRomanScore > 0 || sharedCount > 0) {
+        if (whisperHint === 'mr-IN' || whisperHint === 'hi-IN') return whisperHint;
+        if (prevHint === 'mr-IN' || prevHint === 'hi-IN') return prevHint;
+        return mrRomanScore >= hiRomanScore ? 'mr-IN' : 'hi-IN';
+      }
+
+      // 3. Whisper acoustic LID & sticky short follow-up preservation
+      const hasExplicitEnglishGrammar = /\b(what|where|when|who|how|why|which|is|are|was|were|do|does|did|can|could|would|should|will|tell|show|give|please|thank|thanks|hello|hi|hey|about|your|our|the|this|that|for|with|from|need|want|have)\b/i.test(lower);
+
+      if ((whisperHint === 'mr-IN' || whisperHint === 'hi-IN') && !hasExplicitEnglishGrammar) {
+        return whisperHint;
+      }
+
+      if ((prevHint === 'mr-IN' || prevHint === 'hi-IN') && romanTokens.length > 0 && romanTokens.length <= 4 && !hasExplicitEnglishGrammar) {
+        return prevHint;
+      }
 
       return 'en-US';
     }
 
-    // Resolves optimal voice for English, Hindi, or Marathi text
+    function findVoiceFromPriority(voices, priorityNames) {
+      for (const target of priorityNames) {
+        const tLower = target.toLowerCase();
+        const match = voices.find(v => (v.name || '').toLowerCase().includes(tLower));
+        if (match) return match;
+      }
+      return null;
+    }
+
+    function isFemaleIndicVoice(voice) {
+      const n = (voice?.name || '').toLowerCase();
+      const uri = (voice?.voiceURI || '').toLowerCase();
+      return KNOWN_FEMALE_INDIC_TOKENS.some(tok => n.includes(tok) || uri.includes(tok));
+    }
+
+    // Resolves optimal voice for English, Hindi, or Marathi text while preserving persona identity (e.g. Adam stays Male/Multilingual)
     function resolveVoiceForText(preferredName, text) {
       const detectedLang = detectTextLanguage(text);
       const personaKey = String(preferredName || agentConfig.voice || 'Adam').toLowerCase().trim();
-      const isFemale = VOICE_SPECS[personaKey]?.gender === 'female';
+      const spec = VOICE_SPECS[personaKey] || VOICE_SPECS.adam || VOICE_SPECS.rachel || VOICE_SPECS.clara;
+      const isFemale = spec?.gender === 'female' || ['rachel', 'clara', 'layla', 'emma', 'savannah', 'priya', 'aarohi'].includes(personaKey);
+      const basePitch = spec?.pitch ?? (isFemale ? 1.04 : 0.90);
+      const baseRate = spec?.rate ?? 0.97;
 
       if (!window.speechSynthesis) {
-        return { voice: null, pitch: 1.0, rate: 1.0, lang: detectedLang };
+        return { voice: null, pitch: basePitch, rate: baseRate, lang: detectedLang };
       }
 
       const voices = (cachedVoices.length > 0 ? cachedVoices : window.speechSynthesis.getVoices()) || [];
+      if (!voices.length) {
+        return { voice: null, pitch: basePitch, rate: baseRate, lang: detectedLang };
+      }
 
+      // TIER 1: True Single-Voice Multilingual Neural Voice (same exact speaker for English, Hindi & Marathi!)
+      const multilingualList = isFemale ? MULTILINGUAL_FEMALE_VOICES : MULTILINGUAL_MALE_VOICES;
+      const multilingualVoice = findVoiceFromPriority(voices, multilingualList);
+      if (multilingualVoice) {
+        return { voice: multilingualVoice, pitch: basePitch, rate: baseRate, lang: detectedLang };
+      }
+
+      if (detectedLang === 'en-US') {
+        const resolved = resolveAndLockVoice(preferredName);
+        return { ...resolved, lang: resolved?.voice?.lang || 'en-US' };
+      }
+
+      const cacheKey = `${personaKey}__${detectedLang}`;
+      if (lockedLangVoices[cacheKey]) {
+        return lockedLangVoices[cacheKey];
+      }
+
+      const lockAndReturn = (result) => {
+        if (result?.voice) lockedLangVoices[cacheKey] = result;
+        return result;
+      };
+
+      // TIER 2: Strict Gender-Matched Native Marathi / Hindi Voice
       if (detectedLang === 'mr-IN') {
-        const mrVoice = voices.find(v => {
-          const n = v.name.toLowerCase();
-          const l = (v.lang || '').toLowerCase();
-          const isMr = l.startsWith('mr') || n.includes('marathi') || n.includes('मराठी') || n.includes('manohar') || n.includes('aarohi');
-          if (!isMr) return false;
-          return isFemale ? (n.includes('female') || n.includes('aarohi') || n.includes('heera')) : (!n.includes('female') && !n.includes('aarohi'));
-        }) || voices.find(v => (v.lang || '').toLowerCase().startsWith('mr') || v.name.toLowerCase().includes('marathi'));
+        if (isFemale) {
+          const mrFemale = findVoiceFromPriority(voices, KNOWN_FEMALE_MARATHI_PRIORITY) ||
+            voices.find(v => ((v.lang || '').toLowerCase().startsWith('mr') || (v.name || '').toLowerCase().includes('marathi')) && isFemaleIndicVoice(v)) ||
+            findVoiceFromPriority(voices, KNOWN_FEMALE_HINDI_PRIORITY) ||
+            voices.find(v => (v.lang || '').toLowerCase().startsWith('mr')) ||
+            voices.find(v => (v.lang || '').toLowerCase().startsWith('hi'));
+          if (mrFemale) {
+            const vLang = (mrFemale.lang || '').toLowerCase().startsWith('mr') ? 'mr-IN' : 'hi-IN';
+            return lockAndReturn({ voice: mrFemale, pitch: basePitch, rate: baseRate, lang: vLang });
+          }
+        } else {
+          const mrMale = findVoiceFromPriority(voices, KNOWN_MALE_MARATHI_PRIORITY) ||
+            voices.find(v => ((v.lang || '').toLowerCase().startsWith('mr') || (v.name || '').toLowerCase().includes('marathi')) && !isFemaleIndicVoice(v));
+          if (mrMale) return lockAndReturn({ voice: mrMale, pitch: basePitch, rate: baseRate, lang: 'mr-IN' });
 
-        if (mrVoice) return { voice: mrVoice, pitch: isFemale ? 1.05 : 0.95, rate: 0.98, lang: 'mr-IN' };
+          const hiMale = findVoiceFromPriority(voices, KNOWN_MALE_HINDI_PRIORITY) ||
+            voices.find(v => ((v.lang || '').toLowerCase().startsWith('hi') || (v.name || '').toLowerCase().includes('hindi')) && !isFemaleIndicVoice(v));
+          if (hiMale) return lockAndReturn({ voice: hiMale, pitch: basePitch, rate: baseRate, lang: 'hi-IN' });
 
-        const hiFallback = voices.find(v => {
-          const n = v.name.toLowerCase();
-          const l = (v.lang || '').toLowerCase();
-          const isHi = l.startsWith('hi') || n.includes('hindi') || n.includes('हिन्दी') || n.includes('hemant') || n.includes('kalpana');
-          if (!isHi) return false;
-          return isFemale ? (n.includes('female') || n.includes('kalpana')) : (!n.includes('female') && !n.includes('kalpana'));
-        }) || voices.find(v => (v.lang || '').toLowerCase().startsWith('hi'));
-
-        if (hiFallback) return { voice: hiFallback, pitch: isFemale ? 1.05 : 0.95, rate: 0.98, lang: 'hi-IN' };
+          // TIER 3: Chrome fallback when only female Devanagari voice exists — baritone calibration for Male Adam
+          const anyDevanagari = voices.find(v => (v.lang || '').toLowerCase().startsWith('mr')) ||
+            voices.find(v => (v.lang || '').toLowerCase().startsWith('hi') || (v.name || '').toLowerCase().includes('हिन्दी') || (v.name || '').toLowerCase().includes('hindi'));
+          if (anyDevanagari) {
+            if (!loggedWidgetBaritoneFallback) {
+              loggedWidgetBaritoneFallback = true;
+              console.info('[Echo AI Voice] No native male Marathi/Hindi voice detected; applying baritone pitch calibration for:', preferredName);
+            }
+            const baritonePitch = Math.max(0.72, Math.min(0.80, basePitch - 0.12));
+            const vLang = (anyDevanagari.lang || '').toLowerCase().startsWith('mr') ? 'mr-IN' : 'hi-IN';
+            return lockAndReturn({ voice: anyDevanagari, pitch: baritonePitch, rate: baseRate, lang: vLang });
+          }
+        }
       }
 
       if (detectedLang === 'hi-IN') {
-        const hiVoice = voices.find(v => {
-          const n = v.name.toLowerCase();
-          const l = (v.lang || '').toLowerCase();
-          const isHi = l.startsWith('hi') || n.includes('hindi') || n.includes('हिन्दी') || n.includes('hemant') || n.includes('kalpana');
-          if (!isHi) return false;
-          return isFemale ? (n.includes('female') || n.includes('kalpana')) : (!n.includes('female') && !n.includes('kalpana'));
-        }) || voices.find(v => (v.lang || '').toLowerCase().startsWith('hi') || v.name.toLowerCase().includes('hindi'));
+        if (isFemale) {
+          const hiFemale = findVoiceFromPriority(voices, KNOWN_FEMALE_HINDI_PRIORITY) ||
+            voices.find(v => ((v.lang || '').toLowerCase().startsWith('hi') || (v.name || '').toLowerCase().includes('hindi')) && isFemaleIndicVoice(v)) ||
+            voices.find(v => (v.lang || '').toLowerCase().startsWith('hi'));
+          if (hiFemale) return lockAndReturn({ voice: hiFemale, pitch: basePitch, rate: baseRate, lang: 'hi-IN' });
+        } else {
+          const hiMale = findVoiceFromPriority(voices, KNOWN_MALE_HINDI_PRIORITY) ||
+            voices.find(v => ((v.lang || '').toLowerCase().startsWith('hi') || (v.name || '').toLowerCase().includes('hindi')) && !isFemaleIndicVoice(v));
+          if (hiMale) return lockAndReturn({ voice: hiMale, pitch: basePitch, rate: baseRate, lang: 'hi-IN' });
 
-        if (hiVoice) return { voice: hiVoice, pitch: isFemale ? 1.05 : 0.95, rate: 0.98, lang: 'hi-IN' };
+          const mrMale = findVoiceFromPriority(voices, KNOWN_MALE_MARATHI_PRIORITY) ||
+            voices.find(v => ((v.lang || '').toLowerCase().startsWith('mr') || (v.name || '').toLowerCase().includes('marathi')) && !isFemaleIndicVoice(v));
+          if (mrMale) return lockAndReturn({ voice: mrMale, pitch: basePitch, rate: baseRate, lang: 'mr-IN' });
+
+          const anyHindi = voices.find(v => (v.lang || '').toLowerCase().startsWith('hi') || (v.name || '').toLowerCase().includes('हिन्दी') || (v.name || '').toLowerCase().includes('hindi'));
+          if (anyHindi) {
+            if (!loggedWidgetBaritoneFallback) {
+              loggedWidgetBaritoneFallback = true;
+              console.info('[Echo AI Voice] No native male Hindi voice detected; applying baritone pitch calibration for:', preferredName);
+            }
+            const baritonePitch = Math.max(0.72, Math.min(0.80, basePitch - 0.12));
+            return lockAndReturn({ voice: anyHindi, pitch: baritonePitch, rate: baseRate, lang: 'hi-IN' });
+          }
+        }
       }
 
       const resolved = resolveAndLockVoice(preferredName);
       return { ...resolved, lang: resolved?.voice?.lang || 'en-US' };
     }
 
-    // Speak Reply via Browser Web Speech Synthesis (Hardened GC Pinning & Watchdog)
-    function speakReply(text) {
+    // Speak Reply via Browser Web Speech Synthesis (Hardened GC Pinning, Watchdog & Voice-Only Auto-Resume)
+    function speakReply(text, options = {}) {
+      const shouldAutoListen = Boolean(options?.shouldAutoListen);
+      cancelAutoResumeTimer();
+
       if (!window.speechSynthesis || !text) {
         orb.className = 'vhd-orb-btn';
         voiceLabel.textContent = currentSpeechLang.startsWith('hi') ? 'बोलने के लिए टैप करें' :
@@ -6888,16 +7266,45 @@ ${cleanFaqBlock}`;
       window.__vhdActiveUtterance = utterance;
 
       let hasFinished = false;
-      const cleanupSpeech = () => {
+      const cleanupSpeech = (wasNormalEnd = false) => {
         if (hasFinished) return;
         hasFinished = true;
         if (window.__vhdWatchdog) clearTimeout(window.__vhdWatchdog);
         if (window.__vhdHeartbeat) clearInterval(window.__vhdHeartbeat);
         window.__vhdActiveUtterance = null;
         orb.className = 'vhd-orb-btn';
-        voiceLabel.textContent = currentSpeechLang.startsWith('hi') ? 'बोलने के लिए टैप करें' :
-                                 currentSpeechLang.startsWith('mr') ? 'बोलण्यासाठी टॅप करा' :
+
+        const activeLang = (conversationContext && conversationContext.activeLang) || currentSpeechLang;
+        voiceLabel.textContent = activeLang.startsWith('hi') ? 'बोलने के लिए टैप करें' :
+                                 activeLang.startsWith('mr') ? 'बोलण्यासाठी टॅप करा' :
                                  'Tap to Speak';
+
+        // Hands-free Voice-Only Auto-Resume: automatically start listening again ONLY if the question was asked via voice
+        if (
+          wasNormalEnd &&
+          shouldAutoListen &&
+          lastInputWasVoice &&
+          !userManuallyStoppedMic &&
+          panel.classList.contains('open') &&
+          !isHandlingMessage &&
+          !isListening
+        ) {
+          voiceLabel.textContent = activeLang.startsWith('hi') ? 'फिर से सुनने के लिए तैयार...' :
+                                   activeLang.startsWith('mr') ? 'पुन्हा ऐकण्यासाठी तयार...' :
+                                   'Listening next...';
+          autoResumeTimer = setTimeout(() => {
+            autoResumeTimer = null;
+            if (
+              lastInputWasVoice &&
+              !userManuallyStoppedMic &&
+              panel.classList.contains('open') &&
+              !isHandlingMessage &&
+              !isListening
+            ) {
+              startVoiceListening({ isAutoResume: true });
+            }
+          }, 350);
+        }
       };
 
       utterance.onstart = () => {
@@ -6916,8 +7323,8 @@ ${cleanFaqBlock}`;
         }, 7000);
       };
 
-      utterance.onend = cleanupSpeech;
-      utterance.onerror = cleanupSpeech;
+      utterance.onend = () => cleanupSpeech(true);
+      utterance.onerror = () => cleanupSpeech(false);
 
       // Fallback Watchdog Timer: auto-release UI if browser drops onend
       const maxSpeechMs = Math.max(4000, Math.round((cleanSpoken.length / 10) * 1000) + 3000);
@@ -6925,7 +7332,7 @@ ${cleanFaqBlock}`;
         if (!hasFinished) {
           console.warn('[Widget Voice Watchdog] Speech timed out, releasing orb');
           try { window.speechSynthesis.cancel(); } catch (_) {}
-          cleanupSpeech();
+          cleanupSpeech(true);
         }
       }, maxSpeechMs);
 
@@ -6936,7 +7343,7 @@ ${cleanFaqBlock}`;
         }
       } catch (speakErr) {
         console.warn('[Widget Voice] Speech error:', speakErr);
-        cleanupSpeech();
+        cleanupSpeech(false);
       }
     }
   }

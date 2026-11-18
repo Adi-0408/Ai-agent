@@ -14,19 +14,23 @@ import {
   CheckCircle2,
   AudioWaveform,
   Activity,
-  Languages
+  Languages,
+  Loader2
 } from 'lucide-react';
 import {
   resolveLockedVoice,
   resolveVoiceForText,
   speakTextWithWatchdog,
   stopCurrentSpeech,
-  detectTextLanguage
+  detectTextLanguage,
+  isFarewellMessage
 } from '../utils/voiceConsistency';
 import { generateAIResponse, getUserApiKeys, transcribeAudioWithGroqWhisper } from '../services/aiCompletionService';
 
 export default function VoiceTestModal({ isOpen, onClose, assistant }) {
   const [isRecording, setIsRecording] = useState(false);
+  const [isStartingMic, setIsStartingMic] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingStage, setThinkingStage] = useState(0); // 0: Thinking, 1: Checking details (2.2s), 2: Taking a moment (5.5s)
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -54,6 +58,15 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
   const messagesRef = useRef([]);
   const synthRef = useRef(typeof window !== 'undefined' ? window.speechSynthesis : null);
   const chatBottomRef = useRef(null);
+  const lastInputWasVoiceRef = useRef(false);
+  const manualStopRef = useRef(false);
+  const isAutoResumedRef = useRef(false);
+  const autoResumeTimerRef = useRef(null);
+  const isOpenRef = useRef(isOpen);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -109,6 +122,12 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
 
   // Cleanly stops all active recording, audio analysis, and speech recognition
   const stopRecordingSession = () => {
+    if (autoResumeTimerRef.current) {
+      clearTimeout(autoResumeTimerRef.current);
+      autoResumeTimerRef.current = null;
+    }
+    manualStopRef.current = true;
+    lastInputWasVoiceRef.current = false;
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
@@ -129,27 +148,50 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
       audioContextRef.current = null;
     }
     stopCurrentSpeech();
+    setIsStartingMic(false);
+    setIsTranscribing(false);
     setIsRecording(false);
     setAudioLevel(0);
   };
 
   // Speak text using the assistant's locked persona voice with GC pinning, heartbeat & watchdog
-  const speakText = (text) => {
+  const speakText = (text, { shouldAutoListen = false } = {}) => {
     if (!text) return;
+    if (autoResumeTimerRef.current) {
+      clearTimeout(autoResumeTimerRef.current);
+      autoResumeTimerRef.current = null;
+    }
     speakTextWithWatchdog(text, assistantVoice, {
       onStart: () => setIsSpeaking(true),
-      onEnd: () => setIsSpeaking(false),
+      onEnd: () => {
+        setIsSpeaking(false);
+        if (shouldAutoListen && lastInputWasVoiceRef.current && !manualStopRef.current && isOpenRef.current) {
+          autoResumeTimerRef.current = setTimeout(() => {
+            if (isOpenRef.current && !manualStopRef.current && lastInputWasVoiceRef.current) {
+              startRecordingSession({ isAutoResume: true });
+            }
+          }, 350);
+        }
+      },
       onError: () => setIsSpeaking(false)
     });
   };
 
   // Start recording audio + Speech Recognition
-  const startRecordingSession = async () => {
+  const startRecordingSession = async ({ isAutoResume = false } = {}) => {
+    if (autoResumeTimerRef.current) {
+      clearTimeout(autoResumeTimerRef.current);
+      autoResumeTimerRef.current = null;
+    }
     stopCurrentSpeech();
     setIsSpeaking(false);
+    setIsTranscribing(false);
+    setIsStartingMic(true);
     setErrorMessage('');
     setInterimTranscript('');
     speechHandledRef.current = false;
+    manualStopRef.current = false;
+    isAutoResumedRef.current = Boolean(isAutoResume);
     recordedTranscriptRef.current = '';
     interimTranscriptRef.current = '';
     audioChunksRef.current = [];
@@ -168,6 +210,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
     } catch (permErr) {
       console.warn('Microphone permission error:', permErr);
       setMicPermission('denied');
+      setIsStartingMic(false);
       setErrorMessage('Microphone access was denied. Please allow microphone access in your browser URL bar.');
       return;
     }
@@ -224,6 +267,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
 
         // 1. Acoustic Auto-Detection with Groq Whisper (Language Identification LID)
         if (finalChunkBlob.size > 1500 && activeKey && activeKey.startsWith('gsk_')) {
+          setIsTranscribing(true);
           setInterimTranscript('🌐 Auto-detecting voice language with Whisper...');
           try {
             const whisperPromise = transcribeAudioWithGroqWhisper(finalChunkBlob, activeKey, {
@@ -249,7 +293,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
                               '🇮🇳 Indian English';
                 setDetectedLangBadge(badge);
               }
-              handleUserSpeech(cleanWhisper);
+              handleUserSpeech(cleanWhisper, { source: 'voice', whisperLang: detectedLID });
               return;
             }
           } catch (wErr) {
@@ -260,13 +304,17 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         // 2. Fallback to Browser Speech Recognition
         const capturedSpeech = (recordedTranscriptRef.current || interimTranscriptRef.current || '').trim();
         if (capturedSpeech && !speechHandledRef.current) {
-          handleUserSpeech(capturedSpeech);
+          handleUserSpeech(capturedSpeech, { source: 'voice' });
           return;
         }
 
         if (!speechHandledRef.current) {
+          setIsTranscribing(false);
           setInterimTranscript('');
-          setErrorMessage('No voice detected. Tap the mic and speak clearly.');
+          if (!isAutoResumedRef.current && !manualStopRef.current) {
+            setErrorMessage('No voice detected. Tap the mic and speak clearly.');
+          }
+          lastInputWasVoiceRef.current = false;
         }
       };
 
@@ -275,7 +323,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
       console.warn('MediaRecorder setup note:', recErr);
     }
 
-    // 3. Setup Browser Speech Recognition (Instant local STT with accent/dialect auto-adaptation)
+    // 3. Setup Browser Speech Recognition (Instant local STT with auto-turn end for hands-free voice)
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRec) {
       try {
@@ -284,7 +332,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           recognitionRef.current = null;
         }
         const rec = new SpeechRec();
-        rec.continuous = true;
+        rec.continuous = false;
         rec.interimResults = true;
         const defaultBrowserLang = 'en-IN';
         rec.lang = (selectedLang && selectedLang !== 'auto')
@@ -292,6 +340,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           : (lastDetectedLangRef.current || defaultBrowserLang);
 
         rec.onstart = () => {
+          setIsStartingMic(false);
           setIsRecording(true);
         };
 
@@ -312,8 +361,21 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
 
         rec.onerror = (event) => {
           console.warn('[SpeechRec] Error:', event.error);
-          if (event.error === 'not-allowed') {
+          if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+            lastInputWasVoiceRef.current = false;
+            manualStopRef.current = true;
             setErrorMessage('Microphone permission blocked. Please allow mic in your URL bar.');
+          } else if (event.error === 'no-speech' && isAutoResumedRef.current) {
+            // Silent timeout during auto-resume: cleanly exit hands-free loop
+            lastInputWasVoiceRef.current = false;
+            manualStopRef.current = true;
+          }
+        };
+
+        rec.onend = () => {
+          if (recognitionRef.current === rec) {
+            recognitionRef.current = null;
+            stopAndSubmitRecording({ isManualStop: false });
           }
         };
 
@@ -324,19 +386,26 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
       }
     }
 
+    setIsStartingMic(false);
     setIsRecording(true);
   };
 
   // Stop recording and process user speech
-  const stopAndSubmitRecording = () => {
+  const stopAndSubmitRecording = ({ isManualStop = false } = {}) => {
     setIsRecording(false);
     const capturedText = (recordedTranscriptRef.current || interimTranscriptRef.current || interimTranscript || '').trim();
+
+    if (isManualStop && !capturedText) {
+      manualStopRef.current = true;
+      lastInputWasVoiceRef.current = false;
+    }
 
     // Stop tracks & audio
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
+      const activeRec = recognitionRef.current;
       recognitionRef.current = null;
+      try { activeRec.stop(); } catch (e) {}
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       try { mediaRecorderRef.current.stop(); } catch (e) {}
@@ -346,17 +415,23 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
       mediaStreamRef.current = null;
     }
 
+    if (manualStopRef.current && !capturedText) {
+      setInterimTranscript('');
+      return;
+    }
+
     const activeKey = assistant?.apiKey || getUserApiKeys().groqKey || getUserApiKeys().activeKey || '';
 
     // If Groq key is present and audio chunks were recorded, let recorder.onstop process with Whisper LID
-    if (activeKey && activeKey.startsWith('gsk_') && audioChunksRef.current.length > 0) {
+    if (activeKey && activeKey.startsWith('gsk_') && audioChunksRef.current.length > 0 && capturedText) {
+      setIsTranscribing(true);
       setInterimTranscript('🌐 Auto-detecting voice language & transcribing...');
       return;
     }
 
     if (capturedText && !speechHandledRef.current) {
-      handleUserSpeech(capturedText);
-    } else {
+      handleUserSpeech(capturedText, { source: 'voice' });
+    } else if (!isAutoResumedRef.current && !manualStopRef.current) {
       setTimeout(() => {
         if (!recordedTranscriptRef.current.trim() && !speechHandledRef.current) {
           setErrorMessage('No voice detected. Tap the mic and speak clearly.');
@@ -371,27 +446,42 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
       // Instant barge-in: cancel speech and immediately start recording user's new question
       stopCurrentSpeech();
       setIsSpeaking(false);
-      startRecordingSession();
+      startRecordingSession({ isAutoResume: false });
       return;
     }
     if (isRecording) {
-      stopAndSubmitRecording();
+      stopAndSubmitRecording({ isManualStop: true });
     } else {
-      startRecordingSession();
+      startRecordingSession({ isAutoResume: false });
     }
   };
 
   // Process user speech through AI completion & speak aloud
-  const handleUserSpeech = async (spokenText) => {
+  const handleUserSpeech = async (spokenText, { source = 'text', whisperLang = '' } = {}) => {
     if (!spokenText || !spokenText.trim() || speechHandledRef.current) return;
     speechHandledRef.current = true;
+    const isVoiceTurn = source === 'voice';
+    lastInputWasVoiceRef.current = isVoiceTurn;
+    if (!isVoiceTurn) {
+      if (autoResumeTimerRef.current) {
+        clearTimeout(autoResumeTimerRef.current);
+        autoResumeTimerRef.current = null;
+      }
+    }
+
     const cleanText = spokenText.trim();
+    setIsStartingMic(false);
+    setIsTranscribing(false);
     setInterimTranscript('');
     recordedTranscriptRef.current = '';
     interimTranscriptRef.current = '';
 
-    // Turn-level dynamic language detection & badge update
-    const detectedCode = detectTextLanguage(cleanText);
+    // Turn-level dynamic language detection with code-mixing & sticky context
+    const prevLang = lastDetectedLangRef.current;
+    const detectedCode = detectTextLanguage(cleanText, {
+      whisperLang,
+      previousLang: prevLang
+    });
     if (selectedLang === 'auto') {
       if (detectedCode === 'mr-IN') {
         setDetectedLangBadge('🚩 मराठी');
@@ -414,6 +504,8 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
     setMessages((prev) => [...prev, userMsg]);
     setIsThinking(true);
 
+    const shouldAutoListen = isVoiceTurn && !isFarewellMessage(cleanText);
+
     try {
       const activeKey = assistant?.apiKey || getUserApiKeys().activeKey || '';
       const reply = await generateAIResponse(
@@ -425,7 +517,9 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           agentName: assistantName,
           databaseRecords: assistant?.databaseRecords || [],
           databaseConfig: assistant?.databaseConfig || null,
-          conversationHistory: messagesRef.current
+          conversationHistory: messagesRef.current,
+          whisperLang,
+          previousLang: prevLang
         }
       );
 
@@ -438,7 +532,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages((prev) => [...prev, botMsg]);
-      speakText(replyText);
+      speakText(replyText, { shouldAutoListen });
     } catch (err) {
       console.error('Error getting response:', err);
       const fallback = `I encountered an issue: ${err.message || 'Please check your API key'}.`;
@@ -451,7 +545,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
-      speakText(fallback);
+      speakText(fallback, { shouldAutoListen: false });
     } finally {
       setIsThinking(false);
       speechHandledRef.current = false;
@@ -463,7 +557,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
     if (!trimmed) return;
     setTextInput('');
     speechHandledRef.current = false;
-    handleUserSpeech(trimmed);
+    handleUserSpeech(trimmed, { source: 'text' });
   };
 
   if (!isOpen) return null;
@@ -514,8 +608,13 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         <div className="p-6 bg-gradient-to-b from-indigo-50/40 via-white to-white flex flex-col items-center justify-center border-b border-slate-100">
           <div className="relative flex items-center justify-center my-2">
             {/* Animated Pulsing Waves */}
-            {(isRecording || isSpeaking) && (
-              <div className="absolute w-28 h-28 rounded-full bg-indigo-400/20 animate-ping duration-1000" />
+            {(isRecording || isSpeaking || isStartingMic || isTranscribing) && (
+              <div className={`absolute w-28 h-28 rounded-full animate-ping duration-1000 ${
+                isStartingMic || isTranscribing ? 'bg-cyan-400/25' : 'bg-indigo-400/20'
+              }`} />
+            )}
+            {(isStartingMic || isTranscribing) && (
+              <div className="absolute w-24 h-24 rounded-full border-2 border-dashed border-cyan-500/70 animate-spin" />
             )}
             {isSpeaking && (
               <div className="absolute w-36 h-36 rounded-full bg-emerald-400/20 animate-pulse duration-700" />
@@ -526,7 +625,9 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
               type="button"
               onClick={handleToggleListen}
               className={`relative z-10 w-20 h-20 rounded-full flex flex-col items-center justify-center transition-all duration-300 shadow-xl cursor-pointer ${
-                isRecording
+                isStartingMic || isTranscribing
+                  ? 'bg-gradient-to-tr from-indigo-500 to-cyan-500 text-white shadow-cyan-500/30 scale-105 ring-4 ring-cyan-300/50 animate-pulse'
+                  : isRecording
                   ? 'bg-rose-500 text-white shadow-rose-500/30 scale-105 ring-4 ring-rose-300/50'
                   : isSpeaking
                   ? 'bg-emerald-600 text-white shadow-emerald-500/30 scale-105 ring-4 ring-emerald-300/50'
@@ -536,7 +637,9 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
               }`}
               title={isRecording ? 'Click to stop and send voice' : 'Click to start speaking'}
             >
-              {isRecording ? (
+              {isStartingMic || isTranscribing ? (
+                <Loader2 size={28} className="animate-spin" />
+              ) : isRecording ? (
                 <Mic size={28} className="animate-pulse" />
               ) : isSpeaking ? (
                 <Volume2 size={28} className="animate-bounce" />
@@ -568,8 +671,12 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
           {/* Dynamic Voice Status Label */}
           <div className="mt-3 text-center">
             <div className="text-xs font-bold text-slate-800">
-              {isRecording
-                ? 'Recording... Tap again when finished speaking'
+              {isStartingMic
+                ? 'Starting microphone…'
+                : isTranscribing
+                ? 'Processing your voice…'
+                : isRecording
+                ? 'Listening… Speak naturally'
                 : isSpeaking
                 ? `Speaking (${assistantVoice})...`
                 : isThinking

@@ -439,7 +439,15 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   const cleanMessage = String(messageText || '').trim();
   const agentDisplayName = options?.agentName || options?.assistantName || (typeof promptText === 'string' && promptText.includes('named "') ? (promptText.match(/named\s*"([^"]+)"/i) || [])[1] : '') || 'Krushna AI Voice Agent';
   const promptContext = promptText || `You are ${agentDisplayName}, the official AI Customer Support & Help Desk Agent for this business.`;
-  const queryLangForPrompt = detectTextLanguage(cleanMessage);
+  const queryLangForPrompt = detectTextLanguage(cleanMessage, {
+    whisperLang: options?.whisperLang,
+    previousLang: options?.previousLang
+  });
+  const activeLanguageDirective = queryLangForPrompt === 'mr-IN'
+    ? 'ACTIVE TURN LANGUAGE: Marathi (मराठी, Devanagari script). Reply strictly in natural, polite Marathi even though the user may include English words (like admission, form, course, fees, college, doctor, price, timing). You may keep English proper nouns/domain terms naturally inside your Marathi sentence, but NEVER switch the reply into full English!'
+    : queryLangForPrompt === 'hi-IN'
+      ? 'ACTIVE TURN LANGUAGE: Hindi (हिंदी, Devanagari script). Reply strictly in natural, polite Hindi even though the user may include English words (like admission, form, course, fees, college, doctor, price, timing). You may keep English proper nouns/domain terms naturally inside your Hindi sentence, but NEVER switch the reply into full English!'
+      : 'ACTIVE TURN LANGUAGE: English (unless the user mixes Marathi or Hindi grammar/words into their query, in which case reply in natural Marathi or Hindi respectively).';
 
   const rawDbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
   const dbRecords = (Array.isArray(rawDbRecords) ? rawDbRecords : []).filter(r => {
@@ -524,12 +532,11 @@ You are exceptionally polite, respectful, warm, and well-mannered at all times. 
 EVERYDAY KNOWLEDGE & GENERAL INTELLIGENCE:
 You possess broad everyday common knowledge, general facts, time/date awareness, and everyday conversational intelligence. When customers engage in small talk, greetings, general inquiries, or everyday conversation, answer them warmly, intelligently, and politely. Never refuse casual conversation or claim you can only discuss business FAQs.
 
-MANDATORY TURN-LEVEL CODE-SWITCHING RULE (CRITICAL):
-You MUST independently evaluate the language of the LATEST user message on EVERY turn, regardless of what language was used in previous conversation history turns.
-- Mid-Conversation Language Switching: If the customer starts a conversation in English and switches to Marathi mid-conversation (in Devanagari script or Romanized/Marathish like 'kasa ahes', 'mala sanga', 'ahe', 'kay ahe', 'kuthe ahe'), you MUST IMMEDIATELY switch your response to polite, natural Marathi (मराठी).
-- If the customer switches to Hindi (Devanagari or Hinglish like 'kaise ho', 'kya hai', 'bataiye'), you MUST reply in polite, natural Hindi (हिंदी).
-- If the customer switches back to English, reply in natural English.
-- NEVER remain stuck in the previous turn's language when the customer has switched languages!
+MANDATORY TURN-LEVEL CODE-SWITCHING & CODE-MIXING RULE (CRITICAL):
+${activeLanguageDirective}
+You MUST independently evaluate the language of the LATEST user message on EVERY turn:
+- Code-Mixing Preservation (VERY IMPORTANT): Users frequently include English domain words (such as "admission", "form", "course", "fees", "syllabus", "college", "doctor", "appointment", "price", "timing", "website", "order") inside Marathi or Hindi sentences (e.g., "Admission form kasa bharaycha?", "Courses chi fees kiti aahe?", "Course ki fees kitni hai?"). If ANY Marathi or Hindi words/grammar are present, you MUST reply completely in natural, polite Marathi (मराठी) or Hindi (हिंदी) in Devanagari script — NEVER switch to full English just because the user used English nouns!
+- Mid-Conversation Language Switching: If the customer switches to Marathi (Devanagari or Romanized Marathish), reply immediately in Marathi (मराठी). If they switch to Hindi (Devanagari or Hinglish), reply immediately in Hindi (हिंदी). Only reply in full English when the user speaks/writes completely in English without Marathi/Hindi grammar.
 ${platformKnowledgeBlock}
 CRITICAL OPERATIONAL & FORMATTING RULES:
 1. Pure Spoken & Chat Text: Always output neat, direct conversational paragraphs or structured numbered steps.
@@ -798,7 +805,7 @@ Your floating voice assistant widget will appear immediately on your site, with 
   const isAutomotive = /\b(car|cars|vehicle|vehicles|dealership|showroom|test\s*drive|suv|sedan)\b/i.test(combinedContextText);
 
   // Check live database records first if provided (analytical queries, ordinal, affirmation, typo-tolerant & order-independent!)
-  const inputLang = detectTextLanguage(cleanMessage);
+  const inputLang = queryLangForPrompt;
 
   // Check Frontend Dashboard KPIs, Charts, Report Tables & Cross-Page Summaries FIRST for explicit frontend/dashboard/chart/report/summary queries
   const isExplicitFrontendQ = /\b(chart|charts|graph|graphs|trend|trending|dashboard|summarize|summary|overview|report|reports|kpi|metric|metrics|stat|stats|statistics|across\s+(?:all\s+)?pages|on\s+the\s+[a-z0-9-]+\s+page|displayed\s+here|shown\s+here)\b/i.test(lower);
