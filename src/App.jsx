@@ -1114,7 +1114,7 @@ export default function App() {
   const handleGenerateSystemPrompt = async () => {
     setIsGeneratingPrompt(true);
     const astName = currentAssistant?.name || 'Customer Support Concierge';
-    const basePrompt = `You are an expert AI prompt engineer. Write a concise, professional system prompt for an in-app and website voice help desk assistant named "${astName}". Define its tone (warm, professional, helpful), guidelines (respond in concise 1-2 spoken sentences suitable for speech audio, polite, clear, accurate), and knowledge boundary. Output ONLY the raw prompt text without markdown backticks or commentary.`;
+    const basePrompt = `You are an expert AI prompt engineer. Write a thorough, professional system prompt for an in-app and website voice help desk assistant named "${astName}". Define its tone (warm, exceptionally polite, respectful, and helpful), guidelines (provide polite, detailed, well-explained answers covering all relevant verified details and helpful next steps in clear, complete sentences), and knowledge boundary. Output ONLY the raw prompt text without markdown backticks or commentary.`;
     try {
       const res = await generateAIResponse(basePrompt, []);
       if (res) {
@@ -1564,7 +1564,7 @@ export default function App() {
 
         // 1. Normal & General Questions Support
         if (isNormalQuestionsIntent) {
-          const normalGuideline = `\n- General & Everyday Questions: Warmly and helpfully answer normal everyday questions, greetings, small talk, and common conversational queries in 1 to 2 polite spoken sentences. While strictly adhering to Verified Knowledge Base Facts for business-specific inquiries, never decline or refuse ordinary conversational or common questions.`;
+          const normalGuideline = `\n- General & Everyday Questions: Warmly, politely, and thoroughly answer normal everyday questions, greetings, small talk, and common conversational queries in clear, helpful detail. While strictly adhering to Verified Knowledge Base Facts for business-specific inquiries, never decline or refuse ordinary conversational or common questions.`;
           const currentPrompt = updated.prompt || updated.systemPrompt || '';
           if (!currentPrompt.includes('General & Everyday Questions')) {
             const expanded = `${currentPrompt}${normalGuideline}`;
@@ -1739,7 +1739,7 @@ export default function App() {
     // Standard conversational completion
     setIsChatResponding(true);
     try {
-      const defaultSupportPrompt = "You are a friendly, helpful AI voice assistant for customer support. Answer visitor questions politely and concisely in 1-2 spoken sentences.";
+      const defaultSupportPrompt = "You are a warm, exceptionally polite, and knowledgeable AI assistant for customer support. Always answer visitor questions politely and in thorough, helpful detail using clear, natural sentences.";
       const activeKey = currentAssistant?.apiKey || getUserApiKeys().activeKey || '';
       const currentAgentName = currentAssistant?.name || 'Krushna AI Voice Agent';
       const currentThread = threads.find((t) => t.id === currentThreadId);
@@ -3094,10 +3094,10 @@ export default function App() {
                                 {/* Answer input */}
                                 <div>
                                   <label className="text-[11px] font-semibold text-slate-700 mb-1 block">
-                                    Spoken AI Answer (1-2 sentences):
+                                    Polite &amp; Detailed AI Answer:
                                   </label>
                                   <textarea
-                                    rows={2}
+                                    rows={3}
                                     value={faq.a || ''}
                                     onChange={(e) => handleUpdateFaq(idx, 'a', e.target.value)}
                                     placeholder="e.g. We offer a 30-day no-questions-asked refund guarantee on all original items."

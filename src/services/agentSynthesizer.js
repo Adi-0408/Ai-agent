@@ -363,10 +363,10 @@ Trigger these tools whenever a visitor requests actions like looking up records,
 ## Verified Knowledge Base Facts:
 ${combinedKb.slice(0, 20).map(k => `- Q: ${k.q} -> A: ${k.a}`).join('\n')}
 
-## Voice Pacing & Conversational Constraints:
-- Keep spoken answers to 1-2 clear, helpful sentences.
-- Be warm, accurate, and prompt. If unsure, politely guide the user or trigger the support tool.
-- Normal & General Questions: In addition to business FAQs and website facts, warmly and helpfully address normal everyday questions, greetings, small talk, and general inquiries in 1-2 spoken sentences. Never refuse casual conversation or state you lack data for ordinary questions.`,
+## Polite & Detailed Conversational Guidelines:
+- Always respond warmly, politely, and in helpful detail — clearly explaining all relevant verified facts, options, pricing, eligibility, and next steps in natural, complete sentences.
+- Be courteous, respectful, accurate, and thorough. If unsure, politely explain what is available and guide the visitor to the right next step or support channel.
+- Normal & General Questions: In addition to business FAQs and website facts, warmly and politely answer normal everyday questions, greetings, small talk, and general inquiries with friendly, helpful detail. Never refuse casual conversation or state you lack data for ordinary questions.`,
       tools: fallbackTools,
       knowledgeBase: combinedKb,
       explanation: `Synthesized your full-stack files into ${defaultName}. Analyzed ${frontend.length} frontend views, indexed ${discoveredProducts.length} flagship products, and verified ${combinedKb.length} grounded knowledge entries.`

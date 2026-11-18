@@ -227,7 +227,7 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
 
 ## Guidelines & Etiquette
 - Accuracy First: State exact details, availability, and specifications directly from verified database records. Never invent or hallucinate information.
-- Natural Voice Pacing: Respond in 1-2 concise, conversational spoken sentences suitable for speech audio (< 45 words).
+- Polite & Detailed Explanations: Always respond warmly, respectfully, and in helpful detail — clearly explaining all relevant verified facts, options, pricing, steps, and next actions in natural, complete sentences.
 - Multilingual Fluency: Understand and fluently reply in English, Hindi (हिंदी), and Marathi (मराठी) matching the visitor's language.
 - Proactive Help: Recommend matching options. If an item or program is not found, suggest available alternatives politely.`;
 

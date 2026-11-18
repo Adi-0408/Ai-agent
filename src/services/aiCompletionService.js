@@ -591,8 +591,8 @@ HONEST UNCERTAINTY, ACCURACY & ZERO-HALLUCINATION PROTOCOL (CRITICAL):
 - HONEST UNCERTAINTY: If the user asks for a specific business fact, number, person, branch, or policy that is NOT present in your provided context, NEVER invent, guess, or fabricate an answer. Politely state that you do not have that exact detail on file right now, and offer verified related options or direct contact details if available.
 - AVOID REPETITION: Review the conversation history and NEVER repeat the exact same answer from a previous turn; instead clarify, elaborate with new verified facts, or guide to a concrete next step.
 
-POLITE MANNERS & ETIQUETTE:
-You are exceptionally polite, respectful, warm, and well-mannered at all times. Use courteous phrasing (e.g. "Namaskar", "Hello, I would be delighted to assist", "Please feel free to ask", "Certainly"). Treat every visitor with patience and kindness.
+POLITE MANNERS, WARMTH & DETAILED ANSWERS:
+You are exceptionally polite, respectful, warm, and well-mannered at all times. Use courteous phrasing (e.g. "Namaskar", "Hello, I would be delighted to assist you", "Certainly", "Thank you for asking", "Please feel free to ask if you need anything else"). Always provide thorough, detailed, well-structured, and genuinely helpful explanations covering all relevant verified details (descriptions, pricing/fees, features, availability, eligibility, step-by-step instructions, and helpful next steps) rather than brief one-line replies. Treat every visitor with patience and kindness.
 
 EVERYDAY KNOWLEDGE & GENERAL INTELLIGENCE:
 You possess broad everyday common knowledge, general facts, time/date awareness, and everyday conversational intelligence. When customers engage in small talk, greetings, general inquiries, or everyday conversation, answer them warmly, intelligently, and politely. Never refuse casual conversation or claim you can only discuss business FAQs.
@@ -606,7 +606,7 @@ ${platformKnowledgeBlock}
 CRITICAL OPERATIONAL & FORMATTING RULES:
 1. Pure Spoken & Chat Text: Always output neat, direct conversational paragraphs or structured numbered steps.
 2. NEVER Output JSON Or Config Schemas: You are in DIRECT CHAT / VOICE MODE. You MUST NEVER output JSON configurations, code schemas, or objects like {"agent_config": ...}.
-3. Dual-Channel Excellence: Keep answers crisp, polite, and helpful so they sound natural when spoken aloud and look neat and readable in chat.
+3. Dual-Channel Excellence: Give polite, warm, and detailed answers (clear explanations, key specifics, and helpful next steps) that read cleanly in chat and flow naturally when spoken aloud. Never rush or give curt one-line replies when helpful detail is available.
 4. STRICT CUSTOMER-ONLY INTERACTIONS: You are talking directly to customers, shoppers, and site visitors—NOT developers or database engineers. Only answer customer questions (products, pricing, availability, store services, ordering). NEVER show unnecessary internal data, README setup notes, Apps Script toolbars, responsive/CSS specs, technical database queries, schema questions, SQL statements, or developer backend logic. Always reply politely and warmly with only what the visitor actually needs.`;
 
   // Multi-Turn Conversational Memory & History Formatting (for ALL agents & websites)
@@ -651,7 +651,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
                 content: cleanMessage
               }
             ],
-            max_tokens: 900,
+            max_tokens: 1200,
             temperature: 0.15
           })
         });
@@ -698,7 +698,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
           },
           contents: geminiContents,
           generationConfig: {
-            maxOutputTokens: 900,
+            maxOutputTokens: 1200,
             temperature: 0.2
           }
         })
@@ -735,7 +735,7 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
             ...validHistory,
             { role: 'user', content: cleanMessage }
           ],
-          max_tokens: 900,
+          max_tokens: 1200,
           temperature: 0.15
         })
       });

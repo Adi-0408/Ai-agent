@@ -4138,70 +4138,74 @@
       const isStockQuery = /\b(stock|available|quantity|how many|count|units|seats|rooms|portions|slots)\b/i.test(lowerQ) || /(साठा|शिल्लक|स्टॉक|जागा|उपलब्ध)/i.test(lowerQ);
       const isDetailsQuery = /\b(what do you provide|what is provided|what is included|what subjects?|tell me more|features?|details?|syllabus|curriculum|what about|in that|for that|specs|specifications|ingredients)\b/i.test(lowerQ);
 
-      // 0. Specific Details Intent (Adapts to ANY Archetype)
+      // 0. Specific Details Intent (Polite & Detailed — Adapts to ANY Archetype)
       if (isDetailsQuery) {
         const desc = itemData.description || itemData.dosage || itemData.details || profile.defaultDesc;
+        const catNote = itemData.category ? ` (Category: ${itemData.category})` : '';
         const priceSuffix = price ? ` The ${profile.priceLabelEn} is ${price}.` : '';
         const stockSuffix = (stock !== null && stock > 0) ? ` Currently ${stock} ${unit} are available.` : '';
+        const rxSuffix = rx ? ' Please note that a valid doctor prescription is required.' : '';
         if (queryLang === 'mr-IN') {
-          return `${cleanTitle} मध्ये आम्ही प्रदान करतो: ${desc}.${price ? ` ${profile.priceLabelMr}: ${price}.` : ''}${stockSuffix ? ` सध्या ${stock} ${unit} उपलब्ध.` : ''}`;
+          return `नक्कीच, मी आपल्याला सविस्तर माहिती देतो! ${cleanTitle}${catNote} मध्ये आम्ही प्रदान करतो: ${desc}.${price ? ` ${profile.priceLabelMr}: ${price}.` : ''}${stockSuffix ? ` सध्या ${stock} ${unit} उपलब्ध आहेत.` : ''} आपल्याला याबद्दल किंवा प्रवेश/बुकिंग प्रक्रियेबद्दल आणखी काही माहिती हवी असल्यास कृपया नक्की विचारा!`;
         }
         if (queryLang === 'hi-IN') {
-          return `${cleanTitle} में हम प्रदान करते हैं: ${desc}।${price ? ` ${profile.priceLabelHi}: ${price}।` : ''}${stockSuffix ? ` वर्तमान में ${stock} ${unit} उपलब्ध हैं।` : ''}`;
+          return `ज़रूर, मैं आपको विस्तार से जानकारी देता हूँ! ${cleanTitle}${catNote} में हम प्रदान करते हैं: ${desc}।${price ? ` ${profile.priceLabelHi}: ${price}।` : ''}${stockSuffix ? ` वर्तमान में ${stock} ${unit} उपलब्ध हैं।` : ''} यदि आपको इसके बारे में या आगे की प्रक्रिया के बारे में कोई और जानकारी चाहिए, तो कृपया बेझिझक पूछें!`;
         }
-        return `In ${cleanTitle}, we provide: ${desc}.${priceSuffix}${stockSuffix}`;
+        return `I would be delighted to share the full details with you! In ${cleanTitle}${catNote}, we provide: ${desc}.${priceSuffix}${stockSuffix}${rxSuffix} Please let me know if you would like to know about eligibility, next steps, or compare it with another option!`;
       }
 
-      // 1. Specific Price Intent
+      // 1. Specific Price Intent (Polite & Detailed)
       if (isPriceQuery) {
+        const descBit = itemData.description ? ` It includes ${itemData.description}.` : '';
         if (queryLang === 'mr-IN') {
-          return price 
-            ? `${cleanTitle} ची ${profile.priceLabelMr} ${price}${unit ? ` प्रति ${unit}` : ''} आहे.${stock !== null && stock > 0 ? ` (सध्या ${stock} ${unit} उपलब्ध).` : ''}`
-            : `${cleanTitle} आमच्या डेटाबेसमध्ये उपलब्ध आहे. ताज्या किंमतीसाठी कृपया आमच्याशी संपर्क साधा.`;
+          return price
+            ? `नक्कीच! ${cleanTitle} ची ${profile.priceLabelMr} ${price}${unit ? ` प्रति ${unit}` : ''} आहे.${stock !== null && stock > 0 ? ` सध्या ${stock} ${unit} उपलब्ध आहेत.` : ''}${itemData.description ? ` यामध्ये ${itemData.description} समाविष्ट आहे.` : ''} आपल्याला आणखी काही तपशील हवे असल्यास कृपया विचारा!`
+            : `नक्कीच! ${cleanTitle} आमच्याकडे उपलब्ध आहे. ताज्या ${profile.priceLabelMr}च्या माहितीसाठी कृपया आमच्या टीमशी संपर्क साधा — मला आपल्याला मदत करायला आनंद होईल!`;
         }
         if (queryLang === 'hi-IN') {
-          return price 
-            ? `${cleanTitle} की ${profile.priceLabelHi} ${price}${unit ? ` प्रति ${unit}` : ''} है।${stock !== null && stock > 0 ? ` (वर्तमान में ${stock} ${unit} उपलब्ध)।` : ''}`
-            : `${cleanTitle} हमारे डेटाबेस में उपलब्ध है। नवीनतम कीमत के लिए कृपया संपर्क करें।`;
+          return price
+            ? `ज़रूर! ${cleanTitle} की ${profile.priceLabelHi} ${price}${unit ? ` प्रति ${unit}` : ''} है।${stock !== null && stock > 0 ? ` वर्तमान में ${stock} ${unit} उपलब्ध हैं।` : ''}${itemData.description ? ` इसमें ${itemData.description} शामिल है।` : ''} कृपया बताएं यदि आप और अधिक जानकारी चाहते हैं!`
+            : `ज़रूर! ${cleanTitle} हमारे यहाँ उपलब्ध है। नवीनतम ${profile.priceLabelHi} की जानकारी के लिए कृपया हमारी टीम से संपर्क करें — मुझे आपकी सहायता करके खुशी होगी!`;
         }
         return price
-          ? `The ${profile.priceLabelEn} for ${cleanTitle} is ${price}${unit ? ` per ${unit}` : ''}.${stock !== null && stock > 0 ? ` (Currently available: ${stock} ${unit}).` : ''}`
-          : `${cleanTitle} is listed in our database${stock !== null ? ` with ${stock} ${unit} available` : ''}. Please check with support for live rates.`;
+          ? `Certainly! The ${profile.priceLabelEn} for ${cleanTitle} is ${price}${unit ? ` per ${unit}` : ''}.${stock !== null && stock > 0 ? ` Currently ${stock} ${unit} are available.` : ''}${descBit} Please let me know if you would like full details or help getting started!`
+          : `I would be happy to help! ${cleanTitle} is listed in our offerings${stock !== null ? ` with ${stock} ${unit} available` : ''}.${descBit} Please reach out to our team for the latest ${profile.priceLabelEn} details!`;
       }
 
-      // 2. Specific Stock / Availability Intent
+      // 2. Specific Stock / Availability Intent (Polite & Detailed)
       if (queryLang === 'mr-IN') {
         if (stock !== null && stock > 0) {
           if (currentArchetype === 'academic') {
-            return `${cleanTitle} साठी सध्या प्रवेश सुरू आहेत! आमच्याकडे ${price ? `${price} शुल्कावर ` : ''}${stock} ${unit} उपलब्ध आहेत.`;
+            return `नक्कीच! ${cleanTitle} साठी सध्या प्रवेश सुरू आहेत! आमच्याकडे ${price ? `${price} शुल्कावर ` : ''}${stock} ${unit} उपलब्ध आहेत.${itemData.description ? ` यामध्ये ${itemData.description} समाविष्ट आहे.` : ''} आपल्याला अभ्यासक्रम, पात्रता किंवा अर्ज प्रक्रियेबद्दल अधिक माहिती हवी असल्यास कृपया विचारा!`;
           }
-          return `${cleanTitle} सध्या उपलब्ध आहे! आमच्याकडे ${stock} ${unit} उपलब्ध आहेत${price ? ` (किंमत: ${price})` : ''}.${rx ? ' (डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक).' : ''}`;
+          return `नक्कीच! ${cleanTitle} सध्या उपलब्ध आहे! आमच्याकडे ${stock} ${unit} उपलब्ध आहेत${price ? ` (किंमत: ${price})` : ''}.${itemData.description ? ` तपशील: ${itemData.description}.` : ''}${rx ? ' कृपया लक्षात ठेवा की डॉक्टरांचे प्रिस्क्रिप्शन आवश्यक आहे.' : ''} आपल्याला याबद्दल आणखी काही माहिती हवी आहे का?`;
         } else if (stock === 0) {
-          return `क्षमस्व, ${cleanTitle} सध्या उपलब्ध नाही. नवीन पर्याय लवकरच उपलब्ध होतील!`;
+          return `क्षमस्व, ${cleanTitle} सध्या उपलब्ध नाही. नवीन पर्याय लवकरच उपलब्ध होतील — कृपया सांगा मी आपल्याला इतर उपलब्ध पर्याय दाखवू का?`;
         }
       }
 
       if (queryLang === 'hi-IN') {
         if (stock !== null && stock > 0) {
           if (currentArchetype === 'academic') {
-            return `${cleanTitle} में वर्तमान में एडमिशन खुले हैं! हमारे पास ${price ? `${price} की फीस पर ` : ''}${stock} ${unit} उपलब्ध हैं।`;
+            return `ज़रूर! ${cleanTitle} में वर्तमान में एडमिशन खुले हैं! हमारे पास ${price ? `${price} की फीस पर ` : ''}${stock} ${unit} उपलब्ध हैं।${itemData.description ? ` इसमें ${itemData.description} शामिल है।` : ''} यदि आप सिलेबस, पात्रता या आवेदन प्रक्रिया के बारे में जानना चाहते हैं, तो कृपया पूछें!`;
           }
-          return `${cleanTitle} वर्तमान में उपलब्ध है! हमारे पास ${stock} ${unit} उपलब्ध हैं${price ? ` (कीमत: ${price})` : ''}।${rx ? ' (डॉक्टर का पर्चा आवश्यक है)।' : ''}`;
+          return `ज़रूर! ${cleanTitle} वर्तमान में उपलब्ध है! हमारे पास ${stock} ${unit} उपलब्ध हैं${price ? ` (कीमत: ${price})` : ''}।${itemData.description ? ` विवरण: ${itemData.description}।` : ''}${rx ? ' कृपया ध्यान दें कि इसके लिए डॉक्टर का पर्चा आवश्यक है।' : ''} क्या आप इसके बारे में और विस्तार से जानना चाहेंगे?`;
         } else if (stock === 0) {
-          return `क्षमा करें, ${cleanTitle} अभी उपलब्ध नहीं है। जल्द ही नया स्टॉक उपलब्ध होगा!`;
+          return `क्षमा करें, ${cleanTitle} अभी उपलब्ध नहीं है। जल्द ही नया स्टॉक उपलब्ध होगा — क्या मैं आपको हमारे अन्य उपलब्ध विकल्प दिखाऊँ?`;
         }
       }
 
-      // English default (Archetype-Tailored Availability)
+      // English default (Polite, Detailed & Archetype-Tailored)
+      const richDesc = itemData.description ? ` ${itemData.description}.` : '';
       if (stock !== null && stock > 0) {
         if (currentArchetype === 'academic') {
-          return `${cleanTitle} admissions are currently open! We have ${stock} ${unit} available${price ? ` at ${price}` : ''}.`;
+          return `I would be happy to help! ${cleanTitle} admissions are currently open, with ${stock} ${unit} available${price ? ` at ${price}` : ''}.${richDesc} Please let me know if you would like more details about eligibility, documents required, or how to apply!`;
         }
         if (currentArchetype === 'food') {
-          return `${cleanTitle} is freshly available on our menu${price ? ` at ${price}` : ''}!`;
+          return `Certainly! ${cleanTitle} is freshly available on our menu${price ? ` at ${price}` : ''}.${richDesc} Please let me know if you would like any more details or recommendations!`;
         }
         if (currentArchetype === 'hospitality') {
-          return `${cleanTitle} is available for booking at ${price || 'standard rates'}! We have ${stock} ${unit} open.`;
+          return `I would be delighted to help! ${cleanTitle} is available for booking at ${price || 'our standard rates'}, with ${stock} ${unit} open.${richDesc} Please let me know if you would like details on amenities or how to reserve!`;
         }
         if (currentArchetype === 'saas') {
           return `${cleanTitle} is active and available${price ? ` starting from ${price}` : ''}.`;
@@ -5434,7 +5438,7 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
 - AUDIENCE IS CONSUMER / CUSTOMER ONLY: The person reading and asking is an ordinary website visitor, customer, parent, or student — NOT the website owner, admin, or developer. Always answer warmly, politely, and directly from their perspective. NEVER quote admin/staff setup guides (such as Google Sheets apps, spreadsheets, "open your sheet", "message the parent", Apps Script toolbars, deploy instructions, CSS/responsive specs, database schemas, SQL, or developer notes). If asked about database internals or queries, politely decline: ${consumerDeclineText}
-- WARM, POLITE & WELL-MANNERED TONE: Always respond with genuine warmth, courtesy, and respect (e.g., "I would be happy to help!", "Certainly!", "Please let me know if you'd like any further details!"). Keep answers crisp, helpful, and focused strictly on what the visitor actually needs.
+- WARM, POLITE & DETAILED RESPONSE STYLE (CRITICAL): Always respond with genuine warmth, respect, and courtesy (e.g., "I would be happy to help!", "Certainly!", "Thank you for asking!"). Give thorough, well-explained, and genuinely helpful answers — include all relevant verified details (full descriptions, features, fees/prices, availability, eligibility, step-by-step process, and helpful next steps) rather than overly short one-line replies, and close with a warm, polite offer to help with anything else.
 - STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
 - CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
 - EXACT FORM & SECTION REDIRECTION: When [LIVE_BRIDGE_DATA] has STATUS: NAVIGATE_SECTION, confirm you are taking the visitor directly to that exact form, section, or page (mention key fields if it is a form). When asked how to apply/order/book/register, guide them using [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT].
@@ -5443,10 +5447,10 @@ CRITICAL RULES:
 - DETERMINISTIC DATA ANALYSIS: If [LIVE_BRIDGE_DATA] has STATUS: ANALYTICAL_RESULT or STATUS: FOUND_IN_FRONTEND, report the exact VERIFIED_SUMMARY / VERIFIED_FRONTEND_SUMMARY and COMPUTED_DATA numbers without altering or inventing figures.
 - HONEST UNCERTAINTY PROTOCOL (CRITICAL): If the visitor asks for a specific fact, number, person, branch, date, or policy that is NOT explicitly present in your provided database, frontend, cross-page, or FAQ context, NEVER guess, assume, or fabricate an answer. Politely state that you do not have that exact detail listed on the website right now, and immediately offer verified contact details or related topics you can help with.
 - ANTI-REPETITION: Never repeat the exact same answer from a previous turn; clarify, provide new verified details, or offer concrete next steps.
-- If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
-- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items concisely in 1-2 sentences and confirm you have opened them.
-- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item is not currently listed, mention available options if present, and offer guidance.
-- Keep responses plain-text, polite, natural to listen to, and 2-3 complete sentences (never cut off mid-sentence, never output markdown symbols like *, #, \`, or raw #section-id anchors).
+- If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, explain all exact verified details warmly, politely, and thoroughly (including description, pricing, availability, and helpful next steps).
+- If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, present the available options warmly and clearly with their key details (prices/highlights) and invite the visitor to ask about any specific option.
+- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item is not currently listed, mention available options if present, and offer helpful guidance.
+- Keep responses plain-text, polite, detailed, and natural to read or listen to (typically 3 to 6 complete, well-structured sentences covering all relevant verified details; never cut off mid-sentence, never output markdown symbols like *, #, \`, or raw #section-id anchors).
 - LANGUAGE: ${langDirective}
 
 ${liveDbBlock}[LIVE_BRIDGE_DATA]
@@ -5479,11 +5483,11 @@ ${cleanFaqBlock}`;
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Keep responses complete and never cut off in the middle! Only trim if exceptionally long (> 260 words), strictly at a full sentence boundary.
+        // Keep detailed responses complete and never cut off in the middle! Only trim if exceptionally long (> 420 words), strictly at a full sentence boundary.
         const words = cleaned.split(' ');
         let hitWordCap = false;
-        if (words.length > 260) {
-          const sliced = words.slice(0, 260).join(' ');
+        if (words.length > 420) {
+          const sliced = words.slice(0, 420).join(' ');
           const lastEnd = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'), sliced.lastIndexOf('।'));
           cleaned = lastEnd > 60 ? sliced.slice(0, lastEnd + 1) : sliced;
           hitWordCap = true;
@@ -5530,7 +5534,7 @@ ${cleanFaqBlock}`;
                 model: gModel,
                 messages: messagesPayload,
                 temperature: 0.15,
-                max_tokens: 900
+                max_tokens: 1200
               }),
               signal: AbortSignal.timeout(gIdx === 0 ? 8500 : 6000)
             });
@@ -5580,7 +5584,7 @@ ${cleanFaqBlock}`;
                 contents,
                 generationConfig: {
                   temperature: 0.2,
-                  maxOutputTokens: 900
+                  maxOutputTokens: 1200
                 }
               }),
               signal: AbortSignal.timeout(gIdx === 0 ? 8500 : 6000)
@@ -5624,7 +5628,7 @@ ${cleanFaqBlock}`;
               model: model || 'gpt-4o-mini',
               messages: openAiMessages,
               temperature: 0.15,
-              max_tokens: 900
+              max_tokens: 1200
             }),
             signal: AbortSignal.timeout(9500)
           });
