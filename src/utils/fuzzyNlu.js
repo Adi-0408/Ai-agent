@@ -265,8 +265,12 @@ export function normalizeUserQuery(rawText, catalogItems = [], kbList = []) {
     for (const cand of vocabList) {
       if (Math.abs(cand.length - tok.length) > 2) continue;
       if (fuzzyTokenMatch(tok, cand) >= 2) {
+        const rawBigram = bigramSimilarity(tok, cand);
+        // Prevent short 4-5 letter real words ("mars", "coins", "beach", "gold") from being mangled into unrelated domain words ("marks", "joins", "teach", "sold")
+        if (tok.length <= 5 && tok[0] !== cand[0]) continue;
+        if (tok.length <= 4 && rawBigram < 0.65) continue;
         const d = damerauLevenshtein(tok, cand);
-        const sim = bigramSimilarity(tok, cand) + (tok[0] === cand[0] ? 0.15 : 0);
+        const sim = rawBigram + (tok[0] === cand[0] ? 0.15 : 0);
         if (d < bestDist || (d === bestDist && sim > bestSim)) {
           bestDist = d;
           bestSim = sim;

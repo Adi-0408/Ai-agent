@@ -2122,8 +2122,12 @@
         for (const cand of vocabList) {
           if (Math.abs(cand.length - tok.length) > 2) continue;
           if (fuzzyTokenMatch(tok, cand) >= 2) {
+            const rawBigram = bigramSimilarity(tok, cand);
+            // Prevent short 4-5 letter real words ("mars", "coins", "beach", "gold") from being mangled into unrelated domain words ("marks", "joins", "teach", "sold")
+            if (tok.length <= 5 && tok[0] !== cand[0]) continue;
+            if (tok.length <= 4 && rawBigram < 0.65) continue;
             const d = damerauLevenshtein(tok, cand);
-            const sim = bigramSimilarity(tok, cand) + (tok[0] === cand[0] ? 0.15 : 0);
+            const sim = rawBigram + (tok[0] === cand[0] ? 0.15 : 0);
             if (d < bestDist || (d === bestDist && sim > bestSim)) {
               bestDist = d;
               bestSim = sim;
@@ -2406,21 +2410,6 @@
       if (!sectionInfo || !sectionInfo.element) return false;
       try {
         sectionInfo.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-        const el = sectionInfo.element;
-        const origTransition = el.style.transition;
-        const origBoxShadow = el.style.boxShadow;
-        const origOutline = el.style.outline;
-
-        el.style.transition = 'all 0.35s cubic-bezier(0.4, 0, 0.2, 1)';
-        el.style.boxShadow = '0 0 0 4px #38bdf8, 0 10px 30px -5px rgba(56, 189, 248, 0.5)';
-        el.style.outline = '2px solid #38bdf8';
-
-        setTimeout(() => {
-          el.style.boxShadow = origBoxShadow;
-          el.style.outline = origOutline;
-          el.style.transition = origTransition;
-        }, 3500);
         return true;
       } catch (err) {
         console.warn('[Echo AI Navigation] Failed smooth scroll:', err);
@@ -4747,24 +4736,155 @@
       if (queryLang === 'mr-IN') {
         const contactMr = contactParts ? ` अचूक माहितीसाठी आपण आमच्या टीमशी संपर्क साधू शकता (${contactParts}).` : '';
         const optsMr = topItems.length > 0
-          ? ` मी आपल्याला ${topItems.join(', ')} किंवा ${followUpMr}बद्दल नक्कीच अचूक माहिती देऊ शकतो!`
-          : ` मी आपल्याला ${followUpMr}बद्दल मदत करू शकतो.`;
-        return `माफ करा, माझ्याकडे सध्या या वेबसाइटवर या विषयाची अचूक माहिती उपलब्ध नाही, त्यामुळे मी चुकीची माहिती देऊ इच्छित नाही.${contactMr}${optsMr}`;
+          ? ` कृपया दुसरा प्रश्न विचारा — मी आपल्याला ${topItems.join(', ')} किंवा ${followUpMr}बद्दल नक्कीच अचूक माहिती देऊ शकतो!`
+          : ` कृपया दुसरा प्रश्न विचारा, मी आपल्याला ${followUpMr}बद्दल आनंदाने मदत करेन!`;
+        return `माफ करा, माझ्याकडे सध्या या विषयाची अचूक माहिती उपलब्ध नाही, त्यामुळे मी चुकीची माहिती देऊ इच्छित नाही.${contactMr}${optsMr}`;
       }
       if (queryLang === 'hi-IN') {
         const contactHi = contactParts ? ` सटीक जानकारी के लिए आप हमारी टीम से संपर्क कर सकते हैं (${contactParts})।` : '';
         const optsHi = topItems.length > 0
-          ? ` मैं आपको ${topItems.join(', ')} या ${followUpHi} के बारे में सटीक जानकारी दे सकता हूँ!`
-          : ` मैं आपको ${followUpHi} के बारे में मदद कर सकता हूँ।`;
-        return `क्षमा करें, मेरे पास अभी इस वेबसाइट पर इस विषय की सटीक जानकारी उपलब्ध नहीं है, इसलिए मैं गलत जानकारी नहीं देना चाहूँगा।${contactHi}${optsHi}`;
+          ? ` कृपया कोई अन्य प्रश्न पूछें — मैं आपको ${topItems.join(', ')} या ${followUpHi} के बारे में सटीक जानकारी दे सकता हूँ!`
+          : ` कृपया कोई अन्य प्रश्न पूछें, मुझे ${followUpHi} में आपकी सहायता करके खुशी होगी!`;
+        return `क्षमा करें, मेरे पास अभी इस विषय की सटीक जानकारी उपलब्ध नहीं है, इसलिए मैं गलत जानकारी नहीं देना चाहूँगा।${contactHi}${optsHi}`;
       }
       const contactEn = contactParts ? ` For an exact answer, please reach our team directly via ${contactParts}.` : '';
       const helpEn = topItems.length > 0
-        ? ` Meanwhile, I can give you verified details on ${topItems.join(', ')}, or help with ${followUpEn}!`
+        ? ` Please feel free to try another question — I can give you verified details on ${topItems.join(', ')}, or help with ${followUpEn}!`
         : (topTopics.length > 0
-            ? ` I can help right away with topics like ${topTopics.join(' or ')}.`
-            : ` I would be happy to help with ${followUpEn} if you'd like!`);
-      return `I don't have exact information${topicClauseEn} listed on this website right now, so I want to be honest rather than guess.${contactEn}${helpEn}`;
+            ? ` Please feel free to try another question, such as ${topTopics.join(' or ')}.`
+            : ` Please feel free to try another question, and I would be happy to assist you!`);
+      return `I apologize, but I don't have exact information${topicClauseEn} right now, so I want to be honest rather than guess.${contactEn}${helpEn}`;
+    }
+
+    // --- 6-WAY QUESTION RELEVANCE, CLARIFICATION & OFF-TOPIC / GENERAL KNOWLEDGE ROUTER ---
+    const WIDGET_UNCLEAR_RE = /^(?:[?!.,…\-_]+|hmm+|hm+|uh+|um+|eh+|huh|what\??|why\??|how\??|who\??|where\??|when\??|this|that|it|something|anything|stuff|things|tell\s+me|explain|help|help\s+me|info|information|details|check|test|testing|idk|nothing|none|asdf+|qwerty|xyz+|abc+|काय\??|का\??|हे|ते|सांगा|क्या\??|क्यों\??|यह|वह|बताओ|बताइए)$/i;
+    const WIDGET_GENERAL_KNOWLEDGE_RE = /\b(what\s+is\s+(?:the\s+)?(?:capital\s+of|meaning\s+of|definition\s+of|formula\s+for|speed\s+of|boiling\s+point|freezing\s+point|largest|smallest|tallest|longest|highest|oldest|population\s+of|currency\s+of|square\s+root\s+of|value\s+of)|who\s+(?:invented|discovered|wrote|painted|was\s+the\s+first|is\s+the\s+(?:president|prime\s+minister|father\s+of))|when\s+(?:did|was)\s+(?:world\s+war|india|america|the\s+internet)|explain\s+(?:what\s+is\s+)?(?:photosynthesis|gravity|osmosis|mitosis|dna|rna|ai|artificial\s+intelligence|machine\s+learning|blockchain|cloud\s+computing|inflation|compound\s+interest|newton'?s\s+laws?|pythagorean|relativity|democracy|climate\s+change|http|https|dns|tcp|sql|html|css|javascript|python)|how\s+(?:many\s+(?:days|hours|minutes|seconds|months|weeks|continents|planets|bones|states)|does\s+(?:photosynthesis|gravity|electricity|the\s+internet|a\s+computer|compound\s+interest)\s+work)|what\s+(?:day|date|time|year)\s+is\s+(?:it|today)|today'?s?\s+date|current\s+(?:date|time)|calculate|compute|convert\s+\d+)\b/i;
+    const WIDGET_PURE_MATH_RE = /(?:^|\b)(?:(?:what\s+is|calculate|compute|solve|evaluate)\s+)?(\d+(?:\.\d+)?)\s*(?:%\s*of\s*(\d+(?:\.\d+)?)|([+\-*/x×÷^])\s*(\d+(?:\.\d+)?))(?:\s*\?*)?$/i;
+
+    function isUnclearOrAmbiguousQuery(rawQuery = '', context = null) {
+      const clean = String(rawQuery || '').trim();
+      if (!clean) return true;
+      if (isGreetingOrConversational(clean)) return false;
+
+      const hasActiveAnchor = Boolean(
+        context && (
+          context.activeItem ||
+          (context.activeTopic && context.activeTopic !== 'unclear') ||
+          (Array.isArray(context.lastDisplayedItems) && context.lastDisplayedItems.length > 0)
+        )
+      );
+      if (hasActiveAnchor && /^(?:yes|yeah|yep|ok|okay|sure|more|details|this|that|it|tell\s+me|explain|show\s+more|first\s+one|second\s+one|हो|होय|हाँ|जी|अधिक|विस्तार)$/i.test(clean)) {
+        return false;
+      }
+
+      const strippedAlphaNum = clean.replace(/[^a-zA-Z0-9\u0900-\u097F]/g, '');
+      if (strippedAlphaNum.length === 0) return true;
+      if (strippedAlphaNum.length <= 2 && !hasActiveAnchor && !/^(hi|ok|no)$/i.test(strippedAlphaNum)) {
+        return true;
+      }
+      if (WIDGET_UNCLEAR_RE.test(clean)) return true;
+
+      const words = clean.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+      if (words.length === 1 && !hasActiveAnchor && /^(?:please|pls|plz|wait|bro|sir|madam|mam|friend|buddy|question|doubt|query|problem|issue|need|want|looking|ask|say)$/i.test(words[0])) {
+        return true;
+      }
+      return false;
+    }
+
+    function buildClarificationReply(rawQuery = '', opts = {}) {
+      const { queryLang = 'en-US', profile = null, catalogItems = [] } = opts;
+      const topNames = (Array.isArray(catalogItems) ? catalogItems : []).slice(0, 3).map(i => i.name).filter(Boolean);
+      if (queryLang === 'mr-IN') {
+        const hintMr = topNames.length > 0 ? ` उदाहरणार्थ, आपण ${topNames.join(', ')} किंवा आपल्या कोणत्याही प्रश्नाबद्दल विचारू शकता.` : '';
+        return `माफ करा, आपला प्रश्न मला नीट स्पष्ट झाला नाही, त्यामुळे अंदाज लावण्याऐवजी मी विचारतो आहे — कृपया आपल्याला नेमकी कोणती माहिती हवी आहे ते थोडे सविस्तर सांगाल का?${hintMr}`;
+      }
+      if (queryLang === 'hi-IN') {
+        const hintHi = topNames.length > 0 ? ` उदाहरण के लिए, आप ${topNames.join(', ')} या अपने किसी भी प्रश्न के बारे में पूछ सकते हैं।` : '';
+        return `क्षमा करें, आपका प्रश्न मुझे पूरी तरह स्पष्ट नहीं हुआ, इसलिए अनुमान लगाने के बजाय मैं पूछना चाहूँगा — कृपया थोड़ा स्पष्ट बताएं कि आप किस विषय के बारे में जानकारी चाहते हैं?${hintHi}`;
+      }
+      const followUp = (profile && profile.followUpEn) ? profile.followUpEn : '';
+      const hint = topNames.length > 0
+        ? ` For example, you can ask me about ${topNames.join(', ')}, or any specific question you have in mind.`
+        : (followUp ? ` For example, you can ask about ${followUp}, or any other question you have.` : '');
+      return `I want to make sure I give you the exact answer you need, so could you please clarify what you are asking about?${hint}`;
+    }
+
+    function isGeneralOffTopicQuery(rawQuery = '', catalogItems = []) {
+      const clean = String(rawQuery || '').trim();
+      if (!clean) return false;
+      const lower = clean.toLowerCase();
+      if (Array.isArray(catalogItems) && catalogItems.some(it => it?.name && lower.includes(String(it.name).toLowerCase()))) {
+        return false;
+      }
+      if (WIDGET_PURE_MATH_RE.test(clean)) return true;
+      if (WIDGET_GENERAL_KNOWLEDGE_RE.test(clean) && !/\b(this\s+website|this\s+project|your\s+(?:website|company|school|college|store|clinic|hotel|restaurant|app|code|database|fees?|prices?|stock))\b/i.test(lower)) {
+        return true;
+      }
+      return false;
+    }
+
+    function tryAnswerGeneralKnowledgeLocally(rawQuery = '', queryLang = 'en-US') {
+      const clean = String(rawQuery || '').trim();
+      if (!clean) return null;
+      const lower = clean.toLowerCase();
+
+      const mathMatch = clean.match(WIDGET_PURE_MATH_RE);
+      if (mathMatch) {
+        const a = Number(mathMatch[1]);
+        if (mathMatch[2] !== undefined) {
+          const b = Number(mathMatch[2]);
+          if (Number.isFinite(a) && Number.isFinite(b)) {
+            const res = Number(((a / 100) * b).toFixed(4));
+            if (queryLang === 'mr-IN') return `नक्कीच! ${b} चे ${a}% म्हणजे ${res} होतात. आपल्याला आणखी कोणती गणना किंवा माहिती हवी असल्यास कृपया विचारा!`;
+            if (queryLang === 'hi-IN') return `ज़रूर! ${b} का ${a}% बराबर ${res} होता है। कृपया बताएं यदि आपको कोई और जानकारी चाहिए!`;
+            return `Certainly! ${a}% of ${b} is ${res}. Please let me know if there is anything else I can help you with!`;
+          }
+        } else if (mathMatch[3] && mathMatch[4] !== undefined) {
+          const op = mathMatch[3].toLowerCase();
+          const b = Number(mathMatch[4]);
+          if (Number.isFinite(a) && Number.isFinite(b)) {
+            let res = null;
+            if (op === '+') res = a + b;
+            else if (op === '-') res = a - b;
+            else if (op === '*' || op === 'x' || op === '×') res = a * b;
+            else if (op === '/' || op === '÷') res = b !== 0 ? Number((a / b).toFixed(4)) : null;
+            else if (op === '^') res = Math.abs(b) <= 12 ? Number(Math.pow(a, b).toFixed(4)) : null;
+            if (res !== null && Number.isFinite(res)) {
+              const prettyOp = op === 'x' ? '×' : op;
+              if (queryLang === 'mr-IN') return `नक्कीच! ${a} ${prettyOp} ${b} = ${res}. आपल्याला आणखी काही मदत हवी असल्यास कृपया विचारा!`;
+              if (queryLang === 'hi-IN') return `ज़रूर! ${a} ${prettyOp} ${b} = ${res}। कृपया बताएं यदि मैं किसी और चीज़ में मदद कर सकूँ!`;
+              return `Certainly! ${a} ${prettyOp} ${b} equals ${res}. Please let me know if there is anything else I can help you with!`;
+            }
+          }
+        }
+      }
+
+      if (/\b(what\s+(?:day|date)\s+is\s+(?:it|today)|today'?s?\s+date|current\s+date)\b/i.test(lower)) {
+        const formatted = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        if (queryLang === 'mr-IN') return `नक्कीच! आजची तारीख ${formatted} आहे. मी आपल्याला आणखी कशी मदत करू शकतो?`;
+        if (queryLang === 'hi-IN') return `ज़रूर! आज की तारीख ${formatted} है। मैं आपकी और किस प्रकार सहायता कर सकता हूँ?`;
+        return `Certainly! Today is ${formatted}. Please let me know if there is anything else I can help you with!`;
+      }
+      if (/\b(what\s+time\s+is\s+it|current\s+time)\b/i.test(lower)) {
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return `Certainly! The current local time is ${timeStr}. Please let me know if I can assist you with anything else!`;
+      }
+
+      const verifiedFacts = [
+        { re: /\bcapital\s+of\s+india\b/i, a: 'Certainly! The capital of India is New Delhi.' },
+        { re: /\bcapital\s+of\s+japan\b/i, a: 'Certainly! The capital of Japan is Tokyo.' },
+        { re: /\bcapital\s+of\s+(?:the\s+)?(?:usa|united\s+states)\b/i, a: 'Certainly! The capital of the United States is Washington, D.C.' },
+        { re: /\bcapital\s+of\s+(?:the\s+)?(?:uk|united\s+kingdom|england)\b/i, a: 'Certainly! The capital of the United Kingdom is London.' },
+        { re: /\bcapital\s+of\s+france\b/i, a: 'Certainly! The capital of France is Paris.' },
+        { re: /\bphotosynthesis\b/i, a: 'Certainly! Photosynthesis is the biological process by which green plants, algae, and some bacteria convert sunlight, water, and carbon dioxide into glucose (energy) and release oxygen.' },
+        { re: /\bboiling\s+point\s+of\s+water\b/i, a: 'Certainly! At standard atmospheric pressure (sea level), pure water boils at 100°C (212°F).' },
+        { re: /\bspeed\s+of\s+light\b/i, a: 'Certainly! The speed of light in a vacuum is approximately 299,792 kilometers per second (about 3 × 10⁸ meters per second).' },
+        { re: /\bcompound\s+interest\b/i, a: 'Certainly! Compound interest is interest calculated on both the initial principal and the accumulated interest from previous periods, following the formula A = P(1 + r/n)^(nt).' }
+      ];
+      for (const fact of verifiedFacts) {
+        if (fact.re.test(clean)) return `${fact.a} Please let me know if you have any other questions!`;
+      }
+      return null;
     }
 
     // --- REAL-TIME LIVE WEBSITE DATABASE BRIDGE ---
@@ -4775,6 +4895,12 @@
 
       const strippedQuery = stripLeadingGreeting(query) || String(query).trim();
       const liveCatalog = getAllCatalogItems(agentConfig);
+
+      // Early exit for clearly unclear/ambiguous queries (so we ask for clarification instead of triggering ITEM_NOT_FOUND!)
+      if (isUnclearOrAmbiguousQuery(strippedQuery, context)) {
+        return { status: 'UNCLEAR_QUERY', item: null, data: null };
+      }
+
       const effectiveQuery = (typeof normalizeUserQuery === 'function')
         ? (normalizeUserQuery(strippedQuery, liveCatalog, agentConfig?.knowledgeBase) || strippedQuery)
         : strippedQuery;
@@ -5201,11 +5327,23 @@
         .replace(/[^a-z0-9\s]/g, '')
         .trim();
 
-      if (isDynamic && !isPolicyOrProcessQuery(effectiveQuery) && !isAffirmationOrMoreQuery(effectiveQuery) && cleanTargetCheck.length >= 2) {
+      const isGeneralOffTopic = isGeneralOffTopicQuery(strippedQuery, liveCatalog);
+
+      if (isDynamic && !isGeneralOffTopic && !isPolicyOrProcessQuery(effectiveQuery) && !isAffirmationOrMoreQuery(effectiveQuery) && cleanTargetCheck.length >= 2) {
         return {
           status: 'ITEM_NOT_FOUND',
           item: targetItem || effectiveQuery,
           data: null
+        };
+      }
+
+      if (isGeneralOffTopic) {
+        const qLang = (typeof detectTextLanguage === 'function') ? detectTextLanguage(query) : 'en-US';
+        const localAnswer = tryAnswerGeneralKnowledgeLocally(strippedQuery, qLang);
+        return {
+          status: 'GENERAL_KNOWLEDGE_QUERY',
+          item: null,
+          data: { localAnswer }
         };
       }
 
@@ -5439,18 +5577,21 @@ CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
 - AUDIENCE IS CONSUMER / CUSTOMER ONLY: The person reading and asking is an ordinary website visitor, customer, parent, or student — NOT the website owner, admin, or developer. Always answer warmly, politely, and directly from their perspective. NEVER quote admin/staff setup guides (such as Google Sheets apps, spreadsheets, "open your sheet", "message the parent", Apps Script toolbars, deploy instructions, CSS/responsive specs, database schemas, SQL, or developer notes). If asked about database internals or queries, politely decline: ${consumerDeclineText}
 - WARM, POLITE & DETAILED RESPONSE STYLE (CRITICAL): Always respond with genuine warmth, respect, and courtesy (e.g., "I would be happy to help!", "Certainly!", "Thank you for asking!"). Give thorough, well-explained, and genuinely helpful answers — include all relevant verified details (full descriptions, features, fees/prices, availability, eligibility, step-by-step process, and helpful next steps) rather than overly short one-line replies, and close with a warm, polite offer to help with anything else.
-- STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
+- QUESTION-SPECIFIC & ON-TOPIC FOCUS (CRITICAL): Answer directly and specifically what the user asked. Keep every sentence relevant to their actual question — NEVER pad answers with unrelated website sections, unsolicited catalog dumps, or off-point filler.
+- INTELLIGENT OFF-TOPIC, GENERAL KNOWLEDGE & HONEST UNCERTAINTY PROTOCOL (CRITICAL):
+  1. Website / business-specific question: Answer strictly from verified injected context (${catalogSectionLabel}, [LIVE_BRIDGE_DATA], [LIVE_FRONTEND_DASHBOARD_AND_PAGE_DATA], [CROSS_PAGE_WEBSITE_INSIGHTS], [RELEVANT_LIVE_PAGE_FACTS], [CLEAN_CUSTOMER_FAQ_KB]) with zero hallucination. Never invent business-specific prices, dates, branches, people, or policies, and never claim to represent competing businesses.
+  2. General knowledge or off-topic question (e.g., science, math, geography, history, definitions, technology, everyday concepts unrelated to private business records): If you know the accurate, reliable answer, answer helpfully, politely, and clearly using your verified knowledge — without refusing or forcing unrelated website pitches.
+  3. Unclear or ambiguous question: If [LIVE_BRIDGE_DATA] has STATUS: UNCLEAR_QUERY or the user's intent is vague/incomplete, politely ask a brief clarifying question instead of guessing.
+  4. Unknown or unverifiable question: If you do not know the answer or lack verified information (whether private website details not listed here or obscure facts you are unsure of), NEVER fabricate an answer — politely apologize, clearly explain your limitation, and invite the user to try another question.
 - CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
 - EXACT FORM & SECTION REDIRECTION: When [LIVE_BRIDGE_DATA] has STATUS: NAVIGATE_SECTION, confirm you are taking the visitor directly to that exact form, section, or page (mention key fields if it is a form). When asked how to apply/order/book/register, guide them using [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT].
 - DATABASE + FRONTEND UNIFIED REASONING: Use BOTH database records (${catalogSectionLabel}) AND frontend-displayed data ([LIVE_FRONTEND_DASHBOARD_AND_PAGE_DATA], [CROSS_PAGE_WEBSITE_INSIGHTS], [RELEVANT_LIVE_PAGE_FACTS]) to answer questions. NEVER say information is unavailable just because it is missing from the database when it is displayed on the frontend (KPIs, summaries, charts, graphs, report tables, or other pages)!
-- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [LIVE_FRONTEND_DASHBOARD_AND_PAGE_DATA], [CROSS_PAGE_WEBSITE_INSIGHTS], [ACTIVE_CONVERSATION_CONTEXT], [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT], [LIVE_HOST_WEBSITE_CONTEXT], [RELEVANT_LIVE_PAGE_FACTS], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
 - DETERMINISTIC DATA ANALYSIS: If [LIVE_BRIDGE_DATA] has STATUS: ANALYTICAL_RESULT or STATUS: FOUND_IN_FRONTEND, report the exact VERIFIED_SUMMARY / VERIFIED_FRONTEND_SUMMARY and COMPUTED_DATA numbers without altering or inventing figures.
-- HONEST UNCERTAINTY PROTOCOL (CRITICAL): If the visitor asks for a specific fact, number, person, branch, date, or policy that is NOT explicitly present in your provided database, frontend, cross-page, or FAQ context, NEVER guess, assume, or fabricate an answer. Politely state that you do not have that exact detail listed on the website right now, and immediately offer verified contact details or related topics you can help with.
 - ANTI-REPETITION: Never repeat the exact same answer from a previous turn; clarify, provide new verified details, or offer concrete next steps.
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, explain all exact verified details warmly, politely, and thoroughly (including description, pricing, availability, and helpful next steps).
 - If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, present the available options warmly and clearly with their key details (prices/highlights) and invite the visitor to ask about any specific option.
-- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item is not currently listed, mention available options if present, and offer helpful guidance.
-- Keep responses plain-text, polite, detailed, and natural to read or listen to (typically 3 to 6 complete, well-structured sentences covering all relevant verified details; never cut off mid-sentence, never output markdown symbols like *, #, \`, or raw #section-id anchors).
+- If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely apologize that the requested item is not currently listed, mention available options if present, and invite the visitor to try another question.
+- Keep responses plain-text, polite, detailed, and natural to read or listen to (covering all relevant verified details cleanly; never cut off mid-sentence, never output markdown symbols like *, #, \`, or raw #section-id anchors).
 - LANGUAGE: ${langDirective}
 
 ${liveDbBlock}[LIVE_BRIDGE_DATA]
@@ -5976,8 +6117,27 @@ ${cleanFaqBlock}`;
         context.lastUserTopic = meaningfulWords.slice(0, 6).join(' ');
       }
 
-      // 1. Direct Catalog List, Pricing Overview, Live Frontend Data & Analytical Query Handlers
+      // 1. Direct Unclear Clarification, General/Off-Topic Knowledge, Catalog List, Pricing Overview, Live Frontend Data & Analytical Query Handlers
       const bridge = bridgeResult || await resolveDatabaseBridge(text, agentConfig, context);
+      if ((bridge && bridge.status === 'UNCLEAR_QUERY') || isUnclearOrAmbiguousQuery(text, context)) {
+        return buildClarificationReply(text, {
+          queryLang,
+          profile,
+          catalogItems: getAllCatalogItems(agentConfig)
+        });
+      }
+      if (bridge && bridge.status === 'GENERAL_KNOWLEDGE_QUERY') {
+        const localGeneral = bridge.data?.localAnswer || tryAnswerGeneralKnowledgeLocally(text, queryLang);
+        if (localGeneral) {
+          if (context) context.fallbackCount = 0;
+          return localGeneral;
+        }
+        return buildHonestUncertaintyReply(text, {
+          queryLang,
+          profile,
+          catalogItems: getAllCatalogItems(agentConfig)
+        });
+      }
       if (bridge && bridge.status === 'FOUND_IN_FRONTEND' && bridge.data && bridge.data.summaryText) {
         if (context) {
           context.activeTopic = bridge.data.matchType || 'frontend_data';

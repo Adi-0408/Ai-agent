@@ -802,28 +802,28 @@ export function buildHonestUncertaintyReply(query, opts = {}) {
   if (queryLang === 'mr-IN') {
     const contactMr = contactParts ? ` अचूक माहितीसाठी आपण आमच्या टीमशी संपर्क साधू शकता (${contactParts}).` : '';
     const optsMr = topItems.length > 0
-      ? ` मी आपल्याला ${topItems.join(', ')} किंवा ${followUpMr}बद्दल नक्कीच अचूक माहिती देऊ शकतो!`
-      : ` मी आपल्याला ${followUpMr}बद्दल मदत करू शकतो.`;
-    return `माफ करा, माझ्याकडे सध्या या वेबसाइटवर या विषयाची अचूक माहिती उपलब्ध नाही, त्यामुळे मी चुकीची माहिती देऊ इच्छित नाही.${contactMr}${optsMr}`;
+      ? ` कृपया दुसरा प्रश्न विचारा — मी आपल्याला ${topItems.join(', ')} किंवा ${followUpMr}बद्दल नक्कीच अचूक माहिती देऊ शकतो!`
+      : ` कृपया दुसरा प्रश्न विचारा, मी आपल्याला ${followUpMr}बद्दल आनंदाने मदत करेन!`;
+    return `माफ करा, माझ्याकडे सध्या या विषयाची अचूक माहिती उपलब्ध नाही, त्यामुळे मी चुकीची माहिती देऊ इच्छित नाही.${contactMr}${optsMr}`;
   }
 
   if (queryLang === 'hi-IN') {
     const contactHi = contactParts ? ` सटीक जानकारी के लिए आप हमारी टीम से संपर्क कर सकते हैं (${contactParts})।` : '';
     const optsHi = topItems.length > 0
-      ? ` मैं आपको ${topItems.join(', ')} या ${followUpHi} के बारे में सटीक जानकारी दे सकता हूँ!`
-      : ` मैं आपको ${followUpHi} के बारे में मदद कर सकता हूँ।`;
-    return `क्षमा करें, मेरे पास अभी इस वेबसाइट पर इस विषय की सटीक जानकारी उपलब्ध नहीं है, इसलिए मैं गलत जानकारी नहीं देना चाहूँगा।${contactHi}${optsHi}`;
+      ? ` कृपया कोई अन्य प्रश्न पूछें — मैं आपको ${topItems.join(', ')} या ${followUpHi} के बारे में सटीक जानकारी दे सकता हूँ!`
+      : ` कृपया कोई अन्य प्रश्न पूछें, मुझे ${followUpHi} में आपकी सहायता करके खुशी होगी!`;
+    return `क्षमा करें, मेरे पास अभी इस विषय की सटीक जानकारी उपलब्ध नहीं है, इसलिए मैं गलत जानकारी नहीं देना चाहूँगा।${contactHi}${optsHi}`;
   }
 
   const contactEn = contactParts ? ` For an exact answer, please reach our team directly via ${contactParts}.` : '';
   let helpEn = '';
   if (topItems.length > 0) {
-    helpEn = ` Meanwhile, I can give you verified details on ${topItems.join(', ')}, or help with ${followUpEn}!`;
+    helpEn = ` Please feel free to try another question — I can give you verified details on ${topItems.join(', ')}, or help with ${followUpEn}!`;
   } else if (topTopics.length > 0) {
-    helpEn = ` I can help right away with topics like ${topTopics.join(' or ')}.`;
+    helpEn = ` Please feel free to try another question, such as ${topTopics.join(' or ')}.`;
   } else {
-    helpEn = ` I would be happy to help with ${followUpEn} if you'd like!`;
+    helpEn = ` Please feel free to try another question, and I would be happy to assist you!`;
   }
 
-  return `I don't have exact information${topicClauseEn} listed on this website right now, so I want to be honest rather than guess.${contactEn}${helpEn}`;
+  return `I apologize, but I don't have exact information${topicClauseEn} right now, so I want to be honest rather than guess.${contactEn}${helpEn}`;
 }
