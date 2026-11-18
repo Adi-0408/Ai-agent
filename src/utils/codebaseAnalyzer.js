@@ -14,12 +14,39 @@ export function detectFileType(fileName, content) {
   const lowerContent = (content || '').toLowerCase();
 
   // 0. Explicit executable code files must NEVER be classified as database files!
-  const isExecutableCode = /\.(py|go|java|php|rb|rs|c|cpp|cs|swift|kt|sh|bat)$/i.test(lowerName);
-  if (isExecutableCode) {
+  const isBackendCompiledOrScript = /\.(py|go|java|php|rb|rs|c|cpp|cs|swift|kt|sh|bat)$/i.test(lowerName);
+  if (isBackendCompiledOrScript) {
     return 'backend';
   }
 
-  // 1. Database & Document files
+  // 0.5 JavaScript / TypeScript files: NEVER blindly dump executable JS/TS code into the CSV/text database parser!
+  // Only treat as 'database' if it is an explicit static catalog data array file (e.g. productsData.js / courses.js)
+  // WITHOUT backend driver / fetch / Firestore / Express / DOM logic.
+  if (/\.(m?js|cjs|ts)$/i.test(lowerName)) {
+    const hasExplicitCatalogArray = /(?:const|let|var|export\s+const)\s+(?:courses|programs|subjects|products|catalog|inventory|items|medicines|dishes|menu|services|plans|pricing|fleet|models)\s*=\s*[\[{]/i.test(content || '');
+    const hasExecutableDriverCode = /\b(fetch\s*\(|axios\.|collection\s*\(|getDocs|setDoc|addDoc|createServer|express\s*\(|router\.|app\.(?:get|post|put|delete)|document\.querySelector|document\.getElementById|addEventListener|localStorage|window\.location|sdkDb|firestore|supabase\.from)\b/i.test(content || '');
+    if (hasExplicitCatalogArray && !hasExecutableDriverCode) {
+      return 'database';
+    }
+    if (
+      lowerName.includes('route') ||
+      lowerName.includes('controller') ||
+      lowerName.includes('server') ||
+      lowerName.includes('api') ||
+      lowerName.includes('endpoint') ||
+      lowerName.includes('firebase') ||
+      lowerName.includes('supabase') ||
+      lowerName.includes('database') ||
+      lowerName.includes('db') ||
+      lowerName.includes('service') ||
+      /\b(router\.|app\.(?:get|post|put|delete)|express\s*\(|fetch\s*\(|collection\s*\(|firestore|supabase|mongodb|mongoose|prisma|sequelize)\b/i.test(content || '')
+    ) {
+      return 'backend';
+    }
+    return 'frontend';
+  }
+
+  // 1. Database & Document files (Strictly non-code structured data & documents)
   if (
     lowerName.endsWith('.sql') ||
     lowerName.endsWith('.csv') ||
@@ -38,11 +65,7 @@ export function detectFileType(fileName, content) {
     lowerName.endsWith('.db') ||
     lowerName.endsWith('.xlsx') ||
     lowerName.endsWith('.xls') ||
-    lowerName.endsWith('.prisma') ||
-    lowerName.includes('database') ||
-    lowerName.includes('schema') ||
-    lowerName.includes('dump') ||
-    lowerName.includes('catalog')
+    lowerName.endsWith('.prisma')
   ) {
     return 'database';
   }
@@ -62,11 +85,6 @@ export function detectFileType(fileName, content) {
     lowerName.includes('server') ||
     lowerName.includes('api') ||
     lowerName.includes('endpoint') ||
-    lowerName.endsWith('.py') ||
-    lowerName.endsWith('.go') ||
-    lowerName.endsWith('.java') ||
-    lowerName.endsWith('.php') ||
-    lowerName.endsWith('.rb') ||
     lowerContent.includes('router.') ||
     lowerContent.includes('app.get(') ||
     lowerContent.includes('app.post(') ||
@@ -101,7 +119,7 @@ export function detectFileType(fileName, content) {
     return 'frontend';
   }
 
-  return 'database'; // Universal safe fallback for documents & data
+  return 'database'; // Safe fallback for plain text / unknown document formats
 }
 
 /**
@@ -243,7 +261,89 @@ export function analyzeFrontendFile(fileName, content) {
     });
   }
 
-  const summary = `Frontend file (${fileName}): Extracted site title "${siteTitle || fileName}", ${pages.length} headings, ${discoveredProducts.length} products/models, ${knowledgeBase.length} grounded Q&A facts, and ${forms.length} forms.`;
+  // 9. Clean HTML Catalog Extractor (Tables, Semantic Cards & Domain <select> Options — strictly validated!)
+  const catalogRecords = [];
+  const seenCatNames = new Set();
+  const addHtmlCatalogItem = (rawName, price = '', stock = null, desc = '', unit = 'units') => {
+    const cleanName = clean(rawName).replace(/^[^\w₹$€£]+/, '').trim();
+    const rec = { name: cleanName, price: clean(price), stock, unit, description: clean(desc).slice(0, 180) };
+    if (!isValidCustomerCatalogName(cleanName, rec)) return;
+    if (seenCatNames.has(cleanName.toLowerCase())) return;
+    seenCatNames.add(cleanName.toLowerCase());
+    catalogRecords.push({
+      id: `html_${catalogRecords.length + 1}`,
+      name: cleanName,
+      price: rec.price,
+      stock: (stock !== null && !isNaN(stock)) ? Number(stock) : null,
+      unit,
+      category: '',
+      dosage: '',
+      description: rec.description,
+      rx: false
+    });
+  };
+
+  if (/\.html?$/i.test(fileName) || /<table|<select|<div[^>]*card/i.test(content)) {
+    // Strip <script> and <style> blocks first so inline JS/CSS can NEVER be scanned!
+    const safeHtml = String(content || '')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ');
+
+    // 9A. Semantic Catalog Cards (.course-card, .program-card, .product-card, .menu-item, .pricing-card, .plan-card, .room-card, .service-card, .stream-card)
+    const cardBlockRegex = /<(?:div|article|li)\b[^>]*class=["'][^"']*(?:course-card|program-card|stream-card|product-card|item-card|menu-item|pricing-card|plan-card|room-card|service-card|medicine-card|vehicle-card|property-card)[^"']*["'][^>]*>([\s\S]{10,900}?)<\/(?:div|article|li)>/gi;
+    let cm;
+    while ((cm = cardBlockRegex.exec(safeHtml)) !== null) {
+      const cardInner = cm[1];
+      const hM = cardInner.match(/<h[2-5][^>]*>([\s\S]*?)<\/h[2-5]>/i);
+      if (!hM) continue;
+      const pM = cardInner.match(/(?:₹|\$|€|£|Rs\.?\s*)\s*\d[\d,]*(?:\.\d{1,2})?(?:\s*\/\s*[a-zA-Z]+)?/i);
+      const sM = cardInner.match(/(\d+)\s*(seats?|units?|strips?|rooms?|pairs?|slots?|portions?|in\s*stock)/i);
+      const descM = cardInner.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+      addHtmlCatalogItem(hM[1], pM ? pM[0] : '', sM ? parseInt(sM[1], 10) : null, descM ? descM[1] : '', sM && sM[2] ? sM[2] : 'units');
+    }
+
+    // 9B. HTML Tables with clean catalog rows
+    const tableRegex = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
+    let tm;
+    while ((tm = tableRegex.exec(safeHtml)) !== null) {
+      const tBody = tm[1];
+      const ths = Array.from(tBody.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/gi)).map(m => clean(m[1]).toLowerCase());
+      const nameIdx = ths.findIndex(h => /course|program|stream|name|product|item|medicine|dish|plan|room|service|model|title/i.test(h));
+      const priceIdx = ths.findIndex(h => /fee|price|cost|rate|mrp|tariff/i.test(h));
+      const stockIdx = ths.findIndex(h => /seat|stock|qty|quantity|avail|unit|slot/i.test(h));
+      if (ths.length > 0 && nameIdx === -1 && priceIdx === -1) continue;
+
+      const rowRegex = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+      let rm;
+      while ((rm = rowRegex.exec(tBody)) !== null) {
+        if (/<th\b/i.test(rm[1])) continue;
+        const tds = Array.from(rm[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)).map(m => clean(m[1]));
+        if (tds.length < 2) continue;
+        const colName = nameIdx >= 0 && tds[nameIdx] ? tds[nameIdx] : tds[0];
+        const colPrice = priceIdx >= 0 && tds[priceIdx] ? tds[priceIdx] : (tds.find(c => /(?:₹|\$|€|£|Rs\.?)\s*\d/i.test(c)) || '');
+        const colStockRaw = stockIdx >= 0 && tds[stockIdx] ? tds[stockIdx] : '';
+        const sm = colStockRaw.match(/^(\d+)\s*([a-zA-Z]+)?/);
+        addHtmlCatalogItem(colName, colPrice, sm ? parseInt(sm[1], 10) : null, '', sm && sm[2] ? sm[2] : 'units');
+      }
+    }
+
+    // 9C. Domain <select> dropdowns (e.g. Admission Form "Select Course", Booking Form "Room Type")
+    const selectRegex = /<select\b([^>]*)>([\s\S]*?)<\/select>/gi;
+    let selM;
+    while ((selM = selectRegex.exec(safeHtml)) !== null) {
+      const selAttrs = selM[1] || '';
+      if (!/\b(course|courses|program|programme|stream|class|standard|std|branch|degree|department|subject|admission|service|plan|room|vehicle|model|package)\b/i.test(selAttrs)) continue;
+      const optRegex = /<option\b[^>]*>([\s\S]*?)<\/option>/gi;
+      let om;
+      while ((om = optRegex.exec(selM[2])) !== null) {
+        const optLabel = clean(om[1]);
+        if (!optLabel || /^(-+|select|choose|none|please|--)/i.test(optLabel)) continue;
+        addHtmlCatalogItem(optLabel, '', null, '', 'seats');
+      }
+    }
+  }
+
+  const summary = `Frontend file (${fileName}): Extracted site title "${siteTitle || fileName}", ${pages.length} headings, ${catalogRecords.length || discoveredProducts.length} products/models, ${knowledgeBase.length} grounded Q&A facts, and ${forms.length} forms.`;
 
   return {
     type: 'frontend',
@@ -255,6 +355,7 @@ export function analyzeFrontendFile(fileName, content) {
     forms,
     pricingOrProducts,
     discoveredProducts,
+    catalogRecords,
     knowledgeBase,
     summary,
     rawExcerpt: content.substring(0, 1500)
@@ -465,6 +566,66 @@ export function isCustomerSafeFaq(question, answer) {
 }
 
 /**
+ * Universal Strict Customer Catalog Item Validator.
+ * Permanently rejects JS/TS/SQL/HTML/JSON code artifacts (spread operators "...data",
+ * comments "// ...", object literals "firstName: firstName", "method: POST",
+ * dot-notation SDK calls "sdkDb.collection", credentials, camelCase/snake_case vars)
+ * while preserving 100% of legitimate offerings across ALL website industries
+ * (B.Sc, B.Tech, Dr. Reddy's, Pro Plan v2.0, 2.5L SUV, Std 11th Science, etc.).
+ */
+export function isValidCustomerCatalogName(rawName, record = null) {
+  const name = String(rawName || '').trim();
+  if (!name || name.length < 2 || name.length > 75) return false;
+
+  // 1. Reject leading code punctuation, spread operators (...data), comments (// /* *), brackets, quotes
+  if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
+
+  // 2. Reject code comments or template/operator syntax anywhere
+  if (name.includes('//') || name.includes('/*') || name.includes('*/')) return false;
+  if (name.includes('=>') || name.includes('();') || name.includes('()') || name.includes('===') || name.includes('!==') || name.includes('==') || name.includes('!=') || name.includes('&&') || name.includes('||') || name.includes('+=') || name.includes('-=') || name.includes('??') || name.includes('?.') || name.includes('++') || name.includes('${')) return false;
+  if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('[') || name.includes(']') || name.includes('?') || /CREATE\s+TABLE|INSERT\s+INTO|SELECT\s+.*\s+FROM/i.test(name)) return false;
+  if (name.split(/\s+/).length > 9) return false;
+
+  // 3. Reject credentials, API keys, environment variables, and developer configs
+  if (/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender[_-]?id|sender[_-]?id|app[_-]?id|measurement[_-]?id|database[_-]?url|token|secret|client[_-]?id|client[_-]?secret|password|bearer|authorization|cookie|session|jwt|dotenv|config|options|settings|environment|env)\b/i.test(name)) return false;
+  if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(name)) return false;
+
+  // 4. Reject JS/JSON object key-value lines (e.g. "firstName: firstName", "first Name: first Name", "method: POST", "headers: ...")
+  if (/^[a-zA-Z_$][a-zA-Z0-9_$]*\s*:\s*\S+/.test(name)) return false;
+  if (/^([a-z][a-zA-Z0-9\s]{1,28})\s*:\s*\1$/i.test(name)) return false;
+  if (/^(method|headers|body|type|status|mode|cache|credentials|redirect|referrer|signal|action|url|uri|endpoint|path|route|timeout|retries|payload|params|query|fields|collection|document|doc|ref|data|error|message|code|token|key|id|uid|user\s*id|first\s*name|last\s*name|created\s*at|updated\s*at|timestamp|content\s*type|authorization|accept|origin|host|port)\s*:/i.test(name)) return false;
+
+  // 5. Reject dot-notation code/SDK chains (e.g. "sdkDb.collection", "sdk Db.collection", "db.doc", "res.json", "err.message")
+  // Strip legitimate human abbreviations & numeric versions first so "B.Sc", "B.Tech", "Dr. Reddy's", "v2.0", "2.5L", "Rs. 500" pass cleanly!
+  const withoutSafeDots = name
+    .replace(/\b(?:Dr|Mr|Mrs|Ms|St|Sr|Jr|Rs|No|Std|Prof|Inc|Ltd|Pvt|Co|etc)\./gi, ' ')
+    .replace(/\b(?:B\.Sc|M\.Sc|B\.Tech|M\.Tech|B\.Com|M\.Com|B\.A|M\.A|B\.E|M\.E|B\.Ed|M\.Ed|Ph\.D|LL\.B|M\.B\.A|B\.B\.A|B\.C\.A|M\.C\.A|B\.Pharm|M\.Pharm|M\.B\.B\.S)\b\.?/gi, ' ')
+    .replace(/\bv?\d+\.\d+[a-zA-Z]*\b/g, ' ');
+  if (/\b[a-zA-Z_$][a-zA-Z0-9_$]*\.[a-zA-Z_$][a-zA-Z0-9_$]{1,}\b/.test(withoutSafeDots)) return false;
+
+  // 6. Reject JS/Python/HTTP keywords, statements, and raw technical strings
+  if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
+  if (/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|application\/json|text\/plain|content-type|utf-8|cors|null|undefined|true|false|nan)$/i.test(name)) return false;
+
+  // 7. Reject developer/UI action verbs & non-catalog questions/headings
+  if (/^(generate|create|build|run|click|install|download|configure|setup|update|test|verify|deploy|fix|add|remove|delete|edit|include|allow|ensure|enable|disable|check|select|choose|press|provide|support|optimize|use|using|implement)\b/i.test(name)) return false;
+  if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|sample\b|untitled\b|sr\.?no\b|action\b|features?\b|services?\b|welcome\b|about\b|privacy\b|terms\b|copyright\b|faq\b)/i.test(name)) return false;
+
+  // 8. Reject single-token snake_case or lowercase-leading camelCase code identifiers when lacking real price/stock
+  const hasPrice = Boolean(record && record.price !== undefined && String(record.price).trim() !== '');
+  const hasStock = Boolean(record && (record.stock !== undefined && record.stock !== null && !isNaN(Number(record.stock))));
+  if (!hasPrice && !hasStock && !/\s/.test(name)) {
+    const knownBrands = /^(iPhone|iPad|iMac|iPod|eBay|eBook|OnePlus|PayPal|YouTube|LinkedIn|WhatsApp|PlayStation|MacBook|AirPods|ThinkPad|PowerPoint|WordPress|FastAPI|NextJS|GraphQL)$/i;
+    if (!knownBrands.test(name)) {
+      if (/^[a-z]+_[a-z0-9_]+$/i.test(name)) return false;
+      if (/^[a-z]{2,}[A-Z][a-z]+[A-Za-z0-9]*$/.test(name)) return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * Parse and extract structured knowledge facts from Database files (JSON, SQL, CSV)
  */
 export function analyzeDatabaseFile(fileName, content) {
@@ -484,22 +645,7 @@ export function analyzeDatabaseFile(fileName, content) {
   function addDatabaseRecord(rec) {
     if (!rec) return;
     const name = String(rec.name || rec.product || rec.title || rec.item || '').trim();
-    if (!name || name.length < 2 || name.length > 70) return;
-
-    // Strict block on credentials, environment variables, and developer configs
-    if (/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender[_-]?id|sender[_-]?id|app[_-]?id|measurement[_-]?id|database[_-]?url|token|secret|client[_-]?id|client[_-]?secret|password|bearer|authorization|cookie|session|jwt|dotenv|config|options|settings|environment|env)\b/i.test(name)) return;
-    if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(name)) return;
-
-    // Strict block on programming code lines, loops, function signatures, syntax tokens
-    if (/^(console\.|function\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|throw\b|new\s|window\.|document\.|def\s|self\.)/i.test(name)) return;
-    if (name.includes('=>') || name.includes('();') || name.includes('()') || name.includes('===') || name.includes('!==') || name.includes('++') || name.includes('${') || name.includes('for (const') || name.includes('console.log') || name.includes('def ') || name.includes('self.')) return;
-    if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('CREATE TABLE')) return;
-
-    // Strict block on action verbs (e.g. "Generate high-fidelity", "Create PDF", "Build dashboard")
-    if (/^(generate|create|build|run|click|install|download|configure|setup|update|test|verify|deploy|fix|add|remove|delete|edit|include|allow|ensure|enable|disable|check|select|choose|press|provide|support|optimize|use|using|implement|import|export|return|class|def|self)\b/i.test(name)) return;
-
-    if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|test\b|sample\b|untitled\b|sr\.?no\b|action\b|features?\b|services?\b|welcome\b|about\b)/i.test(name)) return;
-    if (name.includes('?') || name.split(/\s+/).length > 8) return;
+    if (!isValidCustomerCatalogName(name, rec)) return;
 
     const price = rec.price !== undefined ? (typeof rec.price === 'number' ? `₹${rec.price}` : String(rec.price).trim()) : '';
     const stock = rec.stock !== undefined ? Number(rec.stock) : (rec.quantity !== undefined ? Number(rec.quantity) : (rec.qty !== undefined ? Number(rec.qty) : null));
@@ -643,8 +789,11 @@ export function analyzeDatabaseFile(fileName, content) {
     }
   }
 
-  // Case 3: CSV file
-  else if (fileName.toLowerCase().endsWith('.csv') || content.includes(',')) {
+  // Case 3: Strictly CSV / TSV files ONLY (NEVER match JS/TS/code files just because they contain commas!)
+  else if (
+    (fileName.toLowerCase().endsWith('.csv') || fileName.toLowerCase().endsWith('.tsv')) &&
+    !/^\s*(import\b|export\b|const\b|let\b|var\b|function\b|class\b|\/\/|\/\*|<(!doctype|html|script))/i.test(content)
+  ) {
     const lines = content.split('\n').filter(l => l.trim().length > 0);
     if (lines.length > 1) {
       const headers = lines[0].split(',').map(h => h.trim().replace(/['"]/g, '').toLowerCase());
@@ -736,23 +885,26 @@ export function analyzeDatabaseFile(fileName, content) {
     }
   }
 
-  // Case 5: Universal Documents, Markdown, Plain Text, PDF/DOCX text, XML, YAML, and All File Types
+  // Case 5: Universal Documents, Markdown, Plain Text, PDF/DOCX text, XML, YAML (NEVER executable source code!)
   const lowerExt = (fileName || '').toLowerCase();
+  const isSourceCodeFile = /\.(m?js|cjs|ts|jsx|tsx|vue|svelte|css|scss|less|html?|py|go|java|php|rb|rs|c|cpp|cs|sh|bat)$/i.test(lowerExt);
   const isDocumentOrText =
-    lowerExt.endsWith('.md') ||
-    lowerExt.endsWith('.markdown') ||
-    lowerExt.endsWith('.txt') ||
-    lowerExt.endsWith('.doc') ||
-    lowerExt.endsWith('.docx') ||
-    lowerExt.endsWith('.pdf') ||
-    lowerExt.endsWith('.rtf') ||
-    lowerExt.endsWith('.xml') ||
-    lowerExt.endsWith('.yaml') ||
-    lowerExt.endsWith('.yml') ||
-    lowerExt.endsWith('.log') ||
-    lowerExt.endsWith('.env') ||
-    lowerExt.endsWith('.ini') ||
-    knowledgeBase.length === 0;
+    !isSourceCodeFile && (
+      lowerExt.endsWith('.md') ||
+      lowerExt.endsWith('.markdown') ||
+      lowerExt.endsWith('.txt') ||
+      lowerExt.endsWith('.doc') ||
+      lowerExt.endsWith('.docx') ||
+      lowerExt.endsWith('.pdf') ||
+      lowerExt.endsWith('.rtf') ||
+      lowerExt.endsWith('.xml') ||
+      lowerExt.endsWith('.yaml') ||
+      lowerExt.endsWith('.yml') ||
+      lowerExt.endsWith('.log') ||
+      lowerExt.endsWith('.env') ||
+      lowerExt.endsWith('.ini') ||
+      knowledgeBase.length === 0
+    );
 
   if (isDocumentOrText && content) {
     // Sanitize non-printable binary junk (e.g. from PDF/DOCX or binary streams)
@@ -928,6 +1080,9 @@ export function analyzeFullStackFiles(fileList = []) {
       if (analysis.knowledgeBase && analysis.knowledgeBase.length > 0) {
         result.combinedKnowledge.push(...analysis.knowledgeBase);
       }
+      if (analysis.catalogRecords && analysis.catalogRecords.length > 0) {
+        result.databaseRecords.push(...analysis.catalogRecords);
+      }
     } else if (detectedType === 'backend') {
       const analysis = analyzeBackendFile(file.name, file.content);
       result.backend.push(analysis);
@@ -954,11 +1109,11 @@ export function analyzeFullStackFiles(fileList = []) {
     }
   }
 
-  // Deduplicate database records by name
+  // Strictly validate & deduplicate database records by name (ZERO code lines allowed!)
   const seenRecordNames = new Set();
   result.databaseRecords = result.databaseRecords.filter(rec => {
-    const norm = (rec.name || '').toLowerCase().trim();
-    if (!norm || seenRecordNames.has(norm)) return false;
+    const norm = (rec?.name || '').toLowerCase().trim();
+    if (!norm || !isValidCustomerCatalogName(rec?.name, rec) || seenRecordNames.has(norm)) return false;
     seenRecordNames.add(norm);
     return true;
   });

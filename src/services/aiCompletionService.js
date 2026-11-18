@@ -9,6 +9,7 @@ import {
   fuzzyMatchRecord,
   scoreKbEntryFuzzy
 } from '../utils/fuzzyNlu.js';
+import { isValidCustomerCatalogName } from '../utils/codebaseAnalyzer.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -437,8 +438,8 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
 
   const rawDbRecords = options?.databaseRecords || userMessage?.databaseRecords || [];
   const dbRecords = (Array.isArray(rawDbRecords) ? rawDbRecords : []).filter(r => {
-    const n = String(r?.name || '');
-    return n && !/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender|app[_-]?id|token|secret|client[_-]?id)/i.test(n) && !/: AIza|firebaseapp\.com|firebasestorage\.app/i.test(n) && !/^(console\.|function\b|const\b|let\b|var\b)/i.test(n);
+    const n = String(r?.name || r?.title || r?.product || '');
+    return isValidCustomerCatalogName(n, r);
   });
   const dbContext = (Array.isArray(dbRecords) && dbRecords.length > 0)
     ? `\n\nVerified Live Database Records & Catalog:\n${JSON.stringify(dbRecords.slice(0, 50))}`

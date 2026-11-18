@@ -4,7 +4,7 @@
  * and generates an optimal System Prompt, structured Database Records, and Knowledge Base.
  */
 
-import { isCustomerSafeFaq } from './codebaseAnalyzer.js';
+import { isCustomerSafeFaq, isValidCustomerCatalogName } from './codebaseAnalyzer.js';
 
 export function parseJsonFile(fileContent) {
   try {
@@ -30,11 +30,7 @@ export function extractKnowledgeFromJson(jsonData, assistantName = 'Assistant', 
   function addExtractedRecord(item) {
     if (!item || typeof item !== 'object') return;
     const rawName = String(item.name || item.product || item.title || item.item || '').trim();
-    if (!rawName || rawName.length < 2 || rawName.length > 70) return;
-    // Reject questions, meta prompts, and non-product phrases
-    if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|test\b|sample\b|untitled\b|sr\.?no\b|action\b|features?\b|services?\b|welcome\b|about\b)/i.test(rawName)) return;
-    if (rawName.includes('?') || rawName.includes('{') || rawName.includes('CREATE TABLE')) return;
-    if (rawName.split(/\s+/).length > 8) return;
+    if (!isValidCustomerCatalogName(rawName, item)) return;
 
     const price = item.price !== undefined ? (typeof item.price === 'number' ? `₹${item.price}` : String(item.price).trim()) : '';
     const stock = item.stock !== undefined ? Number(item.stock) : (item.quantity !== undefined ? Number(item.quantity) : (item.qty !== undefined ? Number(item.qty) : null));

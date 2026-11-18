@@ -1,4 +1,10 @@
 import { initializeApp } from 'firebase/app';
+import { isValidCustomerCatalogName } from './utils/codebaseAnalyzer.js';
+
+function cleanDatabaseRecords(records) {
+  if (!Array.isArray(records)) return [];
+  return records.filter(r => r && isValidCustomerCatalogName(r.name || r.title || r.product, r));
+}
 import {
   getFirestore,
   collection,
@@ -179,7 +185,12 @@ export async function getAgents() {
       const titleId = getCleanTitleId(data.name || d.id);
       if (!seen.has(titleId.toLowerCase())) {
         seen.add(titleId.toLowerCase());
-        agents.push({ id: titleId, ...data, name: data.name || titleId });
+        agents.push({
+          id: titleId,
+          ...data,
+          name: data.name || titleId,
+          databaseRecords: cleanDatabaseRecords(data.databaseRecords)
+        });
       }
     }
     return agents;
@@ -244,7 +255,13 @@ export async function getAgentById(agentId) {
 
   if (!snap.exists()) return null;
 
-  const data = { id: titleId, ...snap.data(), name: snap.data().name || titleId };
+  const rawSnapData = snap.data();
+  const data = {
+    id: titleId,
+    ...rawSnapData,
+    name: rawSnapData.name || titleId,
+    databaseRecords: cleanDatabaseRecords(rawSnapData.databaseRecords)
+  };
   try {
     localStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }));
   } catch (e) {}
@@ -280,11 +297,13 @@ export async function saveAgent(agent) {
   const agentRef = doc(db, AGENTS_COLLECTION, titleId);
   const agentInfoRef = doc(db, AGENT_INFO_COLLECTION, titleId);
 
+  const sanitizedDbRecords = cleanDatabaseRecords(agent.databaseRecords);
   const kbCount = Array.isArray(agent.knowledgeBase) ? agent.knowledgeBase.length : 0;
-  const dbCount = Array.isArray(agent.databaseRecords) ? agent.databaseRecords.length : 0;
+  const dbCount = sanitizedDbRecords.length;
 
   const rawPayload = {
     ...agent,
+    databaseRecords: sanitizedDbRecords,
     id: titleId,
     agentId: titleId,
     name: agent.name || titleId,

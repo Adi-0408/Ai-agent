@@ -266,6 +266,49 @@
     return 'general';
   }
 
+  // Universal Strict Customer Catalog Item Validator (Defense-in-Depth for both new & legacy Firestore agents!)
+  function isValidCustomerCatalogName(rawName, record = null) {
+    const name = String(rawName || '').trim();
+    if (!name || name.length < 2 || name.length > 75) return false;
+
+    if (/^\s*(\.\.\.|\/\/|\/\*|\*\/|\*|#|@|!|\$|&|\||<|>|=|\+|\[|\]|\(|\)|\{|\}|;|:|,|`|'|")/.test(name)) return false;
+    if (name.includes('//') || name.includes('/*') || name.includes('*/')) return false;
+    if (name.includes('=>') || name.includes('();') || name.includes('()') || name.includes('===') || name.includes('!==') || name.includes('==') || name.includes('!=') || name.includes('&&') || name.includes('||') || name.includes('+=') || name.includes('-=') || name.includes('??') || name.includes('?.') || name.includes('++') || name.includes('${')) return false;
+    if (name.includes('{') || name.includes('}') || name.includes(';') || name.includes('[') || name.includes(']') || name.includes('?') || /CREATE\s+TABLE|INSERT\s+INTO|SELECT\s+.*\s+FROM/i.test(name)) return false;
+    if (name.split(/\s+/).length > 9) return false;
+
+    if (/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender[_-]?id|sender[_-]?id|app[_-]?id|measurement[_-]?id|database[_-]?url|token|secret|client[_-]?id|client[_-]?secret|password|bearer|authorization|cookie|session|jwt|dotenv|config|options|settings|environment|env)\b/i.test(name)) return false;
+    if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(name)) return false;
+
+    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*\s*:\s*\S+/.test(name)) return false;
+    if (/^([a-z][a-zA-Z0-9\s]{1,28})\s*:\s*\1$/i.test(name)) return false;
+    if (/^(method|headers|body|type|status|mode|cache|credentials|redirect|referrer|signal|action|url|uri|endpoint|path|route|timeout|retries|payload|params|query|fields|collection|document|doc|ref|data|error|message|code|token|key|id|uid|user\s*id|first\s*name|last\s*name|created\s*at|updated\s*at|timestamp|content\s*type|authorization|accept|origin|host|port)\s*:/i.test(name)) return false;
+
+    const withoutSafeDots = name
+      .replace(/\b(?:Dr|Mr|Mrs|Ms|St|Sr|Jr|Rs|No|Std|Prof|Inc|Ltd|Pvt|Co|etc)\./gi, ' ')
+      .replace(/\b(?:B\.Sc|M\.Sc|B\.Tech|M\.Tech|B\.Com|M\.Com|B\.A|M\.A|B\.E|M\.E|B\.Ed|M\.Ed|Ph\.D|LL\.B|M\.B\.A|B\.B\.A|B\.C\.A|M\.C\.A|B\.Pharm|M\.Pharm|M\.B\.B\.S)\b\.?/gi, ' ')
+      .replace(/\bv?\d+\.\d+[a-zA-Z]*\b/g, ' ');
+    if (/\b[a-zA-Z_$][a-zA-Z0-9_$]*\.[a-zA-Z_$][a-zA-Z0-9_$]{1,}\b/.test(withoutSafeDots)) return false;
+
+    if (/^(console\.|function\b|async\b|await\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b|class\b|if\s*\(|else\b|switch\b|case\b|default\b|try\b|catch\b|finally\b|throw\b|new\s|typeof\b|instanceof\b|window\.|document\.|process\.|localStorage\.|sessionStorage\.|JSON\.|Math\.|Object\.|Array\.|Promise\.|fetch\s*\(|require\s*\(|module\.exports|def\s|self\.)/i.test(name)) return false;
+    if (/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|application\/json|text\/plain|content-type|utf-8|cors|null|undefined|true|false|nan)$/i.test(name)) return false;
+
+    if (/^(generate|create|build|run|click|install|download|configure|setup|update|test|verify|deploy|fix|add|remove|delete|edit|include|allow|ensure|enable|disable|check|select|choose|press|provide|support|optimize|use|using|implement)\b/i.test(name)) return false;
+    if (/^(what\b|tell me\b|how\b|can you\b|why\b|who\b|sample\b|untitled\b|sr\.?no\b|action\b|name\b|product\b|item\b|price\b|stock\b|total\b|status\b|features?\b|services?\b|welcome\b|about\b|privacy\b|terms\b|copyright\b|faq\b)/i.test(name)) return false;
+    if (/\b(tell me about|how to|what is|why do|can you|about us|contact us|privacy policy|terms of service|features? overview|welcome to)\b/i.test(name)) return false;
+
+    const hasPrice = Boolean(record && record.price !== undefined && String(record.price).trim() !== '');
+    const hasStock = Boolean(record && (record.stock !== undefined && record.stock !== null && !isNaN(Number(record.stock))));
+    if (!hasPrice && !hasStock && !/\s/.test(name)) {
+      const knownBrands = /^(iPhone|iPad|iMac|iPod|eBay|eBook|OnePlus|PayPal|YouTube|LinkedIn|WhatsApp|PlayStation|MacBook|AirPods|ThinkPad|PowerPoint|WordPress|FastAPI|NextJS|GraphQL)$/i;
+      if (!knownBrands.test(name)) {
+        if (/^[a-z]+_[a-z0-9_]+$/i.test(name)) return false;
+        if (/^[a-z]{2,}[A-Z][a-z]+[A-Za-z0-9]*$/.test(name)) return false;
+      }
+    }
+    return true;
+  }
+
   let lastConfigFetchAt = 0;
   let hasLoadedRemoteConfig = false;
 
@@ -458,9 +501,9 @@
             };
           }
           return null;
-        }).filter(Boolean);
+        }).filter(rec => rec && isValidCustomerCatalogName(rec.name, rec));
       } else if (Array.isArray(json.databaseRecords)) {
-        parsedData.databaseRecords = json.databaseRecords;
+        parsedData.databaseRecords = json.databaseRecords.filter(rec => rec && isValidCustomerCatalogName(rec.name, rec));
       }
 
       // Enforce agent name consistency: replace any residual persona names
@@ -2641,21 +2684,14 @@
       function addItem(it) {
         if (!it) return;
         const rawName = String(it.name || it.product || it.title || it.item || '').trim();
-        if (!rawName || rawName.length < 2 || rawName.length > 70) return;
-        if (/^(what\b|tell me\b|how\b|why\b|who\b|can you\b|action\b|sr\.?no\b|name\b|product\b|item\b|price\b|stock\b|total\b|status\b|select\b|features?\b|services?\b|welcome\b|about\b)/i.test(rawName)) return;
-        if (/\b(tell me about|how to|what is|why do|can you|about us|contact us|privacy policy|terms of service|faq|features? overview|welcome to)\b/i.test(rawName)) return;
-        if (rawName.includes('?') || rawName.includes('{') || rawName.includes('}') || rawName.includes(';') || rawName.includes('CREATE TABLE')) return;
-        if (/^(api[_-]?key|auth[_-]?domain|project[_-]?id|storage[_-]?bucket|messaging[_-]?sender|app[_-]?id|database[_-]?url|token|secret|client[_-]?id|password|bearer|cookie|jwt)/i.test(rawName)) return;
-        if (/: AIza|firebaseapp\.com|firebasestorage\.app|1:\d+:web:/i.test(rawName)) return;
-        if (/^(console\.|function\b|const\b|let\b|var\b|for\s*\(|while\s*\(|import\b|export\b|return\b)/i.test(rawName)) return;
-        if (rawName.includes('=>') || rawName.includes('();') || rawName.includes('===') || rawName.includes('for (const') || rawName.includes('console.log')) return;
-        if (rawName.split(/\s+/).length > 8) return;
+        if (!isValidCustomerCatalogName(rawName, it)) return;
 
         const rawDesc = String(it.description || it.details || it.desc || '').trim();
         if (!it.price && (it.stock === null || it.stock === undefined || isNaN(it.stock)) && /^(we offer:|welcome to)/i.test(rawDesc)) return;
 
         const cleaned = cleanScrapedItemTitle(rawName);
         const name = cleaned.name || rawName;
+        if (!isValidCustomerCatalogName(name, it)) return;
         if (seen.has(name.toLowerCase())) return;
 
         const extraDesc = cleaned.desc;
@@ -3779,9 +3815,10 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
         hostKnowledge.services.length > 0 ? `Key Services: ${hostKnowledge.services.join(', ')}` : ''
       ].filter(Boolean).join('\n');
 
-      const allDbRecords = (agentConfig && Array.isArray(agentConfig.databaseRecords) && agentConfig.databaseRecords.length > 0)
-        ? agentConfig.databaseRecords
-        : getAllCatalogItems(agentConfig);
+      const rawDbRecords = (agentConfig && Array.isArray(agentConfig.databaseRecords) && agentConfig.databaseRecords.length > 0)
+        ? agentConfig.databaseRecords.filter(r => r && isValidCustomerCatalogName(r.name || r.title || r.product, r))
+        : [];
+      const allDbRecords = rawDbRecords.length > 0 ? rawDbRecords : getAllCatalogItems(agentConfig);
       const catalogSummary = allDbRecords.slice(0, 30).map(r => `${r.name}${r.price ? ` (${r.price})` : ''}${r.stock !== null && r.stock !== undefined ? ` [${r.stock} ${r.unit || 'units'} in stock]` : ''}`).join('; ');
 
       const liveDbBlock = (agentConfig && agentConfig.databaseConfig)
