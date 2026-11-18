@@ -1,9 +1,14 @@
 import { initializeApp } from 'firebase/app';
-import { isValidCustomerCatalogName } from './utils/codebaseAnalyzer.js';
+import { isValidCustomerCatalogName, isCustomerSafeFaq } from './utils/codebaseAnalyzer.js';
 
 function cleanDatabaseRecords(records) {
   if (!Array.isArray(records)) return [];
   return records.filter(r => r && isValidCustomerCatalogName(r.name || r.title || r.product, r));
+}
+
+function cleanKnowledgeBase(kb) {
+  if (!Array.isArray(kb)) return [];
+  return kb.filter(item => item && isCustomerSafeFaq(item.q, item.a));
 }
 import {
   getFirestore,
@@ -189,7 +194,8 @@ export async function getAgents() {
           id: titleId,
           ...data,
           name: data.name || titleId,
-          databaseRecords: cleanDatabaseRecords(data.databaseRecords)
+          databaseRecords: cleanDatabaseRecords(data.databaseRecords),
+          knowledgeBase: cleanKnowledgeBase(data.knowledgeBase)
         });
       }
     }
@@ -214,7 +220,13 @@ export function subscribeToAgents(callback) {
         const titleId = getCleanTitleId(data.name || d.id);
         if (!seen.has(titleId.toLowerCase())) {
           seen.add(titleId.toLowerCase());
-          agents.push({ id: titleId, ...data, name: data.name || titleId });
+          agents.push({
+            id: titleId,
+            ...data,
+            name: data.name || titleId,
+            databaseRecords: cleanDatabaseRecords(data.databaseRecords),
+            knowledgeBase: cleanKnowledgeBase(data.knowledgeBase)
+          });
         }
       }
       callback(agents);
@@ -260,7 +272,8 @@ export async function getAgentById(agentId) {
     id: titleId,
     ...rawSnapData,
     name: rawSnapData.name || titleId,
-    databaseRecords: cleanDatabaseRecords(rawSnapData.databaseRecords)
+    databaseRecords: cleanDatabaseRecords(rawSnapData.databaseRecords),
+    knowledgeBase: cleanKnowledgeBase(rawSnapData.knowledgeBase)
   };
   try {
     localStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }));
@@ -298,12 +311,14 @@ export async function saveAgent(agent) {
   const agentInfoRef = doc(db, AGENT_INFO_COLLECTION, titleId);
 
   const sanitizedDbRecords = cleanDatabaseRecords(agent.databaseRecords);
-  const kbCount = Array.isArray(agent.knowledgeBase) ? agent.knowledgeBase.length : 0;
+  const sanitizedKb = cleanKnowledgeBase(agent.knowledgeBase);
+  const kbCount = sanitizedKb.length;
   const dbCount = sanitizedDbRecords.length;
 
   const rawPayload = {
     ...agent,
     databaseRecords: sanitizedDbRecords,
+    knowledgeBase: sanitizedKb,
     id: titleId,
     agentId: titleId,
     name: agent.name || titleId,

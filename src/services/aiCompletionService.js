@@ -9,7 +9,7 @@ import {
   fuzzyMatchRecord,
   scoreKbEntryFuzzy
 } from '../utils/fuzzyNlu.js';
-import { isValidCustomerCatalogName } from '../utils/codebaseAnalyzer.js';
+import { isValidCustomerCatalogName, isCustomerSafeFaq } from '../utils/codebaseAnalyzer.js';
 import {
   analyzeCatalogQuery,
   rankGroundedContext,
@@ -460,9 +460,10 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     return isValidCustomerCatalogName(n, r);
   });
 
-  // Query-Aware Top-K RAG Retrieval & Deterministic Pre-Computed Analytics
-  const ragRanked = rankGroundedContext(cleanMessage, Array.isArray(kbList) ? kbList : [], [], { topKFaqs: 12 });
-  const prioritizedKb = ragRanked.topKFaqs.length > 0 ? ragRanked.topKFaqs : (Array.isArray(kbList) ? kbList.slice(0, 12) : []);
+  // Query-Aware Top-K RAG Retrieval & Deterministic Pre-Computed Analytics (strictly filtered for customer-safe FAQs!)
+  const safeKbList = (Array.isArray(kbList) ? kbList : []).filter(k => k && isCustomerSafeFaq(k.q, k.a));
+  const ragRanked = rankGroundedContext(cleanMessage, safeKbList, [], { topKFaqs: 12 });
+  const prioritizedKb = ragRanked.topKFaqs.length > 0 ? ragRanked.topKFaqs : safeKbList.slice(0, 12);
   const kbContext = prioritizedKb.length > 0
     ? `\n\nMost Relevant Verified Knowledge Base Facts:\n${prioritizedKb.map(k => `Q: ${k.q}\nA: ${k.a}`).join('\n\n')}`
     : '';
@@ -958,8 +959,8 @@ Your floating voice assistant widget will appear immediately on your site, with 
     }
   }
 
-  // Precision-Gated Fuzzy Knowledge Base Matching (prevents false-positive irrelevant FAQ collisions!)
-  const safeKbForMatch = (Array.isArray(kbList) ? kbList : []).filter(item => item && item.a && !String(item.a).includes('['));
+  // Precision-Gated Fuzzy Knowledge Base Matching (prevents false-positive irrelevant FAQ & admin-doc collisions!)
+  const safeKbForMatch = safeKbList.filter(item => item && item.a && !String(item.a).includes('['));
   const offlineRag = rankGroundedContext(lower, safeKbForMatch, [], { topKFaqs: 5 });
   if (offlineRag.topHit && offlineRag.topHit.answer) {
     return offlineRag.topHit.answer;

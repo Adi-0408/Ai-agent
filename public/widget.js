@@ -324,7 +324,10 @@
     if (!rawText) return '';
     let s = String(rawText)
       .replace(/```[\s\S]*?```/g, '')
+      .replace(/(?:^|\s)#{1,6}\s+/g, ' ')
       .replace(/[*_`]/g, '')
+      .replace(/:\s*-\s+(?=[A-Z])/g, ': ')
+      .replace(/\s+-\s+(?=[A-Z])/g, '; ')
       .replace(/\s*\(\s*(?:#[a-zA-Z0-9_-]+|\/[a-zA-Z0-9_./#-]+)\s*\)/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -1749,9 +1752,15 @@
 
     // --- REAL-TIME LIVE WEBSITE DATABASE & INVENTORY BRIDGE ---
     function isCustomerSafeFaq(question, answer) {
-      if (!question || !answer) return false;
-      const qStr = String(question).trim();
-      const aStr = String(answer).trim();
+      let qRaw = question;
+      let aRaw = answer;
+      if (question && typeof question === 'object') {
+        qRaw = question.q ?? question.question;
+        aRaw = question.a ?? question.answer;
+      }
+      if (!qRaw || !aRaw) return false;
+      const qStr = String(qRaw).trim();
+      const aStr = String(aRaw).trim();
       if (qStr.length < 3 || aStr.length < 2) return false;
 
       const qLower = qStr.toLowerCase();
@@ -1787,10 +1796,12 @@
       if (codePatterns.some(pat => pat.test(aStr))) return false;
       if (codePatterns.some(pat => pat.test(qStr))) return false;
 
-      if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|in the apps script|configurable by|optimized for desktop)/i.test(aLower)) {
+      // Reject raw Markdown setup headings & owner/admin/staff internal guides (NOT for website visitors/customers!)
+      if (/^\s*#{1,6}\s+/.test(aStr) || /^\s*#{1,6}\s+/.test(qStr)) return false;
+      if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|in the apps script|configurable by|optimized for desktop|install the free google sheets|open your sheet)/i.test(aLower)) {
         return false;
       }
-      if (/\b(apps\s*script|script\s*toolbar|click\s+deploy|deploy\s+as\s+web\s+app|git\s+clone|optimized\s+for\s+desktop|responsive\s+layout|mobile[- ]first|tailwind\s+css|vite\s+build|webpack|source\s+code|repository)\b/i.test(aLower + ' ' + qLower)) {
+      if (/\b(apps\s*script|script\s*toolbar|click\s+deploy|deploy\s+as\s+web\s+app|git\s+clone|optimized\s+for\s+desktop|responsive\s+layout|mobile[- ]first|tailwind\s+css|vite\s+build|webpack|source\s+code|repository|google\s+sheets?\s+app|open\s+your\s+sheet|spreadsheet|direct\s+whatsapp\s+column|column\s+link|message\s+the\s+parent|every\s+new\s+submission\s+appears|google\s+play\s+store\s+or\s+app\s+store|firebase\s+console|supabase\s+dashboard|admin\s+panel\s+setup|webhook\s+url|paste\s+this\s+code|replace\s+your_)\b/i.test(aLower + ' ' + qLower)) {
         return false;
       }
       if (/^database includes table/i.test(aLower)) return false;
@@ -2667,26 +2678,13 @@
       return { executed: 'none', target };
     }
 
-    // Autonomous Host Page Knowledge Harvester (Universal for any website)
+    // Autonomous Host Page Knowledge Harvester (Universal for any website + clean agentConfig FAQ fallback)
     function extractHostPageKnowledge() {
-      if (typeof document === 'undefined') {
-        return {
-          businessName: '',
-          metaDesc: '',
-          phone: '',
-          email: '',
-          address: '',
-          hours: '',
-          sections: [],
-          faqs: [],
-          services: []
-        };
-      }
-
       const knowledge = {
         businessName: '',
         metaDesc: '',
         phone: '',
+        whatsapp: '',
         email: '',
         address: '',
         hours: '',
@@ -2694,6 +2692,31 @@
         faqs: [],
         services: []
       };
+
+      const enrichFromSafeKb = () => {
+        if (typeof agentConfig === 'undefined' || !Array.isArray(agentConfig?.knowledgeBase)) return;
+        for (const k of agentConfig.knowledgeBase) {
+          if (!isCustomerSafeFaq(k?.q, k?.a)) continue;
+          const txt = `${k.q} ${k.a}`;
+          if (!knowledge.whatsapp) {
+            const waM = txt.match(/whatsapp[^0-9+]{0,20}(\+?\d[\d\s-]{8,15}\d)/i);
+            if (waM) knowledge.whatsapp = waM[1].trim();
+          }
+          if (!knowledge.phone) {
+            const phM = txt.match(/(?:phone|mobile|call|contact|helpline)[^0-9+]{0,20}(\+?\d[\d\s()-]{8,15}\d)/i);
+            if (phM) knowledge.phone = phM[1].trim();
+          }
+          if (!knowledge.email) {
+            const emM = txt.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+            if (emM) knowledge.email = emM[0].trim();
+          }
+        }
+      };
+
+      if (typeof document === 'undefined') {
+        enrichFromSafeKb();
+        return knowledge;
+      }
 
       try {
         const ogSite = document.querySelector('meta[property="og:site_name"]')?.getAttribute('content');
@@ -2705,7 +2728,7 @@
                              document.querySelector('meta[property="og:description"]')?.getAttribute('content') || '';
 
         const telLink = document.querySelector('a[href^="tel:"]');
-        if (telLink) {
+        if (telLink && !telLink.closest('#voice-helpdesk-root')) {
           knowledge.phone = telLink.getAttribute('href').replace(/^tel:/, '').trim() || telLink.textContent.trim();
         } else {
           const bodyText = document.body ? (document.body.innerText || document.body.textContent || '') : '';
@@ -2713,14 +2736,23 @@
           if (phoneMatch) knowledge.phone = phoneMatch[0].trim();
         }
 
+        const waLink = document.querySelector('a[href*="wa.me/"], a[href*="api.whatsapp.com"]');
+        if (waLink && !waLink.closest('#voice-helpdesk-root')) {
+          const waHref = waLink.getAttribute('href') || '';
+          const waNum = waHref.match(/(?:wa\.me\/|phone=)(\+?\d{8,15})/i);
+          knowledge.whatsapp = waNum ? `+${waNum[1].replace(/^\+/, '')}` : (waLink.textContent || '').trim();
+        }
+
         const mailLink = document.querySelector('a[href^="mailto:"]');
-        if (mailLink) {
+        if (mailLink && !mailLink.closest('#voice-helpdesk-root')) {
           knowledge.email = mailLink.getAttribute('href').replace(/^mailto:/, '').split('?')[0].trim() || mailLink.textContent.trim();
         } else {
           const bodyText = document.body ? (document.body.innerText || document.body.textContent || '') : '';
           const emailMatch = bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
           if (emailMatch) knowledge.email = emailMatch[0].trim();
         }
+
+        enrichFromSafeKb();
 
         const addrEl = document.querySelector('address, [itemprop="address"], .address, #address, .contact-address, [class*="address"]');
         if (addrEl) {
@@ -5112,10 +5144,8 @@
           return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'location', data: hostKnowledge };
         }
       }
-      if (/\b(phone|phone number|call|contact number|mobile|telephone)\b/i.test(lower) || /(फोन|नंबर|कॉल)/i.test(query)) {
-        if (hostKnowledge.phone) {
-          return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'phone', data: hostKnowledge };
-        }
+      if (/\b(phone|phone\s*no\.?|phone\s*number|call\s*(?:us|me|now|you|number)|contact\s*no\.?|contact\s*number|mobile|mobile\s*no\.?|mob\.?\s*no\.?|whatsapp|whatsapp\s*no\.?|whatsapp\s*number|wa\s*no\.?|telephone|helpline)\b/i.test(lower) || /(?:^|[\s,?.!])(फोन|नंबर|कॉल|मोबाईल|मोबाइल|व्हॉट्सॲप|व्हाट्सएप|व्हाट्सॲप|संपर्क\s*क्रमांक)(?=$|[\s,?.!])/i.test(query)) {
+        return { status: 'HOST_KNOWLEDGE_QUERY', topic: 'phone', data: hostKnowledge };
       }
       if (/\b(email|mail|write to you|contact email)\b/i.test(lower) || /(ईमेल|मेल)/i.test(query)) {
         if (hostKnowledge.email) {
@@ -5335,7 +5365,7 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
-- AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${profile.topicsList}). NEVER mention technical details, setup guides, Apps Script, toolbars, CSS/responsive specs, database schemas, SQL, or developer notes. If asked about database internals or queries, politely decline: ${consumerDeclineText}
+- AUDIENCE IS CONSUMER / CUSTOMER ONLY: The person reading and asking is an ordinary website visitor, customer, parent, or student — NOT the website owner, admin, or developer. Always answer warmly, politely, and directly from their perspective. NEVER quote admin/staff setup guides (such as Google Sheets apps, spreadsheets, "open your sheet", "message the parent", Apps Script toolbars, deploy instructions, CSS/responsive specs, database schemas, SQL, or developer notes). If asked about database internals or queries, politely decline: ${consumerDeclineText}
 - WARM, POLITE & WELL-MANNERED TONE: Always respond with genuine warmth, courtesy, and respect (e.g., "I would be happy to help!", "Certainly!", "Please let me know if you'd like any further details!"). Keep answers crisp, helpful, and focused strictly on what the visitor actually needs.
 - STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
 - CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
@@ -6090,14 +6120,52 @@ ${cleanFaqBlock}`;
             navAction: contactSec ? { label: `View ${contactSec.label}`, sectionInfo: contactSec } : null
           };
         }
-        if (bridge.topic === 'phone' && hk.phone) {
-          if (contactSec) scrollToHostSection(contactSec);
-          let rep = `You can reach us directly at ${hk.phone}.${contactSec ? ' Full contact details are also available below.' : ''}`;
-          if (queryLang === 'mr-IN') rep = `आपण थेट ${hk.phone} वर संपर्क करू शकता.`;
-          if (queryLang === 'hi-IN') rep = `आप सीधे ${hk.phone} पर कॉल कर सकते हैं।`;
+        if (bridge.topic === 'phone') {
+          const ph = hk.phone || '';
+          const wa = hk.whatsapp || '';
+          const em = hk.email || '';
+          const contactForm = resolveExactRedirectTarget('contact inquiry admission form', agentConfig?.siteBlueprint);
+          if (ph || wa) {
+            if (contactSec) scrollToHostSection(contactSec);
+            const partsEn = [];
+            if (ph) partsEn.push(`phone at ${ph}`);
+            if (wa && wa !== ph) partsEn.push(`WhatsApp at ${wa}`);
+            else if (wa && !ph) partsEn.push(`WhatsApp at ${wa}`);
+            const joined = partsEn.join(' or ');
+            let rep = `I would be happy to help you connect! You can reach our team directly by ${joined}.${em ? ` You can also email us at ${em}.` : ''}`;
+            if (queryLang === 'mr-IN') rep = `नक्कीच! आपण आमच्या टीमशी थेट ${ph || wa}${wa && ph && wa !== ph ? ` किंवा व्हॉट्सॲपवर ${wa}` : ''} येथे संपर्क साधू शकता.`;
+            if (queryLang === 'hi-IN') rep = `ज़रूर! आप हमारी टीम से सीधे ${ph || wa}${wa && ph && wa !== ph ? ` या व्हाट्सएप पर ${wa}` : ''} संपर्क कर सकते हैं।`;
+            return {
+              reply: rep,
+              navAction: contactSec ? { label: `View ${contactSec.label}`, sectionInfo: contactSec } : null
+            };
+          }
+          // Polite, customer-friendly response when phone/WhatsApp is NOT published on the website (NEVER show admin/Google Sheets setup docs!)
+          const formHint = contactForm
+            ? {
+                label: `Open ${contactForm.label}`,
+                sectionInfo: contactForm.element ? contactForm : null,
+                redirectTarget: contactForm,
+                redirectUrl: contactForm.isCrossPage ? contactForm.redirectUrl : null,
+                isCrossPage: Boolean(contactForm.isCrossPage),
+                targetType: contactForm.targetType || 'form'
+              }
+            : (contactSec ? { label: `View ${contactSec.label}`, sectionInfo: contactSec } : null);
+          let fallbackContact = em
+            ? `I would be happy to help you get in touch! Our direct mobile or WhatsApp number is not listed on this page right now, so please email us at ${em} or submit a quick inquiry through our website form and our team will reach out to you promptly.`
+            : `I would be happy to help you get in touch! Our direct mobile or WhatsApp number is not listed on this page right now, so the quickest way to reach our team is through our online inquiry or contact form${contactForm ? ` (${contactForm.label})` : ''}, and they will respond to you promptly!`;
+          if (queryLang === 'mr-IN') {
+            fallbackContact = em
+              ? `नक्कीच! सध्या या वेबसाइटवर आमचा थेट मोबाईल किंवा व्हॉट्सॲप नंबर दिलेला नाही. कृपया आम्हाला ${em} वर ईमेल करा किंवा आमचा ऑनलाइन चौकशी फॉर्म भरा — आमची टीम आपल्याशी लवकरच संपर्क साधेल!`
+              : `नक्कीच! सध्या या वेबसाइटवर आमचा थेट मोबाईल किंवा व्हॉट्सॲप नंबर दिलेला नाही. कृपया आमचा ऑनलाइन चौकशी किंवा संपर्क फॉर्म भरा, आमची टीम आपल्याशी लवकरच संपर्क साधेल!`;
+          } else if (queryLang === 'hi-IN') {
+            fallbackContact = em
+              ? `ज़रूर! अभी इस वेबसाइट पर हमारा सीधा मोबाइल या व्हाट्सएप नंबर सूचीबद्ध नहीं है। कृपया हमें ${em} पर ईमेल करें या हमारा ऑनलाइन पूछताछ फॉर्म भरें — हमारी टीम आपसे शीघ्र संपर्क करेगी!`
+              : `ज़रूर! अभी इस वेबसाइट पर हमारा सीधा मोबाइल या व्हाट्सएप नंबर सूचीबद्ध नहीं है। कृपया हमारा ऑनलाइन पूछताछ या संपर्क फॉर्म भरें, हमारी टीम आपसे शीघ्र संपर्क करेगी!`;
+          }
           return {
-            reply: rep,
-            navAction: contactSec ? { label: `View ${contactSec.label}`, sectionInfo: contactSec } : null
+            reply: fallbackContact,
+            navAction: formHint
           };
         }
         if (bridge.topic === 'email' && hk.email) {

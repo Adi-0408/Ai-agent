@@ -308,15 +308,39 @@ export function analyzeFrontendFile(fileName, content) {
     });
   }
 
-  // 8. Contact & Support Info
-  const emailMatch = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  // 8. Contact & Support Info (Phone, WhatsApp, Email — extracted cleanly for website visitors!)
+  const emailMatch = safeContentForKb.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  const telHrefMatch = safeContentForKb.match(/href=["']?tel:([^"'\s>]+)/i);
+  const waHrefMatch = safeContentForKb.match(/(?:wa\.me\/|api\.whatsapp\.com\/send\?[^"'\s>]*phone=)(\+?\d{8,15})/i);
+  const plainPhoneMatch = safeContentForKb.match(/(?:phone|mobile|call|contact|helpline|tel)[^0-9+<]{0,24}(\+?\d{1,3}[\s-]?\d{5}[\s-]?\d{5}|\+?\d{1,3}[\s-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|\b[6-9]\d{9}\b)/i);
+  const isDummyPhone = (p) => {
+    const digits = String(p || '').replace(/\D/g, '');
+    return digits.length < 8 || /^(\d)\1+$/.test(digits) || /12345678|9876543210|00000000/.test(digits);
+  };
+  const extractedPhone = (telHrefMatch && !isDummyPhone(telHrefMatch[1]))
+    ? telHrefMatch[1].trim()
+    : ((plainPhoneMatch && !isDummyPhone(plainPhoneMatch[1])) ? plainPhoneMatch[1].trim() : '');
+  const extractedWhatsapp = (waHrefMatch && !isDummyPhone(waHrefMatch[1]))
+    ? `+${waHrefMatch[1].replace(/^\+/, '')}`
+    : '';
+
+  if (extractedPhone || extractedWhatsapp) {
+    const contactChannels = [];
+    if (extractedPhone) contactChannels.push(`phone at ${extractedPhone}`);
+    if (extractedWhatsapp && extractedWhatsapp !== extractedPhone) contactChannels.push(`WhatsApp at ${extractedWhatsapp}`);
+    else if (extractedWhatsapp && !extractedPhone) contactChannels.push(`WhatsApp at ${extractedWhatsapp}`);
+    pushSafeKb(
+      'What is your mobile number, phone number, or WhatsApp number?',
+      `I would be happy to help you connect! You can reach our team directly by ${contactChannels.join(' or ')}${emailMatch ? `, or email us at ${emailMatch[0]}` : ''}.`
+    );
+  }
   if (emailMatch || forms.some(f => /email|contact|message/i.test(f))) {
-    knowledgeBase.push({
-      q: "How do I contact support or reach out?",
-      a: emailMatch 
-        ? `You can reach our team directly at ${emailMatch[0]}, or submit an inquiry through our website contact form.`
-        : "You can submit an inquiry through our online consultation form or reach out to our support team directly."
-    });
+    pushSafeKb(
+      'How do I contact support or reach out?',
+      emailMatch
+        ? `You can reach our team directly at ${emailMatch[0]}${extractedPhone ? ` or call ${extractedPhone}` : ''}, or submit an inquiry through our website contact form.`
+        : 'You can submit an inquiry through our online consultation form or reach out to our support team directly.'
+    );
   }
 
   // 9. Clean HTML Catalog Extractor (Tables, Semantic Cards & Domain <select> Options — strictly validated!)
@@ -523,9 +547,15 @@ function pathToToolName(method, path) {
  * Rejects technical database schemas, developer notes, TypeScript types, and code snippets.
  */
 export function isCustomerSafeFaq(question, answer) {
-  if (!question || !answer) return false;
-  const qStr = String(question).trim();
-  const aStr = String(answer).trim();
+  let qRaw = question;
+  let aRaw = answer;
+  if (question && typeof question === 'object') {
+    qRaw = question.q ?? question.question;
+    aRaw = question.a ?? question.answer;
+  }
+  if (!qRaw || !aRaw) return false;
+  const qStr = String(qRaw).trim();
+  const aStr = String(aRaw).trim();
 
   if (qStr.length < 3 || aStr.length < 2) return false;
 
@@ -612,11 +642,12 @@ export function isCustomerSafeFaq(question, answer) {
   if (codePatterns.some(pat => pat.test(aStr))) return false;
   if (codePatterns.some(pat => pat.test(qStr))) return false;
 
-  // 3. Reject developer task notes, repo setup docs, database query descriptions, and backend jargon
-  if (/\b(sql query|database query|database table|select query|query the database|db connection|database dump|schema dump|apps\s*script|script\s*toolbar|click\s+deploy|deploy\s+as\s+web\s+app|git\s+clone|optimized\s+for\s+desktop|responsive\s+layout|mobile[- ]first|dark\s+mode\s+toggle|tailwind\s+css|vite\s+build|webpack|source\s+code|repository)\b/i.test(aLower + ' ' + qLower)) {
+  // 3. Reject developer task notes, repo setup docs, owner/admin guides (Google Sheets/Apps Script), and raw markdown headers
+  if (/^\s*#{1,6}\s+/.test(aStr) || /^\s*#{1,6}\s+/.test(qStr)) return false;
+  if (/\b(sql query|database query|database table|select query|query the database|db connection|database dump|schema dump|apps\s*script|script\s*toolbar|click\s+deploy|deploy\s+as\s+web\s+app|git\s+clone|optimized\s+for\s+desktop|responsive\s+layout|mobile[- ]first|dark\s+mode\s+toggle|tailwind\s+css|vite\s+build|webpack|source\s+code|repository|google\s+sheets?\s+app|open\s+your\s+sheet|spreadsheet|direct\s+whatsapp\s+column|column\s+link|message\s+the\s+parent|every\s+new\s+submission\s+appears|google\s+play\s+store\s+or\s+app\s+store|firebase\s+console|supabase\s+dashboard|admin\s+panel\s+setup|webhook\s+url|paste\s+this\s+code|replace\s+your_)\b/i.test(aLower + ' ' + qLower)) {
     return false;
   }
-  if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|refactor|in the apps script|configurable by|optimized for desktop)/i.test(aLower)) {
+  if (/^[-*•]?\s*(record supplier invoices|automatically increment|purchase history register|todo:|fixme:|refactor|in the apps script|configurable by|optimized for desktop|install the free google sheets|open your sheet)/i.test(aLower)) {
     return false;
   }
 

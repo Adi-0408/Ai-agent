@@ -10,7 +10,8 @@ import { fileURLToPath } from 'url';
 import {
   detectFileType,
   analyzeFullStackFiles,
-  isValidCustomerCatalogName
+  isValidCustomerCatalogName,
+  isCustomerSafeFaq
 } from '../src/utils/codebaseAnalyzer.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,6 +31,7 @@ const runtimeFn = new Function('__AGENT_CONFIG__', `
   ${widgetSrc.slice(archStart, archEnd)}
   ${widgetSrc.slice(engStart, engEnd)}
   return {
+    isCustomerSafeFaq,
     isValidCustomerCatalogName,
     polishSpokenReply,
     getAllCatalogItems,
@@ -246,6 +248,92 @@ async function runTests() {
   const t2 = await faqWidget.inferLocalAgentResponse('give me details of that program', null, [{ role: 'user', content: 'Show me Classes 11th & 12th Academic Programs' }], faqCtx);
   const t2Text = typeof t2 === 'object' ? t2.reply : t2;
   assert(/Class 11 and Class 12|JEE & NEET/i.test(t2Text), `Turn 2 pronoun follow-up stays locked on active topic without going astray ("${t2Text}")`);
+
+  // --- TEST 6: End-User Perspective, Zero Admin/Owner Setup Guide Leakage & Real Contact/WhatsApp Handling ---
+  console.log('\n6) Customer-Only Perspective, Admin Setup Blocking & Contact/WhatsApp Handling');
+  const poisonedAdminFaq = {
+    q: 'On your Mobile Phone',
+    a: '#### On your Mobile Phone: 1. Install the free Google Sheets app from Google Play Store or App Store. 2. Open your sheet: - Every new submission appears in real-time. - Tap on the Direct WhatsApp column link to immediately message the parent! - Tap on the phone number to call directly.'
+  };
+  assert(
+    !isCustomerSafeFaq(poisonedAdminFaq) && !widget.isCustomerSafeFaq(poisonedAdminFaq),
+    'Blocked admin/owner Google Sheets & Direct WhatsApp column guide in both codebaseAnalyzer and widget.js'
+  );
+
+  const cleanedHeading = widget.polishSpokenReply('#### Contact Details: - Call us on +91 98765 43210');
+  assert(
+    !cleanedHeading.includes('####') && !/\s-\s/.test(cleanedHeading),
+    `polishSpokenReply strips raw markdown #### headings and dash bullets ("${cleanedHeading}")`
+  );
+
+  // Scenario A: Legacy agent in Firestore with poisoned admin FAQ and NO published phone/WhatsApp number
+  const poisonedContactWidget = runtimeFn({
+    name: 'Sangli Shikshan Sanstha',
+    archetype: 'academic',
+    databaseRecords: [],
+    knowledgeBase: [
+      poisonedAdminFaq,
+      {
+        q: 'How can I contact Sangli Shikshan Sanstha?',
+        a: 'You can reach us by email at admissions@sanglishikshan.edu.in.'
+      }
+    ]
+  });
+  const noPhoneRes = await poisonedContactWidget.inferLocalAgentResponse('mobile no or whatsapp no', null, [], {});
+  const noPhoneText = typeof noPhoneRes === 'object' ? noPhoneRes.reply : noPhoneRes;
+  assert(
+    !/google sheets|play store|app store|column link|message the parent|####/i.test(noPhoneText),
+    `Never leaks admin Google Sheets guide when user asks "mobile no or whatsapp no" ("${noPhoneText}")`
+  );
+  assert(
+    /admissions@sanglishikshan\.edu\.in|contact|inquiry|phone or whatsapp/i.test(noPhoneText),
+    `Gives warm, helpful customer-facing response when phone/WhatsApp is unlisted ("${noPhoneText}")`
+  );
+
+  // Scenario B: Newly uploaded website containing real tel:, wa.me/, mailto: AND a poisoned SETUP.md
+  const contactUploadResult = analyzeFullStackFiles([
+    {
+      name: 'SETUP_GUIDE.md',
+      content: `# Admin Guide\n#### On your Mobile Phone:\n1. Install the free Google Sheets app from Google Play Store or App Store.\n2. Open your sheet:\n- Every new submission appears in real-time.\n- Tap on the Direct WhatsApp column link to immediately message the parent!\n`
+    },
+    {
+      name: 'index.html',
+      content: `<!DOCTYPE html><html><head><title>Sangli Shikshan Sanstha</title></head><body>
+        <footer id="contact">
+          <h2>Contact Us</h2>
+          <a href="tel:+919822112233">+91 98221 12233</a>
+          <a href="https://wa.me/919822445566">Chat on WhatsApp</a>
+          <a href="mailto:info@sanglishikshan.edu.in">info@sanglishikshan.edu.in</a>
+        </footer>
+      </body></html>`
+    }
+  ]);
+  const extractedContactFaqs = (contactUploadResult.combinedKnowledge || []).filter(isCustomerSafeFaq);
+  assert(
+    extractedContactFaqs.some(f => /9822112233|98221 12233/.test(f.a) && /9822445566/.test(f.a)),
+    `analyzeFullStackFiles extracts real customer Phone & WhatsApp from HTML while dropping SETUP_GUIDE.md`
+  );
+  assert(
+    !extractedContactFaqs.some(f => /google sheets|column link|message the parent/i.test(f.a)),
+    'Zero admin setup instructions survive into extracted FAQs'
+  );
+
+  const realContactWidget = runtimeFn({
+    name: 'Sangli Shikshan Sanstha',
+    archetype: 'academic',
+    databaseRecords: [],
+    knowledgeBase: extractedContactFaqs
+  });
+  const realContactRes = await realContactWidget.inferLocalAgentResponse('mobile no or whatsapp no', null, [], {});
+  const realContactText = typeof realContactRes === 'object' ? realContactRes.reply : realContactRes;
+  assert(
+    /9822112233|98221 12233/.test(realContactText) && /9822445566/.test(realContactText),
+    `Returns exact real Phone & WhatsApp warmly when user asks "mobile no or whatsapp no" ("${realContactText}")`
+  );
+  assert(
+    !/####|google sheets|column link/i.test(realContactText),
+    'Customer contact reply is clean, warm, and free of markdown/admin artifacts'
+  );
 
   console.log('\n==============================================================');
   console.log(` RESULT: ${passed} passed, ${failed} failed`);
