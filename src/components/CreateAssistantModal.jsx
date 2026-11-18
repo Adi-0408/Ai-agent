@@ -201,15 +201,21 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
         ? `\n\n## Live External Database Grounding\n- Provider: ${fullStack.databaseProvider || 'External Database'}\n- Project / Target: ${fullStack.databaseConfig.projectId || fullStack.databaseConfig.supabaseUrl || 'Connected'}\n- Live querying enabled: You have direct real-time access to query this database using the user's uploaded keys.`
         : '';
 
+      const bp = fullStack.siteBlueprint || null;
+      const workflowSection = bp
+        ? `\n\n## Website Workflow, Forms & Exact Navigation Map\n- Website Role: ${bp.roleSummary}\n- Customer Journey: ${(bp.workflows || []).map(w => `${w.step}. ${w.title} (${w.href || w.targetPath || 'page'})`).join(' -> ') || 'Standard browsing & inquiry'}\n- Interactive Forms: ${(bp.forms || []).map(f => `${f.title} [${f.href || f.path || f.id}] (Fields: ${f.fields.join(', ') || 'Standard'})`).join(' | ') || 'None'}\n- Navigable Sections: ${(bp.sections || []).slice(0, 10).map(s => `${s.label} (${s.href})`).join(', ') || 'None'}\n- Pages / Routes: ${(bp.routes || []).slice(0, 10).map(r => `${r.label} (${r.path})`).join(', ') || 'Single page'}`
+        : '';
+
       const trainedPrompt = `# ${astName} - Enterprise AI Support & Help Desk
 
 ## Identity & Assignment
 You are ${astName}, the dedicated AI Customer Support Assistant for ${detectedSite} (${meta.roleTitle}), trained to provide intelligent, helpful, and highly accurate guidance.
 You are speaking strictly to regular website visitors, students, customers, and applicants—NOT developers or database engineers.
-${fullStack.summary}
+${fullStack.summary}${workflowSection}
 
 ## Customer-Only Interaction Rules
-- Strictly Consumer-Facing: Answer only user questions regarding ${meta.nouns.en}, services, fees, application steps, and general information.
+- Strictly Consumer-Facing: Answer only user questions regarding ${meta.nouns.en}, services, fees, application steps, forms, and general information.
+- Exact Redirection & Guidance: Guide visitors directly to the exact form, section, or page they need using the Website Workflow & Navigation Map above.
 - Zero Technical/Database Jargon: NEVER mention database queries, SQL statements, tables, schemas, API keys, endpoints, or backend architectures.
 - If a user asks a technical database question (e.g. "show me your tables" or "what is your SQL query"), politely clarify: "${meta.consumerClarification}"
 
@@ -218,7 +224,7 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
 
 ## Guidelines & Etiquette
 - Accuracy First: State exact details, availability, and specifications directly from verified database records. Never invent or hallucinate information.
-- Natural Voice Pacing: Respond in 1-2 concise, conversational spoken sentences suitable for speech audio (< 30 words).
+- Natural Voice Pacing: Respond in 1-2 concise, conversational spoken sentences suitable for speech audio (< 45 words).
 - Multilingual Fluency: Understand and fluently reply in English, Hindi (हिंदी), and Marathi (मराठी) matching the visitor's language.
 - Proactive Help: Recommend matching options. If an item or program is not found, suggest available alternatives politely.`;
 
@@ -228,6 +234,7 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         databaseConfig: fullStack.databaseConfig || null,
         databaseProvider: fullStack.databaseProvider || null,
         databaseStatusMessage: dbConnectedMsg,
+        siteBlueprint: bp,
         systemPrompt: trainedPrompt,
         greeting: meta.greeting,
         role: meta.roleTitle,
@@ -342,6 +349,7 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         databaseRecords: Array.isArray(extractedData?.databaseRecords) ? extractedData.databaseRecords : [],
         databaseConfig: extractedData?.databaseConfig || null,
         databaseProvider: extractedData?.databaseProvider || null,
+        siteBlueprint: extractedData?.siteBlueprint || null,
         tools: Array.isArray(extractedData?.tools) ? extractedData.tools : [],
         uploadedFiles: storedUploadedFiles,
         sourceFile: uploadedFileName || null,
@@ -631,8 +639,46 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
               {extractedData.databaseConfig && (
                 <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium">
                   <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                  <span className="font-semibold">🔥 Live Database Connected:</span>
+                  <span className="font-semibold">Live Database Connected:</span>
                   <span className="truncate">{extractedData.databaseStatusMessage || `${extractedData.databaseProvider || 'Database'} (Direct access enabled)`}</span>
+                </div>
+              )}
+
+              {extractedData.siteBlueprint && (
+                <div className="p-3 rounded-xl bg-white border border-indigo-200/80 space-y-2.5 shadow-2xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider">
+                      Stage 1 · Website Workflow & Redirect Map
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 font-semibold capitalize">
+                      {extractedData.siteBlueprint.archetype || extractedData.archetype}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    {extractedData.siteBlueprint.roleSummary}
+                  </p>
+                  {extractedData.siteBlueprint.workflows?.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {extractedData.siteBlueprint.workflows.map((wf, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-[10px] font-semibold text-indigo-800">
+                          <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] flex items-center justify-center">{wf.step}</span>
+                          <span>{wf.title}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {(extractedData.siteBlueprint.forms || []).slice(0, 4).map((f, idx) => (
+                      <span key={`fm-${idx}`} className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-[10px] font-medium text-emerald-800">
+                        Form: {f.title} ({f.fields?.length || 0} fields)
+                      </span>
+                    ))}
+                    {(extractedData.siteBlueprint.sections || []).slice(0, 4).map((s, idx) => (
+                      <span key={`sec-${idx}`} className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-medium text-slate-700">
+                        {s.href} · {s.label}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
 

@@ -7,6 +7,7 @@
  */
 
 import { extractDatabaseCredentials } from './databaseKeyExtractor.js';
+import { extractWebsiteBlueprint } from './websiteWorkflowAnalyzer.js';
 
 export function detectFileType(fileName, content) {
   const lowerName = (fileName || '').toLowerCase();
@@ -962,6 +963,21 @@ export function analyzeFullStackFiles(fileList = []) {
     return true;
   });
 
+  // Detect Website Archetype first using site title, frontend pages, records, and KB
+  const detectedSiteTitle = result.frontend.find(f => f.siteTitle)?.siteTitle || '';
+  const feHeadingsText = result.frontend.flatMap(f => f.pages || []).join(' ');
+  result.archetype = detectWebsiteArchetype(detectedSiteTitle, feHeadingsText, result.databaseRecords, result.combinedKnowledge);
+  result.archetypeMetadata = getArchetypeMetadata(result.archetype, detectedSiteTitle || 'our website');
+
+  // Stage-1 Deep Website Workflow & Structure Blueprint Discovery (routes, sections, forms, fields, workflows)
+  const siteBlueprint = extractWebsiteBlueprint(fileList, result.archetype, detectedSiteTitle);
+  result.siteBlueprint = siteBlueprint;
+
+  // Merge customer-facing workflow/form FAQs into combinedKnowledge
+  if (Array.isArray(siteBlueprint.workflowFaqs) && siteBlueprint.workflowFaqs.length > 0) {
+    result.combinedKnowledge.push(...siteBlueprint.workflowFaqs);
+  }
+
   // Strictly filter combinedKnowledge for customer safety
   result.combinedKnowledge = result.combinedKnowledge.filter(item => isCustomerSafeFaq(item.q, item.a));
 
@@ -981,20 +997,17 @@ export function analyzeFullStackFiles(fileList = []) {
   const totalTools = result.tools.length;
   const totalKb = result.combinedKnowledge.length;
   const totalDbRecords = result.databaseRecords.length;
+  const totalForms = siteBlueprint.forms?.length || 0;
+  const totalSections = siteBlueprint.sections?.length || 0;
+  const totalRoutes = siteBlueprint.routes?.length || 0;
 
-  result.summary = `Analyzed ${fileList.length} files (${feCount} Frontend, ${beCount} Backend, ${dbCount} Database). Indexed ${totalDbRecords} live database records, discovered ${totalTools} backend API tools, and extracted ${totalKb} verified knowledge points across products, services, and specifications.`;
-
-  // Detect Website Archetype
-  const detectedSiteTitle = result.frontend[0]?.siteTitle || '';
-  result.archetype = detectWebsiteArchetype(detectedSiteTitle, result.summary, result.databaseRecords, result.combinedKnowledge);
-  result.archetypeMetadata = getArchetypeMetadata(result.archetype, detectedSiteTitle || 'our website');
+  result.summary = `Analyzed ${fileList.length} files (${feCount} Frontend, ${beCount} Backend, ${dbCount} Database). Mapped ${totalRoutes} routes, ${totalSections} sections, ${totalForms} interactive forms, ${totalDbRecords} database records, and ${totalKb} verified customer FAQs.`;
 
   return result;
 }
 
 /**
- * Detect the business/domain archetype of a website or database.
- * Supports: 'academic' | 'healthcare' | 'food' | 'hospitality' | 'saas' | 'general'
+ * Detect the business/domain archetype of a website or database across all 10 archetypes.
  */
 export function detectWebsiteArchetype(siteTitle = '', summary = '', sampleRecords = [], sampleKb = []) {
   const recordsText = (sampleRecords || []).map(r => `${r.name || ''} ${r.category || ''} ${r.description || ''}`).join(' ');
@@ -1007,14 +1020,26 @@ export function detectWebsiteArchetype(siteTitle = '', summary = '', sampleRecor
   if (/\b(pharmacy|medicine|medicines|drug|drugs|pill|pills|tablet|tablets|prescription|capsule|syrup|dosage|clinic|hospital|patient|doctor|pharma|wellness)\b/i.test(combined)) {
     return 'healthcare';
   }
-  if (/\b(restaurant|cafe|dining|food|dish|dishes|menu|bakery|pizza|burger|meal|kitchen|cuisine|dessert|beverage|chef|order\s*food)\b/i.test(combined)) {
+  if (/\b(restaurant|cafe|dining|food|dish|dishes|menu|bakery|pizza|burger|meal|kitchen|cuisine|dessert|beverage|chef|order\s*food|table\s*reservation)\b/i.test(combined)) {
     return 'food';
   }
-  if (/\b(hotel|resort|room|rooms|stay|suite|check-in|check-out|booking|villa|hostel|vacation)\b/i.test(combined)) {
+  if (/\b(hotel|resort|room|rooms|stay|suite|check-in|check-out|villa|hostel|vacation|banquet)\b/i.test(combined)) {
     return 'hospitality';
   }
-  if (/\b(software|saas|api|subscription|pricing\s*tier|starter\s*plan|pro\s*plan|enterprise\s*plan|cloud|platform|developer\s*tools)\b/i.test(combined)) {
+  if (/\b(software|saas|subscription|pricing\s*tier|starter\s*plan|pro\s*plan|enterprise\s*plan|cloud\s*platform|free\s*trial)\b/i.test(combined)) {
     return 'saas';
+  }
+  if (/\b(car|cars|vehicle|vehicles|automotive|dealership|showroom|test\s*drive|suv|sedan|motorcycle|bike|servicing)\b/i.test(combined)) {
+    return 'automotive';
+  }
+  if (/\b(finance|financial|tax\s*filing|itr|gst|wealth\s*management|accounting|audit|loan|loans|investment|mutual\s*fund|consultancy)\b/i.test(combined)) {
+    return 'financial';
+  }
+  if (/\b(real\s*estate|property|properties|apartment|apartments|flat|flats|2bhk|3bhk|plot|plots|site\s*visit|floor\s*plan)\b/i.test(combined)) {
+    return 'realestate';
+  }
+  if (/\b(shop|store|e-commerce|ecommerce|sneaker|shoe|shoes|clothing|apparel|fashion|electronics|gadget|watch|cart|checkout|shipping|return\s*policy|add\s*to\s*cart)\b/i.test(combined)) {
+    return 'ecommerce';
   }
   return 'general';
 }

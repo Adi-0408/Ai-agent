@@ -21,7 +21,9 @@ import {
   ChevronRight,
   Activity,
   UserCheck,
-  KeyRound
+  KeyRound,
+  Compass,
+  FileText
 } from 'lucide-react';
 import { getAgentStorageInfo } from '../firebase';
 import { getUserApiKeys } from '../services/aiCompletionService';
@@ -282,6 +284,97 @@ export default function DashboardOverview({
               <div className="text-slate-500 text-[10px]">Embedded client widget with local STT/TTS</div>
             </div>
           </div>
+
+          {/* Stage-1 Website Workflow & Exact Redirection Blueprint */}
+          {currentAssistant.siteBlueprint && (
+            <div className="blueprint-surface rounded-2xl p-4 sm:p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
+                    <Compass size={16} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      Website Workflow &amp; Exact Redirect Blueprint
+                    </h4>
+                    <p className="text-[11px] text-slate-600 leading-snug">
+                      {currentAssistant.siteBlueprint.roleSummary || 'Mapped website workflows, forms, and navigation targets.'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-semibold">
+                    {currentAssistant.siteBlueprint.forms?.length || 0} Forms
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] font-semibold">
+                    {currentAssistant.siteBlueprint.sections?.length || 0} Sections
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
+                    {currentAssistant.siteBlueprint.routes?.length || 0} Pages
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {/* Mapped Customer Workflows */}
+                {Array.isArray(currentAssistant.siteBlueprint.workflows) && currentAssistant.siteBlueprint.workflows.length > 0 && (
+                  <div className="bg-white border border-slate-200/80 rounded-xl p-3.5 space-y-2">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                      <Layers size={12} className="text-indigo-500" />
+                      <span>Mapped Customer Journey</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600">
+                      {currentAssistant.siteBlueprint.workflows.slice(0, 4).map((st, sIdx) => (
+                        <React.Fragment key={st.step || sIdx}>
+                          <span
+                            className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200/80 text-slate-800 font-medium"
+                            title={st.action || st.title}
+                          >
+                            {st.step || sIdx + 1}. {st.title}
+                          </span>
+                          {sIdx < Math.min(currentAssistant.siteBlueprint.workflows.length, 4) - 1 && (
+                            <ArrowRight size={11} className="text-slate-400 shrink-0" />
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Direct Form & Section Redirect Targets */}
+                <div className="bg-white border border-slate-200/80 rounded-xl p-3.5 space-y-2">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileText size={12} className="text-cyan-600" />
+                    <span>Live Redirect Targets (Forms &amp; Sections)</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(currentAssistant.siteBlueprint.forms || []).slice(0, 4).map((f, fIdx) => (
+                      <span
+                        key={f.id || fIdx}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-50/80 border border-cyan-200 text-cyan-800 text-[10px] font-semibold"
+                        title={Array.isArray(f.fields) ? f.fields.map(fl => (typeof fl === 'string' ? fl : fl?.label)).filter(Boolean).join(', ') : f.href}
+                      >
+                        <span>📝 {f.title}</span>
+                        <span className="font-mono text-[9px] text-cyan-600">{f.href || f.path}</span>
+                      </span>
+                    ))}
+                    {(currentAssistant.siteBlueprint.sections || []).slice(0, 4).map((s, sIdx) => (
+                      <span
+                        key={s.id || sIdx}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-medium"
+                      >
+                        <span>📍 {s.label}</span>
+                        <span className="font-mono text-[9px] text-slate-500">#{s.id}</span>
+                      </span>
+                    ))}
+                    {(!currentAssistant.siteBlueprint.forms?.length && !currentAssistant.siteBlueprint.sections?.length) && (
+                      <span className="text-[11px] text-slate-500">Auto-detects live DOM sections and forms on host website.</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Footer Actions */}
           <div className="flex items-center justify-between pt-4 mt-5 border-t border-slate-100">

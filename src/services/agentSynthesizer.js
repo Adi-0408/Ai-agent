@@ -12,7 +12,7 @@ import { getUserApiKeys } from './aiCompletionService.js';
  * @returns {Promise<object>} Synthesized agent blueprint
  */
 export async function synthesizeAgentFromFilesAndPrompt(userPrompt, analysisResult, userApiConfig = {}) {
-  const { frontend, backend, database, tools, combinedKnowledge, databaseRecords } = analysisResult;
+  const { frontend, backend, database, tools, combinedKnowledge, databaseRecords, siteBlueprint } = analysisResult;
 
   // Resolve user's BYOK keys (never fallback to developer keys)
   const storedKeys = getUserApiKeys();
@@ -31,9 +31,27 @@ export async function synthesizeAgentFromFilesAndPrompt(userPrompt, analysisResu
   }
 
   // Extract primary website title and products
-  const siteTitle = frontend.find(f => f.siteTitle)?.siteTitle || '';
+  const siteTitle = frontend.find(f => f.siteTitle)?.siteTitle || siteBlueprint?.brandName || '';
   const siteDesc = frontend.find(f => f.siteDesc)?.siteDesc || '';
   const discoveredProducts = frontend.flatMap(f => f.discoveredProducts || []);
+
+  // Stage-1 Website Workflow & Structure Blueprint Summary (Fed directly into Stage-2 Synthesis!)
+  const blueprintBlock = siteBlueprint ? `
+WEBSITE ROLE & ARCHITECTURE:
+${siteBlueprint.roleSummary || 'Customer website portal'}
+
+END-TO-END CUSTOMER WORKFLOW:
+${(siteBlueprint.workflows || []).map(w => `Step ${w.step}: ${w.title} -> ${w.action} [Target: ${w.href || w.targetPath || w.targetId || 'page'}]`).join('\n') || 'Standard customer inquiry workflow'}
+
+DISCOVERED INTERACTIVE FORMS (EXACT FIELDS & REDIRECT TARGETS):
+${(siteBlueprint.forms || []).map(f => `- Form: "${f.title}" (Target: ${f.href || f.path || f.id}, Submit: "${f.submitLabel}", Fields: ${f.fields.join(', ') || 'Standard inputs'})`).join('\n') || 'None detected'}
+
+DISCOVERED IN-PAGE SECTIONS & ANCHORS:
+${(siteBlueprint.sections || []).slice(0, 12).map(s => `- ${s.label} (${s.href}${s.page ? ` on ${s.page}` : ''})`).join('\n') || 'None detected'}
+
+DISCOVERED PAGES / ROUTES:
+${(siteBlueprint.routes || []).slice(0, 12).map(r => `- ${r.label} (${r.path})`).join('\n') || 'Single-page site'}
+` : '';
 
   const frontendExcerpts = frontend.map(f => `File: ${f.fileName}
 Site Title: ${f.siteTitle || 'N/A'}
@@ -67,6 +85,9 @@ USER PROMPT:
 
 UPLOADED FRONTEND CONTEXT (WEBSITE TITLE, MISSION & PRODUCTS):
 ${frontendExcerpts || 'General website interface and navigation'}
+
+STAGE-1 DISCOVERED WEBSITE WORKFLOW, FORMS & NAVIGATION BLUEPRINT:
+${blueprintBlock || 'Standard website structure'}
 
 DISCOVERED PRODUCTS & CATALOG:
 ${discoveredProducts.length > 0 ? discoveredProducts.join(', ') : 'None explicitly tagged, extract from headings/facts below'}
@@ -123,86 +144,73 @@ Respond ONLY with a valid JSON object matching this structure (no markdown forma
 
   let rawResponse = '';
 
-  // 1. Try User's Preferred Key First, or cascade: Groq (<200ms) then Gemini
+  const callGroqSynthesis = async () => {
+    for (const modelId of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
+      try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${effectiveGroqKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: modelId,
+            messages: [
+              { role: 'system', content: 'You are an AI system architect. First understand the website workflow, forms, and structure, then output valid JSON only.' },
+              { role: 'user', content: metaPrompt }
+            ],
+            temperature: 0.3,
+            max_tokens: 1800
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const txt = data.choices?.[0]?.message?.content || '';
+          if (txt) return txt;
+        }
+      } catch (e) {
+        console.warn(`Groq synthesis (${modelId}) failed:`, e);
+      }
+    }
+    return '';
+  };
+
+  const callGeminiSynthesis = async () => {
+    for (const modelId of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${effectiveGeminiKey}`;
+        const res = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: metaPrompt }] }]
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const txt = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (txt) return txt;
+        }
+      } catch (e) {
+        console.warn(`Gemini synthesis (${modelId}) failed:`, e);
+      }
+    }
+    return '';
+  };
+
+  // 1. Try User's Preferred Key First, then automatic cascade
   if (preferredProvider === 'groq' && effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${effectiveGroqKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'qwen/qwen3.8-27b',
-          messages: [
-            { role: 'system', content: 'You are an AI system architect. Output valid JSON only.' },
-            { role: 'user', content: metaPrompt }
-          ],
-          temperature: 0.3,
-          max_tokens: 1500
-        }),
-        signal: AbortSignal.timeout(8000)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        rawResponse = data.choices[0]?.message?.content || '';
-      }
-    } catch (e) {
-      console.warn("Groq synthesis failed, checking Gemini fallback:", e);
-    }
+    rawResponse = await callGroqSynthesis();
   }
-
-  // 2. Try Gemini with User-Provided Key if Groq didn't return
   if (!rawResponse && effectiveGeminiKey) {
-    try {
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${effectiveGeminiKey}`;
-      const res = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: metaPrompt }] }]
-        }),
-        signal: AbortSignal.timeout(8000)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        rawResponse = data.candidates[0]?.content?.parts[0]?.text || '';
-      }
-    } catch (e) {
-      console.warn("Gemini synthesis failed:", e);
-    }
+    rawResponse = await callGeminiSynthesis();
   }
-
-  // 3. If preferred was Gemini and Groq is fallback
   if (!rawResponse && preferredProvider === 'gemini' && effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${effectiveGroqKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'qwen/qwen3.8-27b',
-          messages: [
-            { role: 'system', content: 'You are an AI system architect. Output valid JSON only.' },
-            { role: 'user', content: metaPrompt }
-          ],
-          temperature: 0.3,
-          max_tokens: 1500
-        }),
-        signal: AbortSignal.timeout(8000)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        rawResponse = data.choices[0]?.message?.content || '';
-      }
-    } catch (e) {
-      console.warn("Groq fallback synthesis failed:", e);
-    }
+    rawResponse = await callGroqSynthesis();
   }
 
   // 4. Parse JSON response
@@ -317,11 +325,13 @@ ${combinedKb.slice(0, 20).map(k => `- Q: ${k.q} -> A: ${k.a}`).join('\n')}
     };
   }
 
-  // Ensure human-readable title ID and attach ONLY user's key (or empty for offline keyless mode)
+  // Ensure human-readable title ID and attach ONLY user's key, records, archetype, and Stage-1 siteBlueprint
   const cleanId = (parsedAgent.name || 'AI Assistant').trim().replace(/\//g, '-');
   parsedAgent.id = cleanId;
   parsedAgent.apiKey = effectiveGroqKey || effectiveGeminiKey || '';
   parsedAgent.databaseRecords = Array.isArray(analysisResult?.databaseRecords) ? analysisResult.databaseRecords : [];
+  parsedAgent.archetype = analysisResult?.archetype || 'general';
+  parsedAgent.siteBlueprint = siteBlueprint || null;
 
   return parsedAgent;
 }

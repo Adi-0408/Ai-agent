@@ -164,6 +164,8 @@ export const UNIVERSAL_CONCEPT_VOCAB = [
   'shipping', 'delivery', 'deliver', 'arrive', 'cancel', 'cancellation', 'scholarship', 'emi', 'installment', 'parking', 'wifi', 'dietary', 'vegetarian', 'vegan',
   // Contact & timings
   'address', 'location', 'located', 'map', 'directions', 'phone', 'call', 'number', 'mobile', 'contact', 'email', 'hours', 'timing', 'timings', 'open', 'close',
+  // Navigation & exact redirection
+  'scroll', 'take', 'navigate', 'redirect', 'jump', 'section', 'page', 'fill', 'find', 'visit', 'link', 'button', 'click', 'go', 'checkout', 'enquiry', 'inquiry', 'login', 'signup', 'demo', 'brochure',
   // Common academic/general terms
   'science', 'commerce', 'arts', 'engineering', 'medical', 'foundation', 'integrated', 'standard'
 ];

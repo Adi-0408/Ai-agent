@@ -410,6 +410,35 @@
         parsedData.knowledgeBase = json.knowledgeBase;
       }
 
+      // Universal recursive Firestore REST value decoder (for siteBlueprint, databaseConfig, nested objects)
+      function decodeFirestoreValue(val) {
+        if (!val || typeof val !== 'object') return val;
+        if ('stringValue' in val) return val.stringValue;
+        if ('integerValue' in val) return Number(val.integerValue);
+        if ('doubleValue' in val) return Number(val.doubleValue);
+        if ('booleanValue' in val) return Boolean(val.booleanValue);
+        if ('nullValue' in val) return null;
+        if ('timestampValue' in val) return val.timestampValue;
+        if ('arrayValue' in val) {
+          return Array.isArray(val.arrayValue?.values) ? val.arrayValue.values.map(decodeFirestoreValue) : [];
+        }
+        if ('mapValue' in val) {
+          const obj = {};
+          const flds = val.mapValue?.fields || {};
+          for (const [k, v] of Object.entries(flds)) {
+            obj[k] = decodeFirestoreValue(v);
+          }
+          return obj;
+        }
+        return null;
+      }
+
+      if (fields.siteBlueprint && fields.siteBlueprint.mapValue) {
+        parsedData.siteBlueprint = decodeFirestoreValue(fields.siteBlueprint);
+      } else if (json.siteBlueprint && typeof json.siteBlueprint === 'object') {
+        parsedData.siteBlueprint = json.siteBlueprint;
+      }
+
       if (fields.databaseRecords && fields.databaseRecords.arrayValue && fields.databaseRecords.arrayValue.values) {
         parsedData.databaseRecords = fields.databaseRecords.arrayValue.values.map(v => {
           if (v.mapValue && v.mapValue.fields) {
@@ -530,31 +559,36 @@
         position: fixed;
         ${agentConfig.position === 'bottom-left' ? 'left: 24px;' : 'right: 24px;'}
         bottom: 96px;
-        width: 380px;
-        max-width: calc(100vw - 32px);
-        height: 540px;
-        max-height: calc(100vh - 120px);
-        background: #0f172a;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 20px;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 20px rgba(99, 102, 241, 0.2);
+        width: 392px;
+        max-width: calc(100vw - 28px);
+        height: 590px;
+        max-height: calc(100vh - 116px);
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.98) 0%, rgba(11, 17, 32, 0.98) 100%);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 22px;
+        box-shadow: 0 24px 60px rgba(2, 6, 23, 0.65), 0 0 0 1px rgba(99, 102, 241, 0.12);
         display: none;
         flex-direction: column;
         overflow: hidden;
         z-index: 999999;
-        backdrop-filter: blur(16px);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
       }
       .vhd-panel.open {
         display: flex;
-        animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        animation: slideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
       }
       @keyframes slideUp {
-        from { opacity: 0; transform: translateY(16px); }
+        from { opacity: 0; transform: translateY(14px) scale(0.98); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes msgFadeIn {
+        from { opacity: 0; transform: translateY(6px); }
         to { opacity: 1; transform: translateY(0); }
       }
       .vhd-header {
-        padding: 16px;
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+        padding: 14px 16px;
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.85), rgba(15, 23, 42, 0.92));
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         display: flex;
         align-items: center;
@@ -563,31 +597,42 @@
       .vhd-header-info {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 11px;
+        min-width: 0;
       }
       .vhd-avatar {
         width: 38px;
         height: 38px;
-        border-radius: 19px;
+        border-radius: 13px;
         background: linear-gradient(135deg, var(--primary), var(--accent));
         display: flex;
         align-items: center;
         justify-content: center;
-        font-weight: bold;
+        font-weight: 700;
+        font-size: 13px;
+        letter-spacing: 0.4px;
         color: white;
-        border: 1px solid rgba(255, 255, 255, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+        flex-shrink: 0;
       }
       .vhd-agent-title {
         font-weight: 600;
-        font-size: 15px;
-        color: #fff;
+        font-size: 14.5px;
+        color: #f8fafc;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 235px;
       }
       .vhd-agent-status {
         font-size: 11px;
-        color: #10b981;
+        color: #34d399;
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 5px;
+        margin-top: 1px;
       }
       .vhd-agent-status::before {
         content: '';
@@ -599,16 +644,21 @@
         box-shadow: 0 0 8px #10b981;
       }
       .vhd-close-btn {
-        background: transparent;
-        border: none;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         color: #94a3b8;
         cursor: pointer;
-        padding: 4px;
-        border-radius: 8px;
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.16s ease;
       }
       .vhd-close-btn:hover {
-        color: white;
-        background: rgba(255, 255, 255, 0.1);
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.14);
       }
       .vhd-body {
         flex: 1;
@@ -616,63 +666,111 @@
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 11px;
+        scroll-behavior: smooth;
+      }
+      .vhd-body::-webkit-scrollbar {
+        width: 5px;
+      }
+      .vhd-body::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .vhd-body::-webkit-scrollbar-thumb {
+        background: rgba(148, 163, 184, 0.25);
+        border-radius: 99px;
       }
       .vhd-msg {
-        max-width: 85%;
+        max-width: 86%;
         padding: 10px 14px;
-        border-radius: 14px;
-        line-height: 1.45;
-        font-size: 13px;
+        border-radius: 15px;
+        line-height: 1.52;
+        font-size: 13.2px;
         word-break: break-word;
+        animation: msgFadeIn 0.2s ease-out;
       }
       .vhd-msg-agent {
-        background: #1e293b;
-        color: #f1f5f9;
+        background: rgba(30, 41, 59, 0.88);
+        color: #e2e8f0;
         align-self: flex-start;
-        border-bottom-left-radius: 4px;
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-bottom-left-radius: 5px;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
       }
       .vhd-msg-user {
-        background: linear-gradient(135deg, var(--primary), #4338ca);
-        color: #fff;
+        background: linear-gradient(135deg, var(--primary), #4f46e5);
+        color: #ffffff;
         align-self: flex-end;
-        border-bottom-right-radius: 4px;
+        border-bottom-right-radius: 5px;
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.28);
       }
       .vhd-nav-pill-btn {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        margin-top: 8px;
-        padding: 5px 12px;
-        background: rgba(56, 189, 248, 0.18);
-        border: 1px solid rgba(56, 189, 248, 0.4);
-        color: #38bdf8;
-        border-radius: 8px;
-        font-size: 11px;
+        margin-top: 9px;
+        padding: 6px 13px;
+        background: linear-gradient(135deg, rgba(56, 189, 248, 0.18), rgba(99, 102, 241, 0.2));
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        color: #7dd3fc;
+        border-radius: 10px;
+        font-size: 11.5px;
         font-weight: 600;
         cursor: pointer;
         transition: all 0.2s ease;
       }
       .vhd-nav-pill-btn:hover {
-        background: rgba(56, 189, 248, 0.32);
+        background: linear-gradient(135deg, rgba(56, 189, 248, 0.3), rgba(99, 102, 241, 0.32));
         border-color: #38bdf8;
+        color: #ffffff;
         transform: translateY(-1px);
       }
-      .vhd-voice-hero {
-        background: radial-gradient(circle at center, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
-        padding: 18px 0;
+      .vhd-quick-chips {
         display: flex;
-        flex-direction: column;
+        flex-wrap: nowrap;
+        gap: 6px;
+        padding: 8px 14px 4px;
+        overflow-x: auto;
+        scrollbar-width: none;
+        background: rgba(11, 17, 32, 0.65);
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .vhd-quick-chips::-webkit-scrollbar {
+        display: none;
+      }
+      .vhd-chip-btn {
+        background: rgba(30, 41, 59, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        color: #cbd5e1;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: all 0.16s ease;
+        flex-shrink: 0;
+      }
+      .vhd-chip-btn:hover {
+        background: rgba(99, 102, 241, 0.22);
+        border-color: rgba(129, 140, 248, 0.55);
+        color: #ffffff;
+        transform: translateY(-1px);
+      }
+      /* Sleek Compact Voice Strip (maximizes chat viewport by +40%) */
+      .vhd-voice-hero {
+        background: linear-gradient(90deg, rgba(99, 102, 241, 0.08), rgba(6, 182, 212, 0.08));
+        padding: 7px 14px;
+        display: flex;
+        flex-direction: row;
         align-items: center;
-        justify-content: center;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        justify-content: space-between;
+        gap: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
       }
       .vhd-orb-btn {
-        width: 70px;
-        height: 70px;
-        border-radius: 35px;
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
         background: linear-gradient(135deg, var(--primary), var(--accent));
         border: none;
         cursor: pointer;
@@ -680,105 +778,124 @@
         align-items: center;
         justify-content: center;
         color: white;
-        box-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
+        box-shadow: 0 0 12px rgba(99, 102, 241, 0.45);
         transition: all 0.2s ease;
+        flex-shrink: 0;
+      }
+      .vhd-orb-btn svg {
+        width: 16px;
+        height: 16px;
       }
       .vhd-orb-btn.listening {
-        animation: pulseOrb 1.5s infinite;
+        animation: pulseOrb 1.4s infinite;
         background: linear-gradient(135deg, #ef4444, #f97316);
-        box-shadow: 0 0 30px rgba(239, 68, 68, 0.7);
+        box-shadow: 0 0 18px rgba(239, 68, 68, 0.7);
       }
       .vhd-orb-btn.speaking {
         animation: pulseSpeaking 1.2s infinite;
         background: linear-gradient(135deg, #10b981, #06b6d4);
-        box-shadow: 0 0 30px rgba(16, 185, 129, 0.7);
+        box-shadow: 0 0 18px rgba(16, 185, 129, 0.7);
       }
       @keyframes pulseOrb {
-        0% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-        70% { transform: scale(1.05); box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
-        100% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.65); }
+        70% { transform: scale(1.06); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
       }
       @keyframes pulseSpeaking {
-        0% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-        70% { transform: scale(1.05); box-shadow: 0 0 0 15px rgba(16, 185, 129, 0); }
-        100% { transform: scale(0.96); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.65); }
+        70% { transform: scale(1.06); box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
       }
       .vhd-voice-label {
-        margin-top: 8px;
+        flex: 1;
         font-size: 11px;
         color: #94a3b8;
         font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .vhd-footer {
-        padding: 12px 16px;
-        background: #0b1120;
+        padding: 10px 14px 12px;
+        background: rgba(11, 17, 32, 0.96);
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
         display: flex;
         gap: 8px;
         align-items: center;
       }
       .vhd-input {
         flex: 1;
-        background: #1e293b;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
-        padding: 8px 12px;
-        color: white;
+        background: rgba(30, 41, 59, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        padding: 9px 13px;
+        color: #f8fafc;
         font-size: 13px;
         outline: none;
+        transition: border-color 0.16s ease, box-shadow 0.16s ease;
+      }
+      .vhd-input::placeholder {
+        color: #64748b;
       }
       .vhd-input:focus {
         border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.18);
       }
       .vhd-voice-btn {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        border-radius: 10px;
-        padding: 8px 10px;
+        background: rgba(30, 41, 59, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        width: 38px;
+        height: 38px;
         color: #38bdf8;
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        transition: all 0.15s ease;
+        transition: all 0.16s ease;
         flex-shrink: 0;
       }
       .vhd-voice-btn:hover {
-        background: rgba(56, 189, 248, 0.15);
+        background: rgba(56, 189, 248, 0.16);
         border-color: #38bdf8;
         color: #ffffff;
       }
       .vhd-voice-btn.listening {
-        background: rgba(239, 68, 68, 0.25);
+        background: rgba(239, 68, 68, 0.22);
         border-color: #ef4444;
-        color: #ef4444;
-        animation: vhd-pulse-red 1.2s infinite;
+        color: #f87171;
       }
       .vhd-voice-btn.speaking {
         background: rgba(16, 185, 129, 0.2);
         border-color: #10b981;
-        color: #10b981;
+        color: #34d399;
       }
       .vhd-send-btn {
-        background: var(--primary);
+        background: linear-gradient(135deg, var(--primary), #4f46e5);
         border: none;
-        border-radius: 10px;
-        padding: 8px 12px;
+        border-radius: 12px;
+        width: 38px;
+        height: 38px;
         color: white;
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+        transition: transform 0.15s ease, filter 0.15s ease;
+      }
+      .vhd-send-btn:hover {
+        filter: brightness(1.1);
+        transform: translateY(-1px);
       }
       .vhd-lang-bar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 6px 14px;
-        background: rgba(15, 23, 42, 0.45);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 7px 14px;
+        background: rgba(15, 23, 42, 0.55);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         font-size: 11px;
       }
       .vhd-lang-title {
@@ -787,34 +904,73 @@
         font-weight: 500;
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 5px;
       }
       .vhd-lang-pills {
         display: flex;
         gap: 4px;
+        background: rgba(15, 23, 42, 0.8);
+        padding: 2px;
+        border-radius: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
       }
       .vhd-lang-btn {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        color: #cbd5e1;
-        padding: 2px 8px;
-        border-radius: 6px;
-        font-size: 10px;
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        padding: 3px 8px;
+        border-radius: 7px;
+        font-size: 10.5px;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition: all 0.16s ease;
       }
       .vhd-lang-btn:hover {
-        background: rgba(255, 255, 255, 0.18);
-        color: #ffffff;
+        color: #f8fafc;
       }
       .vhd-lang-btn.active {
         background: linear-gradient(135deg, var(--primary), var(--accent));
         color: #ffffff;
-        border-color: transparent;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
       }
     `;
+
+    // Build dynamic 1-tap workflow shortcut chips from Stage-1 siteBlueprint (or archetype defaults)
+    const initialArch = detectCurrentArchetype(agentConfig);
+    const defaultChipsByArch = {
+      academic: [
+        { label: 'Courses', query: 'What courses do you provide?' },
+        { label: 'Fee Structure', query: 'What is the fee structure?' },
+        { label: 'Admission Form', query: 'Take me to the admission form' }
+      ],
+      ecommerce: [
+        { label: 'Products', query: 'Show me all products' },
+        { label: 'Pricing', query: 'What are the prices?' },
+        { label: 'Checkout / Order', query: 'Take me to checkout' }
+      ],
+      food: [
+        { label: 'Menu', query: 'Show me the menu' },
+        { label: 'Prices', query: 'What are the menu prices?' },
+        { label: 'Book a Table', query: 'Take me to table reservation' }
+      ],
+      healthcare: [
+        { label: 'Medicines', query: 'What medicines do you have?' },
+        { label: 'Prescription', query: 'Is a prescription required?' },
+        { label: 'Book Visit', query: 'Take me to appointment booking' }
+      ],
+      saas: [
+        { label: 'Plans', query: 'What plans do you offer?' },
+        { label: 'Pricing', query: 'Show pricing tiers' },
+        { label: 'Get Started', query: 'How do I get started?' }
+      ]
+    };
+    const quickChips = (agentConfig.siteBlueprint && Array.isArray(agentConfig.siteBlueprint.quickActions) && agentConfig.siteBlueprint.quickActions.length > 0)
+      ? agentConfig.siteBlueprint.quickActions.slice(0, 3)
+      : (defaultChipsByArch[initialArch] || [
+          { label: 'Explore Options', query: 'What do you offer?' },
+          { label: 'Pricing', query: 'What are the prices?' },
+          { label: 'Contact Us', query: 'Take me to contact' }
+        ]);
 
     const container = document.createElement('div');
     container.innerHTML = `
@@ -827,16 +983,16 @@
             <div class="vhd-avatar">${(agentConfig.name || 'AI').substring(0, 2).toUpperCase()}</div>
             <div>
               <div class="vhd-agent-title">${agentConfig.name}</div>
-              <div class="vhd-agent-status">Online · Auto (EN | हिंदी | मराठी)</div>
+              <div class="vhd-agent-status">Online · Voice & Navigation Guide</div>
             </div>
           </div>
-          <button class="vhd-close-btn" id="vhd-close">✕</button>
+          <button class="vhd-close-btn" id="vhd-close" title="Close">✕</button>
         </div>
         <div class="vhd-lang-bar">
           <div class="vhd-lang-title">🌐 Language</div>
           <div class="vhd-lang-pills" id="vhd-lang-pills">
-            <button class="vhd-lang-btn active" data-lang="auto">🌐 Auto</button>
-            <button class="vhd-lang-btn" data-lang="en-IN">English</button>
+            <button class="vhd-lang-btn active" data-lang="auto">Auto</button>
+            <button class="vhd-lang-btn" data-lang="en-IN">EN</button>
             <button class="vhd-lang-btn" data-lang="hi-IN">हिंदी</button>
             <button class="vhd-lang-btn" data-lang="mr-IN">मराठी</button>
           </div>
@@ -844,14 +1000,17 @@
         <div class="vhd-body" id="vhd-body">
           <div class="vhd-msg vhd-msg-agent">${agentConfig.greeting}</div>
         </div>
+        <div class="vhd-quick-chips" id="vhd-quick-chips">
+          ${quickChips.map(c => `<button type="button" class="vhd-chip-btn" data-query="${String(c.query || c.label).replace(/"/g, '&quot;')}">${c.label}</button>`).join('')}
+        </div>
         <div class="vhd-voice-hero">
-          <button class="vhd-orb-btn" id="vhd-orb">
-            <svg viewBox="0 0 24 24" width="30" height="30" fill="white"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
+          <button class="vhd-orb-btn" id="vhd-orb" title="Tap to Speak">
+            <svg viewBox="0 0 24 24" fill="white"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
           </button>
-          <div class="vhd-voice-label" id="vhd-voice-label">Tap to Speak (Auto-Detect)</div>
+          <div class="vhd-voice-label" id="vhd-voice-label">Tap mic to speak (English · हिंदी · मराठी)</div>
         </div>
         <div class="vhd-footer">
-          <input type="text" class="vhd-input" id="vhd-input" placeholder="Type or tap mic to speak..." />
+          <input type="text" class="vhd-input" id="vhd-input" placeholder="Ask anything or say 'take me to form'..." />
           <button class="vhd-voice-btn" id="vhd-voice-btn" title="Tap to Speak (English | हिंदी | मराठी)">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor">
               <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
@@ -864,6 +1023,14 @@
 
     shadow.appendChild(style);
     shadow.appendChild(container);
+
+    // Wire 1-tap quick workflow shortcut chips
+    shadow.querySelectorAll('.vhd-chip-btn').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const q = chip.getAttribute('data-query');
+        if (q) handleUserMessage(q);
+      });
+    });
 
     // Event Elements
     const launcher = shadow.getElementById('vhd-launcher');
@@ -1183,14 +1350,25 @@
       textNode.textContent = text;
       div.appendChild(textNode);
 
-      if (navAction && navAction.label && navAction.sectionInfo) {
+      if (navAction && navAction.label && (navAction.sectionInfo || navAction.redirectTarget || navAction.redirectUrl)) {
         const navBtn = document.createElement('button');
         navBtn.type = 'button';
         navBtn.className = 'vhd-nav-pill-btn';
-        navBtn.innerHTML = `📍 <span>${navAction.label}</span> &rarr;`;
+        const icon = navAction.targetType === 'form' ? '📝' : (navAction.isCrossPage || navAction.redirectUrl ? '↗' : '📍');
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = navAction.label;
+        navBtn.appendChild(document.createTextNode(`${icon} `));
+        navBtn.appendChild(labelSpan);
+        navBtn.appendChild(document.createTextNode(' →'));
         navBtn.onclick = (e) => {
           e.stopPropagation();
-          scrollToHostSection(navAction.sectionInfo);
+          if (navAction.redirectTarget) {
+            executeRedirectAction(navAction.redirectTarget, true);
+          } else if (navAction.redirectUrl) {
+            try { window.location.assign(navAction.redirectUrl); } catch (_) {}
+          } else if (navAction.sectionInfo) {
+            scrollToHostSection(navAction.sectionInfo);
+          }
         };
         div.appendChild(navBtn);
       }
@@ -1375,6 +1553,7 @@
       'prescription', 'dosage', 'note', 'return', 'returns', 'refund', 'exchange', 'replace', 'back', 'send', 'warranty', 'guarantee',
       'shipping', 'delivery', 'deliver', 'arrive', 'cancel', 'cancellation', 'scholarship', 'emi', 'installment', 'parking', 'wifi', 'dietary', 'vegetarian', 'vegan',
       'address', 'location', 'located', 'map', 'directions', 'phone', 'call', 'number', 'mobile', 'contact', 'email', 'hours', 'timing', 'timings', 'open', 'close',
+      'scroll', 'take', 'navigate', 'redirect', 'jump', 'section', 'page', 'fill', 'find', 'visit', 'link', 'button', 'click', 'go', 'checkout', 'enquiry', 'inquiry', 'login', 'signup', 'demo', 'brochure',
       'science', 'commerce', 'arts', 'engineering', 'medical', 'foundation', 'integrated', 'standard'
     ];
 
@@ -1448,6 +1627,22 @@
       const kbs = Array.isArray(kbList) ? kbList : (typeof agentConfig !== 'undefined' && Array.isArray(agentConfig.knowledgeBase) ? agentConfig.knowledgeBase : []);
       for (const k of kbs.slice(0, 60)) {
         addWords(k?.q || '');
+      }
+      const bp = (typeof agentConfig !== 'undefined' && agentConfig && agentConfig.siteBlueprint) ? agentConfig.siteBlueprint : null;
+      if (bp) {
+        (bp.forms || []).slice(0, 20).forEach(f => {
+          addWords(f?.title || '');
+          addWords(f?.submitLabel || '');
+          (f?.keywords || []).forEach(addWords);
+        });
+        (bp.sections || []).slice(0, 30).forEach(s => {
+          addWords(s?.label || '');
+          (s?.keywords || []).forEach(addWords);
+        });
+        (bp.routes || []).slice(0, 20).forEach(r => {
+          addWords(r?.label || '');
+          (r?.keywords || []).forEach(addWords);
+        });
       }
       const vocabList = Array.from(vocabSet);
 
@@ -1586,11 +1781,14 @@
     }
 
     function isSectionNavigationQuery(text) {
-      const lower = String(text || '').toLowerCase().trim();
-      return /\b(scroll to|take me to|navigate to|go to|show me the section|where is the|jump to|open section|view section)\b/i.test(lower) ||
-             /\b(where is (the )?(inventory|table|pricing|contact|how it works|medicines|products|catalog|shop|menu|counter|doctor|appointment))\b/i.test(lower) ||
-             /(विभागावर जा|दाखवा|नेऊन जा|कुठे आहे)/i.test(text) ||
-             /(सेक्शन पर ले जाओ|कहाँ है|दिखाओ|स्क्रॉल करो)/i.test(text);
+      const normalized = (typeof normalizeUserQuery === 'function') ? normalizeUserQuery(text) : String(text || '');
+      const lower = String(normalized || text || '').toLowerCase().trim();
+      return /\b(scroll to|take me to|navigate to|go to|redirect(?: me)? to|show me the section|where is the|jump to|open section|view section|open (?:the )?page|go to (?:the )?page)\b/i.test(lower) ||
+             /\b(open|show|go to|take me to|redirect(?: me)? to|where is|fill|find|visit|jump to)\s+(?:the\s+|your\s+|an?\s+)?(?:[a-z0-9-]+\s+){0,3}(form|page|section|checkout|booking|reservation|registration|application|admission|contact|login|signup|sign up|demo|enquiry|inquiry)\b/i.test(lower) ||
+             /^(?:the\s+|your\s+)?(?:[a-z0-9-]+\s+){0,3}(form|page|section)\s*[?.!]*$/i.test(lower) ||
+             /\b(where is (?:the )?(inventory|table|pricing|contact|how it works|medicines|products|catalog|shop|menu|counter|doctor|appointment|courses|admissions|checkout|booking|form))\b/i.test(lower) ||
+             /(विभागावर जा|फॉर्म उघडा|फॉर्म कुठे आहे|दाखवा|नेऊन जा|कुठे आहे)/i.test(text) ||
+             /(सेक्शन पर ले जाओ|फॉर्म खोलो|फॉर्म कहाँ है|पेज पर ले जाओ|कहाँ है|दिखाओ|स्क्रॉल करो)/i.test(text);
     }
 
     function isDynamicDataQuery(text) {
@@ -1768,12 +1966,327 @@
           el.style.boxShadow = origBoxShadow;
           el.style.outline = origOutline;
           el.style.transition = origTransition;
-        }, 3000);
+        }, 3500);
         return true;
       } catch (err) {
         console.warn('[Echo AI Navigation] Failed smooth scroll:', err);
         return false;
       }
+    }
+
+    // --- EXACT FORM, SECTION & ROUTE REDIRECTION ENGINE (UNIVERSAL ACROSS ALL WEBSITES) ---
+    function resolveExactRedirectTarget(query, blueprint = null) {
+      const bp = blueprint || (typeof agentConfig !== 'undefined' ? agentConfig?.siteBlueprint : null);
+      const rawQ = String(query || '').trim();
+      if (!rawQ) return null;
+
+      const normQ = (typeof normalizeUserQuery === 'function') ? (normalizeUserQuery(rawQ) || rawQ) : rawQ;
+      const lower = normQ.toLowerCase();
+
+      const navNoise = new Set([
+        'take', 'me', 'to', 'open', 'show', 'go', 'redirect', 'scroll', 'jump', 'where', 'is', 'are',
+        'the', 'a', 'an', 'please', 'can', 'you', 'want', 'fill', 'find', 'visit', 'navigate', 'view',
+        'for', 'of', 'on', 'in', 'at', 'your', 'our', 'my', 'i', 'how', 'do', 'does', 'get', 'need', 'click', 'link'
+      ]);
+      const rawTokens = lower.replace(/[^a-z0-9\s-]/g, ' ').replace(/-/g, ' ').split(/\s+/).filter(Boolean);
+      const queryTokens = rawTokens.filter(t => t.length >= 2 && !navNoise.has(t));
+      const subjectTokens = queryTokens.filter(t => !['form', 'page', 'section', 'tab', 'screen', 'area'].includes(t));
+
+      const wantsForm = /\b(form|apply|application|register|registration|submit|fill|signup|sign up|book|booking|reserve|reservation|checkout|order|enquiry|inquiry|demo|login|contact)\b/i.test(lower);
+      const wantsPage = /\b(page|url|route|portal|screen)\b/i.test(lower);
+
+      const normalizePath = (p) => {
+        const clean = String(p || '').split('#')[0].split('?')[0].trim().replace(/\/+$/, '');
+        if (!clean || clean === '/index.html' || clean === 'index.html') return '/';
+        return clean.startsWith('/') ? clean : '/' + clean;
+      };
+
+      const currentPath = (typeof window !== 'undefined' && window.location && window.location.pathname)
+        ? normalizePath(window.location.pathname)
+        : '/';
+
+      const tokenScoreAgainst = (qToks, targetStrings) => {
+        const candToks = targetStrings
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, ' ')
+          .replace(/-/g, ' ')
+          .split(/\s+/)
+          .filter(t => t.length >= 2);
+        if (candToks.length === 0) return 0;
+        let total = 0;
+        let matchedCount = 0;
+        for (const qt of qToks) {
+          let best = 0;
+          for (const ct of candToks) {
+            const m = (typeof fuzzyTokenMatch === 'function') ? fuzzyTokenMatch(qt, ct) : (qt === ct ? 4 : 0);
+            if (m > best) best = m;
+          }
+          if (best >= 4) { total += 12; matchedCount++; }
+          else if (best === 3) { total += 10; matchedCount++; }
+          else if (best === 2) { total += 8; matchedCount++; }
+        }
+        return { total, matchedCount };
+      };
+
+      const findDomElementForCandidate = (cand) => {
+        if (typeof document === 'undefined') return null;
+        try {
+          if (cand.formId) {
+            const el = document.getElementById(cand.formId);
+            if (el) return el;
+          }
+          if (cand.formName) {
+            const el = document.querySelector(`form[name="${cand.formName}"]`);
+            if (el) return el;
+          }
+          if (cand.sectionId) {
+            const el = document.getElementById(cand.sectionId);
+            if (el) return el;
+          }
+          if (cand.id && !/^form_\d+$/.test(cand.id)) {
+            const el = document.getElementById(cand.id);
+            if (el) return el;
+          }
+          if (cand.action && cand.action.length > 2) {
+            const el = document.querySelector(`form[action*="${cand.action.replace(/"/g, '')}"]`);
+            if (el) return el;
+          }
+        } catch (_) {}
+        return null;
+      };
+
+      const candidates = [];
+
+      // 1. Score Blueprint Forms
+      if (bp && Array.isArray(bp.forms)) {
+        bp.forms.forEach((f, idx) => {
+          const fieldLabels = Array.isArray(f.fields)
+            ? f.fields.map(fl => (typeof fl === 'string' ? fl : (fl?.label || fl?.name || ''))).filter(Boolean)
+            : [];
+          const { total, matchedCount } = tokenScoreAgainst(subjectTokens, [
+            f.title, f.formId, f.formName, f.sectionId, f.submitLabel, f.page, f.path,
+            ...(Array.isArray(f.keywords) ? f.keywords : []),
+            ...fieldLabels
+          ]);
+          let score = total;
+          if (wantsForm && matchedCount > 0) score += 10;
+          else if (wantsForm && subjectTokens.length === 0 && idx === 0) score = 14;
+          if (score > 0) {
+            const domEl = findDomElementForCandidate(f);
+            const candPath = normalizePath(f.path || '');
+            const isCrossPage = domEl ? false : Boolean(f.path && candPath !== currentPath);
+            const fallbackHash = f.sectionId ? `#${f.sectionId}` : (f.formId ? `#${f.formId}` : '');
+            const redirectUrl = isCrossPage ? (f.href || f.path) : (f.href || fallbackHash || null);
+            candidates.push({
+              targetType: 'form',
+              id: f.formId || f.sectionId || f.id || `form_${idx + 1}`,
+              formId: f.formId || '',
+              sectionId: f.sectionId || '',
+              label: f.title || 'Website Form',
+              submitLabel: f.submitLabel || 'Submit',
+              fields: fieldLabels.slice(0, 6),
+              page: f.page || '',
+              path: f.path || '/',
+              href: f.href || redirectUrl || '',
+              isCrossPage,
+              redirectUrl,
+              element: domEl,
+              score
+            });
+          }
+        });
+      }
+
+      // 2. Score Blueprint Sections
+      if (bp && Array.isArray(bp.sections)) {
+        bp.sections.forEach((s) => {
+          const { total, matchedCount } = tokenScoreAgainst(subjectTokens, [
+            s.label, s.id, s.page, s.path,
+            ...(Array.isArray(s.keywords) ? s.keywords : [])
+          ]);
+          let score = total;
+          if (matchedCount > 0 && !wantsPage) score += 3;
+          if (score > 0) {
+            const domEl = findDomElementForCandidate(s);
+            const candPath = normalizePath(s.path || '');
+            const isCrossPage = domEl ? false : Boolean(s.path && candPath !== currentPath);
+            const redirectUrl = isCrossPage ? (s.href || `${s.path}#${s.id}`) : (s.href || `#${s.id}`);
+            candidates.push({
+              targetType: 'section',
+              id: s.id || '',
+              sectionId: s.id || '',
+              label: s.label || formatSectionLabel(s.id || 'section'),
+              fields: [],
+              page: s.page || '',
+              path: s.path || '/',
+              href: s.href || redirectUrl || '',
+              isCrossPage,
+              redirectUrl,
+              element: domEl,
+              score
+            });
+          }
+        });
+      }
+
+      // 3. Score Blueprint Routes / Pages
+      if (bp && Array.isArray(bp.routes)) {
+        bp.routes.forEach((r) => {
+          const { total, matchedCount } = tokenScoreAgainst(subjectTokens, [
+            r.label, r.path, r.file,
+            ...(Array.isArray(r.keywords) ? r.keywords : [])
+          ]);
+          let score = total;
+          if (wantsPage && matchedCount > 0) score += 8;
+          if (score > 0) {
+            const candPath = normalizePath(r.path || '');
+            const isCrossPage = Boolean(r.path && candPath !== currentPath);
+            candidates.push({
+              targetType: 'route',
+              id: r.path || r.label,
+              sectionId: '',
+              label: r.label || r.path,
+              fields: [],
+              page: r.file || '',
+              path: r.path || '/',
+              href: r.path || '/',
+              isCrossPage,
+              redirectUrl: r.path || '/',
+              element: null,
+              score
+            });
+          }
+        });
+      }
+
+      // 4. Live DOM Form & Section Scan (Works even for websites without an uploaded blueprint!)
+      if (typeof document !== 'undefined') {
+        try {
+          const liveForms = document.querySelectorAll('form');
+          liveForms.forEach((formEl, idx) => {
+            if (formEl.closest('#voice-helpdesk-root')) return;
+            const secParent = formEl.closest('section[id], div[id]');
+            const hEl = (secParent || formEl).querySelector('h1, h2, h3, h4, legend');
+            const submitEl = formEl.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"])');
+            const title = (hEl ? hEl.textContent : '') || formEl.getAttribute('aria-label') || formEl.id || formEl.name || `Form ${idx + 1}`;
+            const cleanTitle = title.replace(/\s+/g, ' ').trim().slice(0, 60);
+            const fieldLabels = Array.from(formEl.querySelectorAll('input, select, textarea'))
+              .filter(el => el.type !== 'hidden' && el.type !== 'submit' && el.type !== 'button')
+              .map(el => {
+                const lbl = el.id ? document.querySelector(`label[for="${el.id}"]`) : null;
+                return (lbl ? lbl.textContent : '') || el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.name || '';
+              })
+              .map(s => s.replace(/\s+/g, ' ').replace(/[:*]+$/, '').trim())
+              .filter(s => s.length >= 2)
+              .slice(0, 6);
+
+            const { total, matchedCount } = tokenScoreAgainst(subjectTokens, [
+              cleanTitle, formEl.id, formEl.name, secParent?.id, submitEl?.textContent, ...fieldLabels
+            ]);
+            let score = total + (wantsForm && matchedCount > 0 ? 11 : 0);
+            if (wantsForm && subjectTokens.length === 0 && idx === 0) score = Math.max(score, 13);
+            if (score > 0) {
+              candidates.push({
+                targetType: 'form',
+                id: formEl.id || secParent?.id || `dom_form_${idx + 1}`,
+                formId: formEl.id || '',
+                sectionId: secParent?.id || '',
+                label: cleanTitle,
+                submitLabel: submitEl ? submitEl.textContent.trim().slice(0, 40) : 'Submit',
+                fields: fieldLabels,
+                page: currentPath,
+                path: currentPath,
+                href: formEl.id ? `#${formEl.id}` : (secParent?.id ? `#${secParent.id}` : ''),
+                isCrossPage: false,
+                redirectUrl: null,
+                element: formEl,
+                score: score + 2 // Slight boost for verified live DOM element
+              });
+            }
+          });
+        } catch (_) {}
+      }
+
+      candidates.sort((a, b) => b.score - a.score);
+      if (candidates.length > 0 && candidates[0].score >= 8) {
+        return candidates[0];
+      }
+
+      // Final fallback to host section finder
+      const hostSec = findHostSection(normQ);
+      if (hostSec) {
+        return {
+          targetType: 'section',
+          id: hostSec.id || '',
+          sectionId: hostSec.id || '',
+          label: hostSec.label || 'Section',
+          fields: [],
+          page: currentPath,
+          path: currentPath,
+          href: hostSec.id ? `#${hostSec.id}` : '',
+          isCrossPage: false,
+          redirectUrl: null,
+          element: hostSec.element || null,
+          score: 8
+        };
+      }
+      return null;
+    }
+
+    function executeRedirectAction(target, isExplicitNav = false) {
+      if (!target) return { executed: 'none' };
+
+      // Resolve DOM element on demand if not already attached
+      let el = target.element || null;
+      if (!el && typeof document !== 'undefined') {
+        try {
+          if (target.formId) el = document.getElementById(target.formId);
+          if (!el && target.sectionId) el = document.getElementById(target.sectionId);
+          if (!el && target.id && !/^form_\d+$/.test(target.id)) el = document.getElementById(target.id);
+        } catch (_) {}
+      }
+
+      // 1. Same-page smooth scroll + luminous highlight + auto-focus first input for forms
+      if (el) {
+        scrollToHostSection({ element: el, id: target.id, label: target.label });
+        const isForm = target.targetType === 'form' || el.tagName === 'FORM' || Boolean(el.querySelector && el.querySelector('form'));
+        if (isForm && typeof el.querySelector === 'function') {
+          setTimeout(() => {
+            try {
+              const firstInput = el.querySelector('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([disabled]), select:not([disabled]), textarea:not([disabled])');
+              if (firstInput && typeof firstInput.focus === 'function') {
+                firstInput.focus({ preventScroll: true });
+              }
+            } catch (_) {}
+          }, 480);
+        }
+        return { executed: isForm ? 'scroll_and_focus' : 'scroll', target };
+      }
+
+      // 2. Cross-page navigation (e.g. /apply.html#admission-form or /checkout)
+      if (target.isCrossPage && target.redirectUrl) {
+        if (isExplicitNav && typeof window !== 'undefined' && window.location && typeof window.location.assign === 'function') {
+          setTimeout(() => {
+            try {
+              window.location.assign(target.redirectUrl);
+            } catch (_) {}
+          }, 900);
+          return { executed: 'scheduled_redirect', redirectUrl: target.redirectUrl, target };
+        }
+        return { executed: 'pill_only', redirectUrl: target.redirectUrl, target };
+      }
+
+      // 3. Same-page hash fallback
+      if (target.sectionId && typeof window !== 'undefined' && window.location) {
+        try {
+          window.location.hash = `#${target.sectionId}`;
+          return { executed: 'hash_jump', redirectUrl: `#${target.sectionId}`, target };
+        } catch (_) {}
+      }
+
+      return { executed: 'none', target };
     }
 
     // Autonomous Host Page Knowledge Harvester (Universal for any website)
@@ -2670,7 +3183,19 @@
         }
       }
 
-      // 0.25 Specific Item Fuzzy Match FIRST (typo-tolerant & word-order-independent: "fess for scince 11th", "cost pro plan how much", "paracetmol avilable")
+      // 0.15 Explicit Form, Section & Route Navigation FIRST (e.g. "take me to admission form", "scroll to fee structure", "open checkout")
+      if (isNav) {
+        const exactTarget = resolveExactRedirectTarget(effectiveQuery, agentConfig?.siteBlueprint) || findHostSection(effectiveQuery);
+        if (exactTarget) {
+          return {
+            status: 'NAVIGATE_SECTION',
+            item: exactTarget.label || 'section',
+            data: exactTarget
+          };
+        }
+      }
+
+      // 0.25 Specific Item Fuzzy Match (typo-tolerant & word-order-independent: "fess for scince 11th", "cost pro plan how much", "paracetmol avilable")
       // Generic-only queries ("courses details give me", "fess structre", "plan details") return null here and flow cleanly to Price Overview / Catalog List!
       if (liveCatalog.length > 0) {
         const directFuzzyMatch = matchInInventory(liveCatalog, effectiveQuery);
@@ -2737,13 +3262,12 @@
         };
       }
 
-      // 2. Handle Section Navigation query (e.g. "take me to pricing", "where is contact")
+      // 2. Fallback Section Navigation if no explicit target matched above
       if (isNav) {
-        const sec = findHostSection(query);
         return {
           status: 'NAVIGATE_SECTION',
-          item: sec ? sec.label : 'section',
-          data: sec
+          item: 'section',
+          data: null
         };
       }
 
@@ -3047,8 +3571,12 @@ SAMPLE_ITEMS: ${JSON.stringify((bridgeResult.data || []).slice(0, 8))}`;
         bridgeBlock = `STATUS: FOUND_PRICE_OVERVIEW
 ITEMS_WITH_PRICES: ${JSON.stringify((bridgeResult.data || []).slice(0, 10).map(i => ({ name: i.name, price: i.price || 'On request', stock: i.stock })))}`;
       } else if (bridgeResult && bridgeResult.status === 'NAVIGATE_SECTION') {
+        const target = bridgeResult.data || {};
         bridgeBlock = `STATUS: NAVIGATE_SECTION
-SECTION: ${bridgeResult.data?.label || 'Target section'}`;
+TARGET_TYPE: ${target.targetType || 'section'}
+TARGET_LABEL: ${target.label || 'Target section'}
+IS_CROSS_PAGE: ${target.isCrossPage ? 'Yes' : 'No'}
+REDIRECT_URL: ${target.redirectUrl || target.href || 'Current page section'}${Array.isArray(target.fields) && target.fields.length > 0 ? `\nFORM_FIELDS: ${target.fields.join(', ')}` : ''}`;
       } else if (bridgeResult && bridgeResult.topic) {
         bridgeBlock = `STATUS: HOST_KNOWLEDGE_QUERY
 TOPIC: ${bridgeResult.topic}
@@ -3113,13 +3641,48 @@ REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;
       const consumerDeclineText = `"I can help you with our ${profile.nounEn}. How can I assist you with our catalog today?"`;
       const catalogSectionLabel = profile.catalogLabel;
 
+      const bp = agentConfig?.siteBlueprint || null;
+      const blueprintLines = [];
+      if (bp) {
+        if (bp.roleSummary) blueprintLines.push(`WEBSITE_ROLE: ${bp.roleSummary}`);
+        if (Array.isArray(bp.workflows) && bp.workflows.length > 0) {
+          if (bp.workflows[0]?.steps) {
+            bp.workflows.slice(0, 4).forEach(w => {
+              const stepsStr = Array.isArray(w.steps) ? w.steps.map(s => s.detail || s.title).filter(Boolean).join(' -> ') : '';
+              blueprintLines.push(`WORKFLOW (${w.name}): ${stepsStr}`);
+            });
+          } else {
+            const flatSteps = bp.workflows.slice(0, 6).map((w, i) => `${w.step || i + 1}. ${w.title}${w.action ? ` (${w.action})` : ''}`).join(' -> ');
+            blueprintLines.push(`CUSTOMER_WORKFLOW: ${flatSteps}`);
+          }
+        }
+        if (Array.isArray(bp.forms) && bp.forms.length > 0) {
+          bp.forms.slice(0, 6).forEach(f => {
+            const fNames = Array.isArray(f.fields)
+              ? f.fields.map(fl => (typeof fl === 'string' ? fl : (fl?.label || fl?.name || ''))).filter(Boolean).slice(0, 6).join(', ')
+              : '';
+            blueprintLines.push(`FORM: "${f.title}" at ${f.href || f.path || '#'} (Submit: "${f.submitLabel || 'Submit'}")${fNames ? ` | Fields: ${fNames}` : ''}`);
+          });
+        }
+        if (Array.isArray(bp.sections) && bp.sections.length > 0) {
+          blueprintLines.push(`SECTIONS: ${bp.sections.slice(0, 10).map(s => `${s.label} (${s.href || '#' + s.id})`).join(', ')}`);
+        }
+        if (Array.isArray(bp.routes) && bp.routes.length > 0) {
+          blueprintLines.push(`PAGES: ${bp.routes.slice(0, 10).map(r => `${r.label} (${r.path})`).join(', ')}`);
+        }
+      }
+      const blueprintBlock = blueprintLines.length > 0
+        ? `\n[WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT]\n${blueprintLines.join('\n')}\n`
+        : '';
+
       return `You are the official live customer support voice & chat assistant embedded on ${businessName}'s website (${roleDescription}), trained like Flipkart and Amazon customer support specialists with high accuracy, deep database grounding, and fast conversational etiquette. You are speaking directly to a visitor browsing the website.
 CRITICAL RULES:
 - NEVER ask the user how to implement code, configure APIs, set up webhooks, or provide database schemas. You are already live in production.
 - AUDIENCE IS CONSUMER / CUSTOMER ONLY: You are speaking to ${audienceDescription}, NOT developers. Only answer user questions (${profile.topicsList}). NEVER answer technical database queries, schema questions, SQL statements, table architectures, or developer backend logic. If asked about database internals or queries, politely decline: ${consumerDeclineText}
 - STRICT DOMAIN LOCK: You are exclusively the live support assistant for ${businessName}. You must NEVER reference other businesses, car companies, pharmacies, or unrelated websites.
 - CONVERSATION CONTINUITY: If the customer asks a follow-up question (e.g. "what do you provide in that", "fees for this", "details", "how to apply/order"), use [ACTIVE_CONVERSATION_CONTEXT] to answer specifically for that item without asking what they mean.
-- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [ACTIVE_CONVERSATION_CONTEXT], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
+- EXACT FORM & SECTION REDIRECTION: When [LIVE_BRIDGE_DATA] has STATUS: NAVIGATE_SECTION, confirm you are taking the visitor directly to that exact form, section, or page (mention key fields if it is a form). When asked how to apply/order/book/register, guide them using [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT].
+- Answer strictly using the injected [LIVE_BRIDGE_DATA], ${catalogSectionLabel}, [ACTIVE_CONVERSATION_CONTEXT], [WEBSITE_WORKFLOW_AND_NAVIGATION_BLUEPRINT], [LIVE_HOST_WEBSITE_CONTEXT], and [CLEAN_CUSTOMER_FAQ_KB] provided below with zero hallucination.
 - If [LIVE_BRIDGE_DATA] contains STATUS: FOUND_IN_DATABASE or exact stock, price, order status, or availability, state the exact details directly, naturally, and concisely in 1-2 spoken-friendly sentences.
 - If [LIVE_BRIDGE_DATA] returns STATUS: FOUND_CATALOG_LIST, summarize available items concisely in 1-2 sentences and confirm you have opened them.
 - If [LIVE_BRIDGE_DATA] returns STATUS: ITEM_NOT_FOUND, politely inform the visitor that the requested item is not currently listed, mention available options if present, and offer guidance.
@@ -3128,7 +3691,7 @@ CRITICAL RULES:
 
 ${liveDbBlock}[LIVE_BRIDGE_DATA]
 ${bridgeBlock}
-${activeContextBlock}
+${activeContextBlock}${blueprintBlock}
 ${catalogSectionLabel}
 ${catalogSummary || 'Catalog empty or not loaded.'}
 
@@ -3534,6 +4097,29 @@ ${cleanFaqBlock}`;
           }
 
           if (isFollowUpApply) {
+            const formTarget = resolveExactRedirectTarget(`${effectiveText} form`, agentConfig?.siteBlueprint);
+            if (formTarget && formTarget.targetType === 'form') {
+              executeRedirectAction(formTarget, false);
+              const fieldsNote = Array.isArray(formTarget.fields) && formTarget.fields.length > 0
+                ? ` (${formTarget.fields.slice(0, 4).join(', ')})`
+                : '';
+              const replyText = queryLang === 'mr-IN'
+                ? `${active.name} साठी आमचा ${formTarget.label}${fieldsNote} भरा आणि "${formTarget.submitLabel || 'Submit'}" वर क्लिक करा.`
+                : queryLang === 'hi-IN'
+                  ? `${active.name} के लिए हमारा ${formTarget.label}${fieldsNote} भरें और "${formTarget.submitLabel || 'Submit'}" पर क्लिक करें।`
+                  : `To proceed with ${active.name}, complete our ${formTarget.label}${fieldsNote} and click "${formTarget.submitLabel || 'Submit'}".`;
+              return {
+                reply: replyText,
+                navAction: {
+                  label: `Open ${formTarget.label}`,
+                  sectionInfo: formTarget.element ? formTarget : null,
+                  redirectTarget: formTarget,
+                  redirectUrl: formTarget.isCrossPage ? formTarget.redirectUrl : null,
+                  isCrossPage: Boolean(formTarget.isCrossPage),
+                  targetType: 'form'
+                }
+              };
+            }
             if (queryLang === 'mr-IN') {
               return `${active.name} साठी: ${profile.actionMr}.`;
             } else if (queryLang === 'hi-IN') {
@@ -3690,20 +4276,44 @@ ${cleanFaqBlock}`;
         }
       }
 
-      // 2. Direct Section Navigation Handler (e.g. "take me to pricing", "where is contact")
+      // 2. Direct Exact Form, Section & Route Navigation Handler (e.g. "take me to admission form", "open checkout", "where is contact")
       if (bridge && bridge.status === 'NAVIGATE_SECTION') {
-        const sec = bridge.data || findHostSection(text);
+        const sec = bridge.data || resolveExactRedirectTarget(effectiveText, agentConfig?.siteBlueprint) || findHostSection(effectiveText);
         if (sec) {
-          scrollToHostSection(sec);
-          let navReply = `Certainly! I have scrolled your screen directly to our ${sec.label} section right here.`;
-          if (queryLang === 'mr-IN') {
-            navReply = `नक्कीच! मी आपल्या स्क्रीनला थेट आमच्या ${sec.label} विभागावर नेले आहे.`;
-          } else if (queryLang === 'hi-IN') {
-            navReply = `ज़रूर! मैंने स्क्रीन को सीधे हमारे ${sec.label} सेक्शन पर स्क्रॉल कर दिया है।`;
+          executeRedirectAction(sec, true);
+          const fieldsHint = (sec.targetType === 'form' && Array.isArray(sec.fields) && sec.fields.length > 0)
+            ? ` (fields: ${sec.fields.slice(0, 4).join(', ')})`
+            : '';
+          let navReply = '';
+          if (sec.isCrossPage && sec.redirectUrl) {
+            navReply = queryLang === 'mr-IN'
+              ? `नक्कीच! मी आपल्याला थेट आमच्या ${sec.label} (${sec.redirectUrl}) वर नेत आहे.`
+              : queryLang === 'hi-IN'
+                ? `ज़रूर! मैं आपको सीधे हमारे ${sec.label} (${sec.redirectUrl}) पर ले जा रहा हूँ।`
+                : `Certainly! Redirecting you directly to our ${sec.label}${fieldsHint} now.`;
+          } else if (sec.targetType === 'form') {
+            navReply = queryLang === 'mr-IN'
+              ? `नक्कीच! मी आपल्या स्क्रीनला थेट आमच्या ${sec.label}${fieldsHint} वर नेले आहे — आपण आता थेट फॉर्म भरू शकता.`
+              : queryLang === 'hi-IN'
+                ? `ज़रूर! मैंने स्क्रीन को सीधे हमारे ${sec.label}${fieldsHint} पर स्क्रॉल कर दिया है — आप अभी फॉर्म भर सकते हैं।`
+                : `Certainly! I have taken you directly to our ${sec.label}${fieldsHint} and focused the form for you.`;
+          } else {
+            navReply = queryLang === 'mr-IN'
+              ? `नक्कीच! मी आपल्या स्क्रीनला थेट आमच्या ${sec.label} विभागावर नेले आहे.`
+              : queryLang === 'hi-IN'
+                ? `ज़रूर! मैंने स्क्रीन को सीधे हमारे ${sec.label} सेक्शन पर स्क्रॉल कर दिया है।`
+                : `Certainly! I have scrolled your screen directly to our ${sec.label} section right here.`;
           }
           return {
             reply: navReply,
-            navAction: { label: `Jump to ${sec.label}`, sectionInfo: sec }
+            navAction: {
+              label: sec.isCrossPage ? `Go to ${sec.label}` : (sec.targetType === 'form' ? `Open ${sec.label}` : `Jump to ${sec.label}`),
+              sectionInfo: sec.element ? sec : null,
+              redirectTarget: sec,
+              redirectUrl: sec.isCrossPage ? sec.redirectUrl : null,
+              isCrossPage: Boolean(sec.isCrossPage),
+              targetType: sec.targetType || 'section'
+            }
           };
         }
       }
@@ -3869,6 +4479,29 @@ ${cleanFaqBlock}`;
         if (context) {
           context.activeTopic = 'procedure';
           context.fallbackCount = 0;
+        }
+        const formTarget = resolveExactRedirectTarget(`${effectiveText} form`, agentConfig?.siteBlueprint);
+        if (formTarget && formTarget.targetType === 'form') {
+          executeRedirectAction(formTarget, false);
+          const fieldsNote = Array.isArray(formTarget.fields) && formTarget.fields.length > 0
+            ? ` (${formTarget.fields.slice(0, 4).join(', ')})`
+            : '';
+          const replyText = queryLang === 'mr-IN'
+            ? `पुढे जाण्यासाठी आमचा ${formTarget.label}${fieldsNote} भरा आणि "${formTarget.submitLabel || 'Submit'}" वर क्लिक करा.`
+            : queryLang === 'hi-IN'
+              ? `आगे बढ़ने के लिए हमारा ${formTarget.label}${fieldsNote} भरें और "${formTarget.submitLabel || 'Submit'}" पर क्लिक करें।`
+              : `To get started, complete our ${formTarget.label}${fieldsNote} and click "${formTarget.submitLabel || 'Submit'}". Click the button below to open it directly!`;
+          return {
+            reply: replyText,
+            navAction: {
+              label: `Open ${formTarget.label}`,
+              sectionInfo: formTarget.element ? formTarget : null,
+              redirectTarget: formTarget,
+              redirectUrl: formTarget.isCrossPage ? formTarget.redirectUrl : null,
+              isCrossPage: Boolean(formTarget.isCrossPage),
+              targetType: 'form'
+            }
+          };
         }
         if (queryLang === 'mr-IN') return `पुढे जाण्यासाठी: ${profile.actionMr}.`;
         if (queryLang === 'hi-IN') return `आगे बढ़ने के लिए: ${profile.actionHi}।`;
@@ -4194,10 +4827,17 @@ ${cleanFaqBlock}`;
       // Determine interactive navigation or highlight action
       if (bridgeResult) {
         if (bridgeResult.status === 'NAVIGATE_SECTION') {
-          const sec = bridgeResult.data || findHostSection(userText);
+          const sec = bridgeResult.data || resolveExactRedirectTarget(userText, agentConfig?.siteBlueprint) || findHostSection(userText);
           if (sec) {
-            scrollToHostSection(sec);
-            navAction = { label: `Jump to ${sec.label}`, sectionInfo: sec };
+            executeRedirectAction(sec, true);
+            navAction = {
+              label: sec.isCrossPage ? `Go to ${sec.label}` : (sec.targetType === 'form' ? `Open ${sec.label}` : `Jump to ${sec.label}`),
+              sectionInfo: sec.element ? sec : null,
+              redirectTarget: sec,
+              redirectUrl: sec.isCrossPage ? sec.redirectUrl : null,
+              isCrossPage: Boolean(sec.isCrossPage),
+              targetType: sec.targetType || 'section'
+            };
           }
         } else if (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API') {
           if (bridgeResult.data) conversationContext.activeItem = bridgeResult.data;

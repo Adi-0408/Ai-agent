@@ -1122,7 +1122,8 @@ export default function App() {
         id: cleanName,
         name: cleanName,
         role: agent.role || 'Full-Stack Help Desk Assistant',
-        model: agent.model || 'Groq Qwen 27B (<200ms Free)',
+        archetype: agent.archetype || agent.siteBlueprint?.archetype || 'general',
+        model: agent.model || 'Groq Llama 3.3 70B (<200ms Free)',
         voice: agent.voice || 'Clara',
         prompt: agent.systemPrompt,
         greeting: agent.greeting,
@@ -1131,6 +1132,9 @@ export default function App() {
         position: 'bottom-right',
         apiKey: agent.apiKey || customKeyInput || getUserApiKeys().activeKey || '',
         knowledgeBase: agent.knowledgeBase || [],
+        databaseRecords: agent.databaseRecords || [],
+        databaseConfig: agent.databaseConfig || null,
+        siteBlueprint: agent.siteBlueprint || null,
         tools: agent.tools || [],
         uploadedFiles: sanitizeFilesForFirestore(storedFiles),
         createdAt: new Date().toISOString(),
@@ -1212,6 +1216,10 @@ export default function App() {
         const fileAnalysis = analyzeFullStackFiles(attachedSnapshot);
         const synthesized = await synthesizeAgentFromFilesAndPrompt(text.trim(), fileAnalysis, userKeyConfig);
         synthesized.sourceFiles = attachedSnapshot;
+        synthesized.siteBlueprint = synthesized.siteBlueprint || fileAnalysis.siteBlueprint || null;
+        synthesized.archetype = synthesized.archetype || fileAnalysis.archetype || fileAnalysis.siteBlueprint?.archetype || 'general';
+        synthesized.databaseRecords = fileAnalysis.databaseRecords || [];
+        synthesized.databaseConfig = fileAnalysis.databaseConfig || null;
 
         const assistantMessage = {
           id: 'msg-' + (Date.now() + 1),
@@ -3392,7 +3400,11 @@ export default function App() {
                                     <Globe size={11} />
                                     <span>Frontend UI</span>
                                   </div>
-                                  <div className="text-slate-600 text-[10px] mt-0.5">Navigation & Forms mapped</div>
+                                  <div className="text-slate-600 text-[10px] mt-0.5">
+                                    {msg.synthesizedAgent.siteBlueprint
+                                      ? `${msg.synthesizedAgent.siteBlueprint.forms?.length || 0} Forms · ${msg.synthesizedAgent.siteBlueprint.sections?.length || 0} Sections`
+                                      : 'Navigation & Forms mapped'}
+                                  </div>
                                 </div>
                                 <div className="p-2 rounded-lg bg-white border border-slate-200">
                                   <div className="text-violet-600 font-semibold flex items-center gap-1">
@@ -3413,6 +3425,39 @@ export default function App() {
                                   </div>
                                 </div>
                               </div>
+
+                              {/* Stage-1 Website Workflow & Exact Redirection Blueprint */}
+                              {msg.synthesizedAgent.siteBlueprint && (
+                                <div className="p-3 rounded-xl bg-white border border-indigo-100 space-y-2 text-[11px]">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-bold text-indigo-900">Stage-1 Website Workflow &amp; Redirect Map</span>
+                                    <span className="text-[10px] font-mono text-cyan-700 bg-cyan-50 border border-cyan-200 px-2 py-0.5 rounded-full">
+                                      {msg.synthesizedAgent.siteBlueprint.routes?.length || 0} Pages Mapped
+                                    </span>
+                                  </div>
+                                  {msg.synthesizedAgent.siteBlueprint.roleSummary && (
+                                    <p className="text-slate-600 text-[11px] leading-snug">
+                                      {msg.synthesizedAgent.siteBlueprint.roleSummary}
+                                    </p>
+                                  )}
+                                  {Array.isArray(msg.synthesizedAgent.siteBlueprint.forms) && msg.synthesizedAgent.siteBlueprint.forms.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                      {msg.synthesizedAgent.siteBlueprint.forms.slice(0, 4).map((f, fIdx) => (
+                                        <span key={f.id || fIdx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-50 border border-cyan-200 text-cyan-800 text-[10px] font-medium">
+                                          <span>📝 {f.title}</span>
+                                          <span className="font-mono text-[9px] text-cyan-600">{f.href || f.path}</span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {Array.isArray(msg.synthesizedAgent.siteBlueprint.workflows) && msg.synthesizedAgent.siteBlueprint.workflows.length > 0 && (
+                                    <div className="text-[10px] text-slate-600 pt-0.5">
+                                      <strong className="text-slate-800">Mapped Workflow:</strong>{' '}
+                                      {msg.synthesizedAgent.siteBlueprint.workflows.slice(0, 4).map((st, idx) => `${st.step || idx + 1}. ${st.title}`).join(' → ')}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
 
                               {/* Backend Tools Generated */}
                               {msg.synthesizedAgent.tools && msg.synthesizedAgent.tools.length > 0 && (
