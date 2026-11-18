@@ -4615,9 +4615,9 @@ ${cleanFaqBlock}`;
       }
 
       try {
-        // 1. Groq Provider (gsk_...) - High-speed enterprise inference (<200ms) with automatic fallback
+        // 1. Groq Provider (gsk_...) - High Intelligence default (llama-3.3-70b-versatile) with automatic fallback
         if (trimmedKey.startsWith('gsk_')) {
-          let targetModel = 'llama-3.1-8b-instant';
+          let targetModel = 'llama-3.3-70b-versatile';
           if (model) {
             const m = String(model).toLowerCase();
             if (m.includes('70b')) targetModel = 'llama-3.3-70b-versatile';
@@ -4637,9 +4637,7 @@ ${cleanFaqBlock}`;
             messagesPayload.push({ role: 'user', content: cleanUser });
           }
 
-          const groqCandidates = targetModel === 'llama-3.1-8b-instant'
-            ? ['llama-3.1-8b-instant']
-            : [targetModel, 'llama-3.1-8b-instant'];
+          const groqCandidates = Array.from(new Set([targetModel, 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant']));
 
           for (let gIdx = 0; gIdx < groqCandidates.length; gIdx++) {
             const gModel = groqCandidates[gIdx];

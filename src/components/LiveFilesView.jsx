@@ -485,7 +485,7 @@ export default function LiveFilesView({
                   🎙️ Voice: <strong>{ast?.voice || 'Clara'}</strong>
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-medium flex items-center gap-1">
-                  ⚡ Model: <strong>{ast?.model || 'Groq Qwen 27B'}</strong>
+                  ⚡ Model: <strong>{ast?.model || 'Groq Llama 3.3 70B Versatile'}</strong>
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200 text-[11px] font-medium flex items-center gap-1">
                   🧠 <strong>{ast?.knowledgeBase?.length || 0}</strong> Facts Indexed

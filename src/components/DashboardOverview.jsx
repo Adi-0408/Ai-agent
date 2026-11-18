@@ -458,7 +458,7 @@ export default function DashboardOverview({
             </div>
             <div className="text-sm font-semibold text-slate-900">Assistant Builder</div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              Fine-tune system prompts, model presets, and persona voices.
+              Fine-tune system prompts, knowledge base, and persona voices.
             </p>
           </div>
 

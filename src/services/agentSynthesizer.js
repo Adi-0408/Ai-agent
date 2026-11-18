@@ -118,7 +118,7 @@ Respond ONLY with a valid JSON object matching this structure (no markdown forma
   "role": "Concise role (e.g. Student Admissions Counselor)",
   "greeting": "Friendly, spoken 1-sentence greeting welcoming visitors to the website",
   "voice": "Clara",
-  "model": "Groq Qwen 27B (<200ms Free)",
+  "model": "Groq Llama 3.3 70B Versatile",
   "systemPrompt": "Comprehensive system prompt instructing the agent on identity, grounded website products, specifications, and spoken pacing.",
   "tools": [
     {
@@ -305,7 +305,8 @@ Respond ONLY with a valid JSON object matching this structure (no markdown forma
       role: siteTitle ? `${detectedBrand} Product & VIP Advisor` : "Full-Stack AI Help Desk & Action Assistant",
       greeting: `Hello! Welcome to ${siteTitle || defaultName}. How can I assist you with our products, specifications, or inquiries today?`,
       voice: "Clara",
-      model: hasAnyKey ? (effectiveGroqKey ? "Groq Qwen 27B (<200ms Free)" : "Google Gemini 3.8 Flash (Free)") : "Offline Rule-Based Edge Engine",
+      model: hasAnyKey ? (effectiveGroqKey ? "Groq Llama 3.3 70B Versatile" : "Google Gemini 2.5 Flash") : "Groq Llama 3.3 70B Versatile",
+      preset: "High Intelligence",
       systemPrompt: `# ${defaultName} - AI Voice & Chat Customer Support Agent
 
 ## Core Identity & Assignment

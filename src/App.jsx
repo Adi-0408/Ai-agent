@@ -285,13 +285,13 @@ export default function App() {
   // Workspace Custom Tools List (Populated from uploaded backend files or user creation)
   const [toolsList, setToolsList] = useState([]);
 
-  // Assistants View & Editing State
-  const [selectedPreset, setSelectedPreset] = useState('Balanced');
+  // Assistants View & Editing State (Model preset permanently locked to High Intelligence)
+  const selectedPreset = 'High Intelligence';
   const [promptViewMode, setPromptViewMode] = useState('code'); // 'visual' | 'code'
   const [systemPromptText, setSystemPromptText] = useState('');
   const [assistantName, setAssistantName] = useState('');
   const [firstMessageText, setFirstMessageText] = useState('');
-  const [selectedModel, setSelectedModel] = useState('Groq Llama 3.1 8B (<200ms Instant)');
+  const [selectedModel, setSelectedModel] = useState('Groq Llama 3.3 70B Versatile');
   const [selectedVoice, setSelectedVoice] = useState('Adam');
   const [isEditingName, setIsEditingName] = useState(false);
   const [isAutoDevelopModalOpen, setIsAutoDevelopModalOpen] = useState(false);
@@ -535,9 +535,9 @@ export default function App() {
         systemPrompt: syncedPrompt,
         firstMessage: syncedGreeting,
         greeting: syncedGreeting,
-        model: selectedModel || base.model,
+        model: selectedModel || base.model || 'Groq Llama 3.3 70B Versatile',
         voice: selectedVoice || base.voice,
-        preset: selectedPreset || base.preset,
+        preset: 'High Intelligence',
         apiKey: base.apiKey || getUserApiKeys().activeKey || '',
         knowledgeBase: (editingFaqList && editingFaqList.length > 0) ? editingFaqList : (base.knowledgeBase || []),
         databaseRecords: Array.isArray(base.databaseRecords) ? base.databaseRecords : [],
@@ -596,9 +596,8 @@ export default function App() {
     setAssistantName(target.name || '');
     setSystemPromptText(target.prompt || target.systemPrompt || '');
     setFirstMessageText(target.firstMessage || target.greeting || '');
-    setSelectedModel(target.model || 'Groq Qwen 27B (<200ms Free)');
+    setSelectedModel(target.model || 'Groq Llama 3.3 70B Versatile');
     setSelectedVoice(target.voice || 'Adam');
-    setSelectedPreset(target.preset || 'Balanced');
     setEditingFaqList(target.knowledgeBase ? JSON.parse(JSON.stringify(target.knowledgeBase)) : []);
     setToolsList(target.tools ? JSON.parse(JSON.stringify(target.tools)) : []);
     setIsEditingName(false);
@@ -610,9 +609,8 @@ export default function App() {
       setSystemPromptText(currentAssistant.prompt || currentAssistant.systemPrompt || '');
       setAssistantName(currentAssistant.name || '');
       setFirstMessageText(currentAssistant.firstMessage || currentAssistant.greeting || '');
-      setSelectedModel(currentAssistant.model || 'Groq Qwen 27B (<200ms Free)');
+      setSelectedModel(currentAssistant.model || 'Groq Llama 3.3 70B Versatile');
       setSelectedVoice(currentAssistant.voice || 'Adam');
-      setSelectedPreset(currentAssistant.preset || 'Balanced');
       setEditingFaqList(currentAssistant.knowledgeBase ? JSON.parse(JSON.stringify(currentAssistant.knowledgeBase)) : []);
       setToolsList(currentAssistant.tools ? JSON.parse(JSON.stringify(currentAssistant.tools)) : []);
       setIsEditingName(false);
@@ -620,9 +618,8 @@ export default function App() {
       setSystemPromptText('');
       setAssistantName('');
       setFirstMessageText('');
-      setSelectedModel('Groq Qwen 27B (<200ms Free)');
+      setSelectedModel('Groq Llama 3.3 70B Versatile');
       setSelectedVoice('Adam');
-      setSelectedPreset('Balanced');
       setEditingFaqList([]);
       setToolsList([]);
       setIsEditingName(false);
@@ -1397,10 +1394,9 @@ export default function App() {
         const modelMatch = text.match(/\b(?:change|set|switch|update)\s+(?:the\s+)?model\s+(?:to\s+)?(groq|gemini|qwen|llama|gpt-oss)\b/i);
         if (modelMatch) {
           const mKey = modelMatch[1].toLowerCase();
-          let newModel = 'Groq Qwen 27B (<200ms Free)';
-          if (mKey.includes('gemini')) newModel = 'Google Gemini 3.8 Flash (Free)';
+          let newModel = 'Groq Llama 3.3 70B Versatile';
+          if (mKey.includes('gemini')) newModel = 'Google Gemini 2.5 Flash';
           else if (mKey.includes('llama')) newModel = 'Groq Llama 3.3 70B Versatile';
-          else if (mKey.includes('gpt')) newModel = 'Groq GPT-OSS 20B (Free)';
           updated.model = newModel;
           setSelectedModel(newModel);
           highlights.push(`Model updated to "${newModel}"`);
@@ -2369,72 +2365,10 @@ export default function App() {
                        ======================================================== */}
                     {builderActiveTab === 'profile' && (
                       <div className="space-y-5 animate-fadeIn">
-                        {/* Cost & Latency Metrics Card */}
+                        {/* Provider Configuration Card (Always High Intelligence Mode — Cost, Latency & Model Presets Removed) */}
                         <div className="p-5 rounded-2xl bg-white border border-slate-200 space-y-4 shadow-sm">
-                          {/* Top Metrics Grid */}
-                          <div className="grid grid-cols-2 gap-8">
-                            {/* Cost Column */}
-                            <div>
-                              <span className="text-xs text-slate-500 font-medium inline-block mb-1">
-                                Operating Cost
-                              </span>
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-baseline gap-1">
-                                  <span className="text-2xl font-bold text-emerald-600">$0.00</span>
-                                  <span className="text-xs text-emerald-600/80 font-medium">/ Free Tier</span>
-                                </div>
-                                <div className="flex-1 h-2 rounded-full overflow-hidden flex ml-3 bg-slate-100 p-[1px]">
-                                  <div className="w-full h-full bg-emerald-500 rounded-full" title="100% Free / Zero Cloud Server Cost" />
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Latency Column */}
-                            <div>
-                              <span className="text-xs text-slate-500 font-medium inline-block mb-1">
-                                Inference Latency
-                              </span>
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-baseline gap-1">
-                                  <span className="text-2xl font-bold text-slate-900">&lt; 200</span>
-                                  <span className="text-xs text-slate-500 font-medium">ms</span>
-                                </div>
-                                <div className="flex-1 h-2 rounded-full overflow-hidden flex gap-0.5 ml-3 bg-slate-100 p-[1px]">
-                                  <div className="w-[30%] h-full bg-emerald-500 rounded-l-full" title="Web Speech STT: Instant" />
-                                  <div className="w-[45%] h-full bg-indigo-500" title="Groq AI: ~150ms" />
-                                  <div className="w-[25%] h-full bg-violet-500 rounded-r-full" title="Native Speech TTS: Instant" />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Presets Row */}
-                          <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-500 font-medium">
-                                Model Presets
-                              </span>
-                              <div className="flex items-center gap-1.5 ml-1">
-                                {['Balanced', 'High Intelligence', 'Ultra Fast', 'Cost Saver'].map((preset) => (
-                                  <button
-                                    key={preset}
-                                    type="button"
-                                    onClick={() => setSelectedPreset(preset)}
-                                    className={`px-2.5 py-1 rounded-lg text-xs transition-all cursor-pointer ${
-                                      selectedPreset === preset
-                                        ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-semibold shadow-2xs'
-                                        : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-medium'
-                                    }`}
-                                  >
-                                    {preset}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
                           {/* 3-Column Provider Bento Grid */}
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                             {/* Card 1: TRANSCRIBER */}
                             <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-200/80 space-y-2.5">
                               <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-slate-500 uppercase">
@@ -2447,11 +2381,6 @@ export default function App() {
                                   <span className="w-3.5 h-3.5 rounded bg-blue-600 text-[10px] font-bold text-white flex items-center justify-center">W</span>
                                   <span>Browser Native STT</span>
                                 </div>
-                              </div>
-                              <div className="grid grid-cols-3 gap-1 pt-2 border-t border-slate-200 text-[11px]">
-                                <div><div className="text-[10px] text-slate-400">Latency</div><div className="font-mono text-slate-700 font-semibold">Instant</div></div>
-                                <div><div className="text-[10px] text-slate-400">Cost</div><div className="font-mono text-emerald-600 font-semibold">$0.00 / Free</div></div>
-                                <div><div className="text-[10px] text-slate-400">Accuracy</div><div className="font-mono text-emerald-600 font-semibold">99%</div></div>
                               </div>
                             </div>
 
@@ -2470,19 +2399,14 @@ export default function App() {
                                   onChange={(e) => setSelectedModel(e.target.value)}
                                   className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 cursor-pointer shadow-2xs"
                                 >
-                                  <option value="Groq Llama 3.1 8B (<200ms Instant)">Groq Llama 3.1 8B (&lt;200ms Instant)</option>
                                   <option value="Groq Llama 3.3 70B Versatile">Groq Llama 3.3 70B Versatile</option>
-                                  <option value="Google Gemini 2.5 Flash (Free)">Google Gemini 2.5 Flash (Free)</option>
+                                  <option value="Google Gemini 2.5 Flash">Google Gemini 2.5 Flash</option>
+                                  <option value="Groq Llama 3.1 8B Instant">Groq Llama 3.1 8B Instant</option>
                                 </select>
                                 <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-1.5 font-medium">
                                   <span className="w-3.5 h-3.5 rounded bg-emerald-600 text-[10px] font-bold text-white flex items-center justify-center">G</span>
-                                  <span>Groq LPU & Gemini</span>
+                                  <span>Groq LPU &amp; Gemini</span>
                                 </div>
-                              </div>
-                              <div className="grid grid-cols-3 gap-1 pt-2 border-t border-slate-200 text-[11px]">
-                                <div><div className="text-[10px] text-slate-400">Latency</div><div className="font-mono text-slate-700 font-semibold">&lt; 200ms</div></div>
-                                <div><div className="text-[10px] text-slate-400">Cost</div><div className="font-mono text-emerald-600 font-semibold">$0.00 / Free</div></div>
-                                <div><div className="text-[10px] text-slate-400">Engine</div><div className="font-mono text-indigo-600 font-semibold">Fast</div></div>
                               </div>
                             </div>
 
@@ -2533,13 +2457,8 @@ export default function App() {
                                 </div>
                                 <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-1.5 font-medium">
                                   <span className="w-3.5 h-3.5 rounded bg-gradient-to-r from-indigo-600 to-violet-600 text-[9px] font-bold text-white flex items-center justify-center shadow-2xs">V</span>
-                                  <span>Browser Synthesis ($0)</span>
+                                  <span>Browser Native TTS</span>
                                 </div>
-                              </div>
-                              <div className="grid grid-cols-3 gap-1 pt-2 border-t border-slate-200 text-[11px]">
-                                <div><div className="text-[10px] text-slate-400">Latency</div><div className="font-mono text-slate-700 font-semibold">Instant</div></div>
-                                <div><div className="text-[10px] text-slate-400">Cost</div><div className="font-mono text-emerald-600 font-semibold">$0.00 / Free</div></div>
-                                <div><div className="text-[10px] text-slate-400">Tone</div><div className="font-mono text-indigo-600 font-semibold">Natural</div></div>
                               </div>
                             </div>
                           </div>

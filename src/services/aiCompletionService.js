@@ -517,44 +517,52 @@ CRITICAL OPERATIONAL & FORMATTING RULES:
     return { role, content: textContent };
   }).filter(m => m.content && m.content !== cleanMessage);
 
-  // 1. Try Groq with User-Provided Key (Ultra-Fast < 200ms with llama-3.1-8b-instant)
+  // 1. Try Groq with User-Provided Key (High Intelligence default: llama-3.3-70b-versatile with automatic failover)
   if (effectiveGroqKey && effectiveGroqKey.startsWith('gsk_')) {
     try {
-      let groqModel = 'llama-3.1-8b-instant';
+      let groqModel = 'llama-3.3-70b-versatile';
       if (options?.model) {
         const m = String(options.model).toLowerCase();
         if (m.includes('70b')) groqModel = 'llama-3.3-70b-versatile';
         else if (m.includes('mixtral')) groqModel = 'mixtral-8x7b-32768';
         else if (m.startsWith('llama-') || m.startsWith('mixtral-') || m.startsWith('gemma')) groqModel = options.model;
       }
-      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${effectiveGroqKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: groqModel,
-          messages: [
-            {
-              role: 'system',
-              content: systemInstructions
-            },
-            ...validHistory,
-            {
-              role: 'user',
-              content: cleanMessage
-            }
-          ],
-          max_tokens: 340,
-          temperature: 0.15
-        })
-      });
+      const groqCandidates = groqModel === 'llama-3.3-70b-versatile'
+        ? ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']
+        : [groqModel, 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 
-      if (groqRes.ok) {
-        const data = await groqRes.json();
-        if (data.choices && data.choices[0] && data.choices[0].message) {
-          return sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+      for (const candidateModel of Array.from(new Set(groqCandidates))) {
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${effectiveGroqKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: candidateModel,
+            messages: [
+              {
+                role: 'system',
+                content: systemInstructions
+              },
+              ...validHistory,
+              {
+                role: 'user',
+                content: cleanMessage
+              }
+            ],
+            max_tokens: 340,
+            temperature: 0.15
+          })
+        });
+
+        if (groqRes.ok) {
+          const data = await groqRes.json();
+          if (data.choices && data.choices[0] && data.choices[0].message) {
+            return sanitizeSpokenResponse(data.choices[0].message.content, cleanMessage, { ...options, agentName: agentDisplayName });
+          }
+        } else if (![400, 404, 429].includes(groqRes.status)) {
+          break;
         }
       }
     } catch (err) {

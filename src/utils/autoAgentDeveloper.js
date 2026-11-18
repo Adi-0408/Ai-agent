@@ -10,7 +10,8 @@ export const INDUSTRY_TEMPLATES = {
     name: 'Admissions Assistant',
     role: 'Academic Admissions & Student Guidance Counselor',
     voice: 'Clara',
-    model: 'Groq Qwen 27B (<200ms Free)',
+    model: 'Groq Llama 3.3 70B Versatile',
+    preset: 'High Intelligence',
     greeting: 'Welcome to our Admissions Office. I am your Academic Guidance Assistant. How can I help you with course admissions, fee structures, eligibility criteria, or document submissions today?',
     systemPrompt: `# Role & Identity
 You are the official Admissions Guidance Assistant for our educational institution. You assist students and parents with course details, admission eligibility, fee structures, campus facilities, and application procedures.
@@ -38,7 +39,8 @@ You are the official Admissions Guidance Assistant for our educational instituti
     name: 'Auto Concierge',
     role: 'Automotive Advisor & Service Specialist',
     voice: 'Daniel',
-    model: 'Groq Qwen 27B (<200ms Free)',
+    model: 'Groq Llama 3.3 70B Versatile',
+    preset: 'High Intelligence',
     greeting: 'Welcome to our Automotive Center. I am your Auto Concierge. How can I assist you with vehicle models, test drives, financing options, or scheduled servicing today?',
     systemPrompt: `# Role & Identity
 You are the Auto Concierge, the official vehicle advisor and customer concierge. You assist customers with vehicle models, specifications, test drive appointments, and service scheduling.
@@ -63,7 +65,8 @@ You are the Auto Concierge, the official vehicle advisor and customer concierge.
     name: 'Financial Advisory Concierge',
     role: 'Financial & Tax Advisory Specialist',
     voice: 'Sid',
-    model: 'Groq Qwen 27B (<200ms Free)',
+    model: 'Groq Llama 3.3 70B Versatile',
+    preset: 'High Intelligence',
     greeting: 'Welcome to Financial Advisory Services. I am your AI financial concierge. How can I assist you with income tax filing, GST compliance, investment planning, or loan assistance today?',
     systemPrompt: `# Role & Identity
 You are the official autonomous voice concierge for our Financial Advisory Services. You advise clients on tax filing, GST registration, accounting, wealth management, and business loans.
@@ -90,7 +93,8 @@ You are the official autonomous voice concierge for our Financial Advisory Servi
     name: 'Aura Store Concierge',
     role: 'Customer Care & Orders Specialist',
     voice: 'Clara',
-    model: 'Groq Qwen 27B (<200ms Free)',
+    model: 'Groq Llama 3.3 70B Versatile',
+    preset: 'High Intelligence',
     greeting: 'Hello and welcome to our store! I am Clara, your shopping assistant. How can I help you find products, track an order, or check our policies today?',
     systemPrompt: `# Role & Identity
 You are Clara, the helpful and cheerful shopping assistant for our online store. You assist customers with product recommendations, order tracking, shipping inquiries, and return policies.
@@ -115,7 +119,8 @@ You are Clara, the helpful and cheerful shopping assistant for our online store.
     name: 'Apex Support Bot',
     role: 'Technical Support & Billing Specialist',
     voice: 'Sid',
-    model: 'Groq Qwen 27B (<200ms Free)',
+    model: 'Groq Llama 3.3 70B Versatile',
+    preset: 'High Intelligence',
     greeting: 'Welcome to Apex Support. I am Sid. How can I assist you with your account, API integration, or subscription plans today?',
     systemPrompt: `# Role & Identity
 You are Sid, the senior technical support specialist for our cloud software platform. You troubleshoot issues, explain features, and guide users through billing and subscriptions.
@@ -139,7 +144,8 @@ You are Sid, the senior technical support specialist for our cloud software plat
     name: 'Care Concierge',
     role: 'Patient Care & Appointment Coordinator',
     voice: 'Layla',
-    model: 'Groq Qwen 27B (<200ms Free)',
+    model: 'Groq Llama 3.3 70B Versatile',
+    preset: 'High Intelligence',
     greeting: 'Hello! Welcome to our healthcare clinic. I am Layla. How can I help you schedule an appointment, check office hours, or answer questions about your visit?',
     systemPrompt: `# Role & Identity
 You are Layla, the patient coordinator for our medical clinic. You help patients schedule visits, provide clinic hours and directions, and answer general non-emergency inquiries.
@@ -239,7 +245,8 @@ Output ONLY a raw JSON object (no markdown backticks, no comments) matching:
             name: parsed.name,
             role: parsed.role || matchedTemplate.role,
             voice: parsed.voice || matchedTemplate.voice,
-            model: 'Groq Qwen 27B (<200ms Free)',
+            model: 'Groq Llama 3.3 70B Versatile',
+    preset: 'High Intelligence',
             firstMessage: parsed.greeting || matchedTemplate.greeting,
             greeting: parsed.greeting || matchedTemplate.greeting,
             prompt: parsed.systemPrompt,

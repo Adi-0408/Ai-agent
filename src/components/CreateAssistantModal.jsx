@@ -32,7 +32,7 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
   const [step, setStep] = useState(1); // 1: Setup & Upload, 2: Review & Create
   const [name, setName] = useState('');
   const [websiteName, setWebsiteName] = useState('');
-  const [model, setModel] = useState('Groq Llama 3.1 8B (<200ms Instant)');
+  const [model, setModel] = useState('Groq Llama 3.3 70B Versatile');
   const [voice, setVoice] = useState('Adam');
   const [themeColor, setThemeColor] = useState('#6366f1');
   const [accentColor, setAccentColor] = useState('#06b6d4');
@@ -55,7 +55,7 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
     setStep(1);
     setName('');
     setWebsiteName('');
-    setModel('Groq Llama 3.1 8B (<200ms Instant)');
+    setModel('Groq Llama 3.3 70B Versatile');
     setVoice('Adam');
     setThemeColor('#6366f1');
     setAccentColor('#06b6d4');
@@ -322,7 +322,8 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         name: name.trim(),
         role: extractedData?.role || `${websiteName.trim() || 'Website'} Help Desk Assistant`,
         archetype: extractedData?.archetype || 'general',
-        model: model || 'Groq Llama 3.1 8B (<200ms Instant)',
+        model: model || 'Groq Llama 3.3 70B Versatile',
+        preset: 'High Intelligence',
         voice: voice || 'Clara',
         prompt: extractedData ? extractedData.systemPrompt : `You are ${name.trim()}, a helpful voice assistant for ${websiteName.trim() || 'the website'}.`,
         greeting: extractedData ? extractedData.greeting : `Hello! I am ${name.trim()}. How can I assist you today?`,
@@ -442,9 +443,9 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full h-9 px-3 rounded-lg bg-white border border-slate-300 text-xs text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 shadow-2xs cursor-pointer"
               >
-                <option>Groq Llama 3.1 8B (&lt;200ms Instant)</option>
                 <option>Groq Llama 3.3 70B Versatile</option>
-                <option>Google Gemini 2.5 Flash (Free)</option>
+                <option>Google Gemini 2.5 Flash</option>
+                <option>Groq Llama 3.1 8B Instant</option>
               </select>
             </div>
 
