@@ -22,7 +22,8 @@ import {
   getDriveConnectionStatus,
   getDriveWebhookUrl,
   setDriveWebhookUrl,
-  verifyAndConnectDriveWebhook
+  verifyAndConnectDriveWebhook,
+  checkDriveWebhookCapabilities
 } from '../services/googleDriveService';
 
 const APPS_SCRIPT_SOURCE = `/**
@@ -54,7 +55,14 @@ function doPost(e) {
     var action = payload.action || 'upload';
 
     if (action === 'ping') {
-      return respondJson({ status: 'success', success: true, supportsDelete: true, message: 'Connected to Echo_AI_Agent_Files' });
+      return respondJson({
+        status: 'success',
+        success: true,
+        supportsDelete: true,
+        supportsRename: true,
+        supportsOrphanCleanup: true,
+        message: 'Connected to Echo_AI_Agent_Files'
+      });
     }
 
     // Delete a single file by Drive fileId (or by fileName + assistantName fallback)
@@ -150,6 +158,69 @@ function doPost(e) {
         }
       }
       return respondJson({ status: 'success', success: true, action: 'delete_all', deletedCount: wiped });
+    }
+
+    // Rename an assistant folder in-place across Echo_AI_Agent_Files / Echo AI Agents
+    if (action === 'rename_agent') {
+      var oldN = sanitizeName(payload.oldName || '').toLowerCase();
+      var newN = sanitizeName(payload.newName || '');
+      var renamedFolders = 0;
+      if (oldN && newN) {
+        var renRoots = [ROOT_FOLDER_NAME, 'Echo AI Agents'];
+        for (var rr = 0; rr < renRoots.length; rr++) {
+          var rIt2 = DriveApp.getFoldersByName(renRoots[rr]);
+          while (rIt2.hasNext()) {
+            var rFld2 = rIt2.next();
+            var sIt2 = rFld2.getFolders();
+            while (sIt2.hasNext()) {
+              var sFld2 = sIt2.next();
+              if (sFld2.getName().toLowerCase() === oldN) {
+                try { sFld2.setName(newN); renamedFolders++; } catch (renErr) {}
+              }
+            }
+          }
+        }
+      }
+      return respondJson({ status: 'success', success: true, action: 'rename_agent', renamedFolders: renamedFolders });
+    }
+
+    // Clean up orphaned folders belonging to previously deleted assistants
+    if (action === 'cleanup_orphans') {
+      var activeArr = Array.isArray(payload.activeNames) ? payload.activeNames : [];
+      var activeMap = {};
+      for (var ai = 0; ai < activeArr.length; ai++) {
+        var normA = sanitizeName(activeArr[ai]).toLowerCase();
+        if (normA) activeMap[normA] = true;
+      }
+      var orphanFolders = 0;
+      var orphanFiles = 0;
+      var removedNames = [];
+      var clRoots = [ROOT_FOLDER_NAME, 'Echo AI Agents'];
+      for (var cr = 0; cr < clRoots.length; cr++) {
+        var cIt = DriveApp.getFoldersByName(clRoots[cr]);
+        while (cIt.hasNext()) {
+          var cFld = cIt.next();
+          var subC = cFld.getFolders();
+          while (subC.hasNext()) {
+            var cand = subC.next();
+            var candLower = cand.getName().toLowerCase();
+            if (candLower === 'shared workspace') continue;
+            if (!activeMap[candLower]) {
+              removedNames.push(cand.getName());
+              orphanFiles += trashFolderRecursively(cand);
+              orphanFolders++;
+            }
+          }
+        }
+      }
+      return respondJson({
+        status: 'success',
+        success: true,
+        action: 'cleanup_orphans',
+        deletedFolders: orphanFolders,
+        deletedFiles: orphanFiles,
+        removedNames: removedNames
+      });
     }
 
     if (action === 'upload_batch' && Array.isArray(payload.files)) {
@@ -293,14 +364,19 @@ export default function GoogleDriveSetupModal({ isOpen, onClose, onConnected }) 
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [status, setStatus] = useState(() => getDriveConnectionStatus());
+  const [webhookCaps, setWebhookCaps] = useState(null);
 
   useEffect(() => {
     if (isOpen) {
-      setWebhookUrlState(getDriveWebhookUrl());
+      const currentUrl = getDriveWebhookUrl();
+      setWebhookUrlState(currentUrl);
       setClientIdState(getDriveClientId());
       setStatus(getDriveConnectionStatus());
       setErrorMsg('');
       setSuccessMsg('');
+      if (currentUrl) {
+        checkDriveWebhookCapabilities(currentUrl).then(setWebhookCaps).catch(() => {});
+      }
     }
   }, [isOpen]);
 
@@ -456,6 +532,18 @@ export default function GoogleDriveSetupModal({ isOpen, onClose, onConnected }) 
               <span className="text-[10px] font-mono bg-emerald-100 px-2 py-0.5 rounded text-emerald-900 font-bold">
                 Folder: Echo_AI_Agent_Files
               </span>
+            </div>
+          )}
+
+          {webhookCaps?.needsUpdate && (
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 space-y-1.5">
+              <div className="flex items-center gap-2 font-bold">
+                <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                <span>Action Needed: Update Your Deployed Google Apps Script to Enable Drive Auto-Delete & Rename</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-800">
+                Your live Apps Script webhook is running an older upload-only version, so deleting assistants cannot trash their Google Drive folders yet. Click <strong>Copy Code</strong> below, paste it into <strong>script.google.com</strong>, then click <strong>Deploy → Manage deployments → Edit (pencil) → Version: New version → Deploy</strong>.
+              </p>
             </div>
           )}
 

@@ -192,6 +192,7 @@ export async function getAgents() {
         seen.add(titleId.toLowerCase());
         agents.push({
           id: titleId,
+          _firestoreDocId: d.id,
           ...data,
           name: data.name || titleId,
           databaseRecords: cleanDatabaseRecords(data.databaseRecords),
@@ -222,6 +223,7 @@ export function subscribeToAgents(callback) {
           seen.add(titleId.toLowerCase());
           agents.push({
             id: titleId,
+            _firestoreDocId: d.id,
             ...data,
             name: data.name || titleId,
             databaseRecords: cleanDatabaseRecords(data.databaseRecords),
@@ -270,6 +272,7 @@ export async function getAgentById(agentId) {
   const rawSnapData = snap.data();
   const data = {
     id: titleId,
+    _firestoreDocId: snap.id,
     ...rawSnapData,
     name: rawSnapData.name || titleId,
     databaseRecords: cleanDatabaseRecords(rawSnapData.databaseRecords),
@@ -303,22 +306,58 @@ function sanitizeForFirestore(obj) {
 }
 
 /**
- * Create or save an agent using its clean Name/Title for the database document (NO encrypted ID)
+ * Create, update, or rename an agent using its clean Name/Title for the database document.
+ * When renaming (options.previousId / options.previousName / agent._previousId / agent._firestoreDocId),
+ * AWAITS deleting the old Firestore documents so renaming NEVER creates a duplicate agent!
  */
-export async function saveAgent(agent) {
+export async function saveAgent(agent, options = {}) {
   const titleId = getCleanTitleId(agent.name || agent.title || agent.id);
   const agentRef = doc(db, AGENTS_COLLECTION, titleId);
   const agentInfoRef = doc(db, AGENT_INFO_COLLECTION, titleId);
+
+  // Collect all previous IDs / names that differ from the new titleId so old docs are ALWAYS deleted on rename
+  const prevIdsToPurge = new Set();
+  const addOldCandidate = (val) => {
+    if (!val) return;
+    const raw = String(val).trim();
+    const cleaned = getCleanTitleId(raw);
+    if (raw && raw !== titleId) prevIdsToPurge.add(raw);
+    if (cleaned && cleaned !== titleId) prevIdsToPurge.add(cleaned);
+  };
+  addOldCandidate(options?.previousId);
+  addOldCandidate(options?.previousName);
+  addOldCandidate(options?.previousDocId);
+  addOldCandidate(agent?._previousId);
+  addOldCandidate(agent?._previousName);
+  addOldCandidate(agent?._firestoreDocId);
+  addOldCandidate(agent?.id);
+
+  // Maintain historical previousNames so Google Drive cleanup always finds folders even after multiple renames
+  const prevNamesSet = new Set(Array.isArray(agent?.previousNames) ? agent.previousNames.filter(Boolean) : []);
+  if (options?.previousName && getCleanTitleId(options.previousName) !== titleId) {
+    prevNamesSet.add(getCleanTitleId(options.previousName));
+  }
+  if (options?.previousId && getCleanTitleId(options.previousId) !== titleId) {
+    prevNamesSet.add(getCleanTitleId(options.previousId));
+  }
+  if (agent?._previousName && getCleanTitleId(agent._previousName) !== titleId) {
+    prevNamesSet.add(getCleanTitleId(agent._previousName));
+  }
+  prevNamesSet.delete(titleId);
 
   const sanitizedDbRecords = cleanDatabaseRecords(agent.databaseRecords);
   const sanitizedKb = cleanKnowledgeBase(agent.knowledgeBase);
   const kbCount = sanitizedKb.length;
   const dbCount = sanitizedDbRecords.length;
 
+  // Strip internal transient helper fields before persisting to Firestore
+  const { _previousId, _previousName, _firestoreDocId, ...cleanAgentFields } = agent || {};
+
   const rawPayload = {
-    ...agent,
+    ...cleanAgentFields,
     databaseRecords: sanitizedDbRecords,
     knowledgeBase: sanitizedKb,
+    previousNames: Array.from(prevNamesSet),
     id: titleId,
     agentId: titleId,
     name: agent.name || titleId,
@@ -333,34 +372,35 @@ export async function saveAgent(agent) {
 
   const payload = sanitizeForFirestore(rawPayload);
 
-  // Dual-write to both 'agents' (backward compatibility) and 'agent_info' (direct Firestore visibility)
+  // 1. Dual-write to both 'agents' and 'agent_info'
   await Promise.all([
     setDoc(agentRef, payload, { merge: true }),
     setDoc(agentInfoRef, payload, { merge: true })
   ]);
 
-  // Clean cache and purge any legacy encrypted ID document
+  // 2. AWAIT purging ALL old document IDs when renaming so subscribeToAgents NEVER shows a duplicate!
+  if (prevIdsToPurge.size > 0) {
+    const purgePromises = [];
+    for (const oldDocId of prevIdsToPurge) {
+      purgePromises.push(deleteDoc(doc(db, AGENTS_COLLECTION, oldDocId)).catch(() => {}));
+      purgePromises.push(deleteDoc(doc(db, AGENT_INFO_COLLECTION, oldDocId)).catch(() => {}));
+      try {
+        localStorage.removeItem(`agent_cache_${oldDocId}`);
+      } catch (_) {}
+    }
+    await Promise.all(purgePromises);
+  }
+
+  // 3. Clean cache and any stale tombstone for the active agent ID
   try {
     localStorage.removeItem(`agent_cache_${titleId}`);
-    if (agent.id && agent.id !== titleId) {
-      localStorage.removeItem(`agent_cache_${agent.id}`);
-      deleteDoc(doc(db, AGENTS_COLLECTION, agent.id)).catch(() => {});
-      deleteDoc(doc(db, AGENT_INFO_COLLECTION, agent.id)).catch(() => {});
-    }
-    // Remove tombstone if it was previously marked deleted
     deleteDoc(doc(db, 'deleted_agents', titleId)).catch(() => {});
-    if (agent.id && agent.id !== titleId) {
-      deleteDoc(doc(db, 'deleted_agents', agent.id)).catch(() => {});
-    }
     if (typeof window !== 'undefined') {
       localStorage.removeItem(`vhd_deleted_${titleId.toLowerCase().replace(/\s+/g, '_')}`);
-      if (agent.id) {
-        localStorage.removeItem(`vhd_deleted_${String(agent.id).toLowerCase().replace(/\s+/g, '_')}`);
-      }
     }
   } catch (e) {}
 
-  return { id: titleId, ...payload };
+  return { id: titleId, _firestoreDocId: titleId, ...payload };
 }
 
 /**
@@ -448,24 +488,23 @@ export async function deleteAgent(nameOrId) {
   const rawId = typeof nameOrId === 'string' ? nameOrId : (agentObj.id || agentObj.name || '');
   const titleId = getCleanTitleId(rawId);
   const nameId = agentObj.name ? getCleanTitleId(agentObj.name) : '';
+  const allDocIds = new Set([titleId, rawId, nameId, agentObj._firestoreDocId].filter(Boolean));
+  if (Array.isArray(agentObj.previousNames)) {
+    agentObj.previousNames.forEach(pn => {
+      if (pn) {
+        allDocIds.add(String(pn).trim());
+        allDocIds.add(getCleanTitleId(pn));
+      }
+    });
+  }
 
-  // 1. Delete from agents and agent_info collections
-  await Promise.all([
-    deleteDoc(doc(db, AGENTS_COLLECTION, titleId)).catch(() => {}),
-    deleteDoc(doc(db, AGENT_INFO_COLLECTION, titleId)).catch(() => {})
-  ]);
-  if (rawId && rawId !== titleId) {
-    await Promise.all([
-      deleteDoc(doc(db, AGENTS_COLLECTION, rawId)).catch(() => {}),
-      deleteDoc(doc(db, AGENT_INFO_COLLECTION, rawId)).catch(() => {})
-    ]);
+  // 1. Delete all matching docs from agents and agent_info collections
+  const delPromises = [];
+  for (const cid of allDocIds) {
+    delPromises.push(deleteDoc(doc(db, AGENTS_COLLECTION, cid)).catch(() => {}));
+    delPromises.push(deleteDoc(doc(db, AGENT_INFO_COLLECTION, cid)).catch(() => {}));
   }
-  if (nameId && nameId !== titleId && nameId !== rawId) {
-    await Promise.all([
-      deleteDoc(doc(db, AGENTS_COLLECTION, nameId)).catch(() => {}),
-      deleteDoc(doc(db, AGENT_INFO_COLLECTION, nameId)).catch(() => {})
-    ]);
-  }
+  await Promise.all(delPromises);
 
   // 2. Mark in deleted_agents tombstone collection so any embedded widgets immediately deactivate
   try {

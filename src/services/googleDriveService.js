@@ -1152,16 +1152,21 @@ export async function deleteAgentFolderAndFilesFromDrive(assistantName, uploaded
       });
       if (res.ok) {
         const json = await res.json().catch(() => ({}));
-        const looksLikeAccidentalUpload = Boolean(json?.message && /file stored in google drive/i.test(json.message));
-        if (looksLikeAccidentalUpload) {
+        const confirmedDelete = (
+          json?.action === 'delete_agent' ||
+          json?.action === 'delete_agent_folder' ||
+          json?.deletedFolders !== undefined ||
+          json?.deletedFiles !== undefined
+        );
+        if (confirmedDelete) {
+          webhookDeleted = true;
+        } else {
+          // Outdated Apps Script webhook does NOT implement delete_agent yet (e.g. returned generic success or uploaded a dummy file)
           webhookNeedsUpdate = true;
-          console.warn('[Echo Drive] Your deployed Apps Script webhook does not support delete_agent yet. Re-deploy the updated script from Google Drive Setup.');
-          // Clean up any dummy file the old webhook may have just created if Direct API token is available
-          if (json.fileId && getDriveAccessToken()) {
+          console.warn('[Echo Drive] Deployed Apps Script webhook did not confirm delete_agent:', json);
+          if (json?.fileId && getDriveAccessToken()) {
             await deleteDriveFileDirect(json.fileId);
           }
-        } else if (json.action === 'delete_agent' || json.deletedFolders !== undefined || json.deletedFiles !== undefined || json.success === true) {
-          webhookDeleted = true;
         }
       }
     } catch (err) {
@@ -1264,4 +1269,226 @@ export async function deleteAllAgentsDriveFolders() {
   }
 
   return true;
+}
+
+/**
+ * Checks whether the currently configured Google Apps Script webhook has the
+ * latest delete_agent / rename_agent / cleanup_orphans handlers deployed.
+ */
+export async function checkDriveWebhookCapabilities(overrideUrl = '') {
+  const webhookUrl = (overrideUrl || getDriveWebhookUrl() || '').trim();
+  const hasDirectOAuth = Boolean(getDriveAccessToken());
+  if (!webhookUrl) {
+    return {
+      configured: false,
+      hasDirectOAuth,
+      supportsDelete: hasDirectOAuth,
+      supportsRename: hasDirectOAuth,
+      supportsOrphanCleanup: hasDirectOAuth,
+      needsUpdate: false
+    };
+  }
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'ping' }),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) {
+      return { configured: true, hasDirectOAuth, supportsDelete: hasDirectOAuth, supportsRename: hasDirectOAuth, supportsOrphanCleanup: hasDirectOAuth, needsUpdate: !hasDirectOAuth, error: `HTTP ${res.status}` };
+    }
+    const json = await res.json().catch(() => ({}));
+    const supportsDelete = Boolean(json?.supportsDelete);
+    const supportsRename = Boolean(json?.supportsRename);
+    const supportsOrphanCleanup = Boolean(json?.supportsOrphanCleanup || json?.supportsDelete);
+    return {
+      configured: true,
+      hasDirectOAuth,
+      supportsDelete: supportsDelete || hasDirectOAuth,
+      supportsRename: supportsRename || hasDirectOAuth,
+      supportsOrphanCleanup: supportsOrphanCleanup || hasDirectOAuth,
+      needsUpdate: !supportsDelete && !hasDirectOAuth,
+      raw: json
+    };
+  } catch (err) {
+    return { configured: true, hasDirectOAuth, supportsDelete: hasDirectOAuth, supportsRename: hasDirectOAuth, supportsOrphanCleanup: hasDirectOAuth, needsUpdate: false, error: err.message };
+  }
+}
+
+/**
+ * Renames an assistant's Google Drive folder in-place (both Webhook and Direct Drive API)
+ * so renaming an agent never leaves orphaned folders behind.
+ */
+export async function renameAgentFolderInDrive(oldAssistantName, newAssistantName) {
+  const cleanOld = String(oldAssistantName || '').trim().replace(/\//g, '-');
+  const cleanNew = String(newAssistantName || '').trim().replace(/\//g, '-');
+  if (!cleanOld || !cleanNew || cleanOld.toLowerCase() === cleanNew.toLowerCase() || !isDriveConnected()) {
+    return { renamed: false };
+  }
+
+  // Clear stale folder cache entries matching the old name
+  for (const key of Array.from(folderIdCache.keys())) {
+    if (key.toLowerCase().includes(cleanOld.toLowerCase())) {
+      folderIdCache.delete(key);
+    }
+  }
+
+  let webhookRenamed = false;
+  let directRenamed = false;
+
+  // 1. Webhook mode (ONLY invoke if webhook supports rename_agent or safe check)
+  const webhookUrl = getDriveWebhookUrl();
+  if (webhookUrl) {
+    try {
+      const caps = await checkDriveWebhookCapabilities(webhookUrl);
+      if (caps.supportsRename && !caps.needsUpdate) {
+        const res = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'rename_agent',
+            oldName: cleanOld,
+            newName: cleanNew
+          })
+        });
+        if (res.ok) {
+          const json = await res.json().catch(() => ({}));
+          if (json?.action === 'rename_agent' || Number(json?.renamedFolders) > 0) {
+            webhookRenamed = true;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Webhook renameAgentFolderInDrive error:', err);
+    }
+  }
+
+  // 2. Direct Drive API v3 mode
+  if (getDriveAccessToken()) {
+    try {
+      const rootNames = [ROOT_FOLDER_NAME, 'Echo_AI_Agent_Files'];
+      for (const rName of rootNames) {
+        const rootQ = `name = '${escapeDriveQuery(rName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const rootRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(rootQ)}&fields=files(id,name)`);
+        if (!rootRes.ok) continue;
+        const rootJson = await rootRes.json();
+        for (const rFolder of rootJson.files || []) {
+          const childQ = `mimeType = 'application/vnd.google-apps.folder' and '${escapeDriveQuery(rFolder.id)}' in parents and trashed = false`;
+          const childRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(childQ)}&fields=files(id,name)&pageSize=200`);
+          if (!childRes.ok) continue;
+          const childJson = await childRes.json();
+          for (const aFolder of childJson.files || []) {
+            if (String(aFolder.name || '').trim().toLowerCase() === cleanOld.toLowerCase()) {
+              const patchRes = await driveFetch(`${DRIVE_API_BASE}/files/${encodeURIComponent(aFolder.id)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: cleanNew })
+              });
+              if (patchRes.ok) directRenamed = true;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Direct Drive renameAgentFolderInDrive error:', err);
+    }
+  }
+
+  return { renamed: webhookRenamed || directRenamed, webhookRenamed, directRenamed };
+}
+
+/**
+ * Compares all folders inside Echo_AI_Agent_Files / Echo AI Agents in Google Drive
+ * against the active assistants list and trashes EVERY leftover folder belonging
+ * to previously deleted assistants!
+ */
+export async function cleanupOrphanedDriveFolders(activeAgentNames = []) {
+  if (!isDriveConnected()) {
+    return { cleaned: false, deletedFolders: 0, deletedFiles: 0, removedNames: [], webhookNeedsUpdate: false };
+  }
+
+  const keepLower = new Set(
+    (activeAgentNames || [])
+      .map(n => String(n || '').trim().replace(/\//g, '-').toLowerCase())
+      .filter(Boolean)
+  );
+  const keepList = Array.from(keepLower);
+
+  let deletedFolders = 0;
+  let deletedFiles = 0;
+  const removedNames = [];
+  let webhookNeedsUpdate = false;
+  let directCleaned = false;
+
+  // 1. Webhook mode
+  const webhookUrl = getDriveWebhookUrl();
+  if (webhookUrl) {
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'cleanup_orphans',
+          activeNames: keepList
+        })
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => ({}));
+        if (json?.action === 'cleanup_orphans' || json?.deletedFolders !== undefined) {
+          deletedFolders += Number(json.deletedFolders || 0);
+          deletedFiles += Number(json.deletedFiles || 0);
+          if (Array.isArray(json.removedNames)) removedNames.push(...json.removedNames);
+        } else {
+          webhookNeedsUpdate = true;
+          if (json?.fileId && getDriveAccessToken()) {
+            await deleteDriveFileDirect(json.fileId);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Webhook cleanupOrphanedDriveFolders error:', err);
+    }
+  }
+
+  // 2. Direct Drive API v3 mode
+  if (getDriveAccessToken()) {
+    try {
+      const rootNames = [ROOT_FOLDER_NAME, 'Echo_AI_Agent_Files'];
+      for (const rName of rootNames) {
+        const rootQ = `name = '${escapeDriveQuery(rName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const rootRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(rootQ)}&fields=files(id,name)`);
+        if (!rootRes.ok) continue;
+        const rootJson = await rootRes.json();
+        for (const rFolder of rootJson.files || []) {
+          const childQ = `mimeType = 'application/vnd.google-apps.folder' and '${escapeDriveQuery(rFolder.id)}' in parents and trashed = false`;
+          const childRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(childQ)}&fields=files(id,name)&pageSize=200`);
+          if (!childRes.ok) continue;
+          const childJson = await childRes.json();
+          for (const aFolder of childJson.files || []) {
+            const folderLower = String(aFolder.name || '').trim().toLowerCase();
+            if (!folderLower || folderLower === 'shared workspace') continue;
+            if (!keepLower.has(folderLower)) {
+              const ok = await deleteDriveFileDirect(aFolder.id);
+              if (ok) {
+                directCleaned = true;
+                deletedFolders++;
+                removedNames.push(aFolder.name);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Direct Drive cleanupOrphanedDriveFolders error:', err);
+    }
+  }
+
+  return {
+    cleaned: deletedFolders > 0 || deletedFiles > 0 || (!webhookNeedsUpdate && (Boolean(webhookUrl) || directCleaned)),
+    deletedFolders,
+    deletedFiles,
+    removedNames: Array.from(new Set(removedNames)),
+    webhookNeedsUpdate: webhookNeedsUpdate && !directCleaned
+  };
 }

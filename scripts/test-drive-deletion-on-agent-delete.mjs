@@ -13,7 +13,10 @@ import {
   syncAgentFilesToDriveInBackground,
   deleteAgentFolderAndFilesFromDrive,
   cancelAgentDriveSync,
-  isAgentDriveSyncCancelled
+  isAgentDriveSyncCancelled,
+  checkDriveWebhookCapabilities,
+  renameAgentFolderInDrive,
+  cleanupOrphanedDriveFolders
 } from '../src/services/googleDriveService.js';
 
 let passed = 0;
@@ -167,6 +170,56 @@ await checkAsync('Executes direct DELETE /drive/v3/files/{id} for files & case-i
   assert(deletedDirectIds.includes('drive_file_101'), 'Must directly DELETE recorded fileId');
   assert(deletedDirectIds.includes('drive_folder_202'), 'Must directly DELETE recorded agentFolderId');
   assert(deletedDirectIds.includes('agent_folder_99'), 'Must directly DELETE case-insensitive matching folder under Echo AI Agents');
+});
+
+await checkAsync('Outdated webhook returning generic { success: true } NEVER pretends delete succeeded', async () => {
+  globalThis.localStorage.removeItem('google_drive_access_token');
+  globalThis.localStorage.removeItem('google_drive_token_expiry');
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ status: 'success', success: true, message: 'Google Drive Webhook is connected and ready.' })
+  });
+  const caps = await checkDriveWebhookCapabilities('https://script.google.com/macros/s/old/exec');
+  assert.strictEqual(caps.needsUpdate, true, 'Ping without supportsDelete must flag needsUpdate=true');
+  const res = await deleteAgentFolderAndFilesFromDrive('Deleted Bot', []);
+  assert.strictEqual(res.webhookDeleted, false, 'Generic success must NOT be treated as webhookDeleted=true');
+  assert.strictEqual(res.webhookNeedsUpdate, true, 'Must flag webhookNeedsUpdate=true so user is prompted');
+});
+
+await checkAsync('cleanupOrphanedDriveFolders & renameAgentFolderInDrive work on Apps Script + Direct Drive API', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : {};
+    calls.push(body);
+    if (body.action === 'ping') {
+      return { ok: true, status: 200, json: async () => ({ status: 'success', success: true, supportsDelete: true, supportsRename: true, supportsOrphanCleanup: true }) };
+    }
+    if (body.action === 'rename_agent') {
+      return { ok: true, status: 200, json: async () => ({ status: 'success', success: true, action: 'rename_agent', renamedFolders: 1 }) };
+    }
+    if (body.action === 'cleanup_orphans') {
+      return { ok: true, status: 200, json: async () => ({ status: 'success', success: true, action: 'cleanup_orphans', deletedFolders: 2, deletedFiles: 5, removedNames: ['Old Bot 1', 'Old Bot 2'] }) };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const ren = await renameAgentFolderInDrive('Old Name', 'New Name');
+  assert.strictEqual(ren.renamed, true, 'renameAgentFolderInDrive must rename folder via webhook');
+  const cln = await cleanupOrphanedDriveFolders(['Active Bot']);
+  assert.strictEqual(cln.deletedFolders, 2, 'cleanupOrphanedDriveFolders must trash orphaned Drive folders');
+  assert.deepStrictEqual(cln.removedNames, ['Old Bot 1', 'Old Bot 2']);
+});
+
+check('In-place renaming passes previousId/previousName/previousDocId to saveAgent & awaits old doc deletion (zero duplicates)', () => {
+  const fbSrc = fs.readFileSync(path.resolve('src/firebase.js'), 'utf-8');
+  const appSrc = fs.readFileSync(path.resolve('src/App.jsx'), 'utf-8');
+  assert(fbSrc.includes('export async function saveAgent(agent, options = {})'), 'saveAgent must accept rename options');
+  assert(fbSrc.includes('await Promise.all(purgePromises)'), 'saveAgent must AWAIT purging old Firestore doc IDs on rename');
+  assert(fbSrc.includes('previousNames: Array.from(prevNamesSet)'), 'saveAgent must persist previousNames for Drive cleanup');
+  assert(appSrc.includes('saveAgent(updated, { previousId: prevId, previousName: prevName, previousDocId: prevDocId })'), 'handleFinishRename/handleSaveAssistant must pass previousId/previousName to saveAgent');
+  assert(appSrc.includes('renameAgentFolderInDrive(prevName,'), 'App.jsx must rename Drive folder when assistant is renamed');
+  assert(modalSrc.includes("if (action === 'rename_agent')"), 'Apps Script must implement rename_agent');
+  assert(modalSrc.includes("if (action === 'cleanup_orphans')"), 'Apps Script must implement cleanup_orphans');
 });
 
 globalThis.fetch = origFetch;

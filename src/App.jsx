@@ -19,7 +19,8 @@ import {
   disconnectDrive,
   initDeveloperDriveSync,
   deleteAgentFolderAndFilesFromDrive,
-  deleteAllAgentsDriveFolders
+  deleteAllAgentsDriveFolders,
+  renameAgentFolderInDrive
 } from './services/googleDriveService';
 import {
   saveFileToLocalStore,
@@ -553,14 +554,24 @@ export default function App() {
 
   // Handle Download Standalone Bundle (.zip) - ALWAYS compiles latest active edits into the ZIP!
   const handleDownloadAgent = async (agentToDownload) => {
-    const target = getActiveAgentData(agentToDownload);
+    const baseAgent = agentToDownload || currentAssistant;
+    const prevId = baseAgent?.id;
+    const prevName = baseAgent?.name;
+    const prevDocId = baseAgent?._firestoreDocId;
+    const target = getActiveAgentData(baseAgent);
     if (!target) {
       alert("No agent selected to download.");
       return;
     }
-    // Auto-save latest active edits to state and Firestore so file and cloud stay in sync
-    setAssistantsList(prev => prev.map(a => a.id === target.id ? target : a));
-    saveAgent(target).catch(console.error);
+    // Auto-save latest active edits to state and Firestore so file and cloud stay in sync (in-place if renamed)
+    setAssistantsList(prev => {
+      const filtered = prev.filter(a => a.id !== prevId && a.id !== target.id && a.name !== prevName);
+      return [target, ...filtered];
+    });
+    saveAgent(target, { previousId: prevId, previousName: prevName, previousDocId: prevDocId }).catch(console.error);
+    if (prevName && target.name && prevName !== target.name) {
+      renameAgentFolderInDrive(prevName, target.name).catch(() => {});
+    }
 
     try {
       const res = await downloadAgentBundleZip(target);
@@ -575,10 +586,20 @@ export default function App() {
 
   // Handle Download Standalone Script (.js) - ALWAYS compiles latest active edits!
   const handleDownloadJsFile = async (agentToDownload) => {
-    const target = getActiveAgentData(agentToDownload);
+    const baseAgent = agentToDownload || currentAssistant;
+    const prevId = baseAgent?.id;
+    const prevName = baseAgent?.name;
+    const prevDocId = baseAgent?._firestoreDocId;
+    const target = getActiveAgentData(baseAgent);
     if (!target) return;
-    setAssistantsList(prev => prev.map(a => a.id === target.id ? target : a));
-    saveAgent(target).catch(console.error);
+    setAssistantsList(prev => {
+      const filtered = prev.filter(a => a.id !== prevId && a.id !== target.id && a.name !== prevName);
+      return [target, ...filtered];
+    });
+    saveAgent(target, { previousId: prevId, previousName: prevName, previousDocId: prevDocId }).catch(console.error);
+    if (prevName && target.name && prevName !== target.name) {
+      renameAgentFolderInDrive(prevName, target.name).catch(() => {});
+    }
 
     try {
       const res = downloadStandaloneScriptFile(target);
@@ -638,6 +659,9 @@ export default function App() {
     if (developed.model) setSelectedModel(developed.model);
     if (developed.knowledgeBase) setEditingFaqList(developed.knowledgeBase);
 
+    const prevId = currentAssistant?.id;
+    const prevName = currentAssistant?.name;
+    const prevDocId = currentAssistant?._firestoreDocId;
     const cleanName = (developed.name || currentAssistant?.name || 'Voice Assistant').trim().replace(/\//g, '-');
     const updated = {
       ...(currentAssistant || {}),
@@ -655,13 +679,30 @@ export default function App() {
     };
 
     setAssistantsList(prev => {
-      const exists = prev.some(a => a.id === updated.id);
-      if (exists) return prev.map(a => a.id === updated.id ? updated : a);
+      const hasExisting = prev.some(a => a.id === prevId || a.id === updated.id);
+      if (hasExisting) {
+        let replaced = false;
+        return prev.reduce((acc, a) => {
+          if (a.id === prevId || a.id === updated.id) {
+            if (!replaced) {
+              acc.push(updated);
+              replaced = true;
+            }
+          } else {
+            acc.push(a);
+          }
+          return acc;
+        }, []);
+      }
       return [updated, ...prev];
     });
+    setSelectedAssistantId(updated.id);
 
     try {
-      await saveAgent(updated);
+      await saveAgent(updated, { previousId: prevId, previousName: prevName, previousDocId: prevDocId });
+      if (prevName && cleanName && prevName !== cleanName) {
+        renameAgentFolderInDrive(prevName, cleanName).catch(() => {});
+      }
       setFirestoreSyncSuccess(true);
       setTimeout(() => setFirestoreSyncSuccess(false), 3000);
     } catch (e) {
@@ -669,29 +710,50 @@ export default function App() {
     }
   };
 
-  // Save Assistant Handler (Updates local React state & Firebase Firestore)
+  // Save Assistant Handler (Updates local React state & Firebase Firestore in-place, never duplicating on rename)
   const handleSaveAssistant = async () => {
     const prevId = currentAssistant?.id;
+    const prevName = currentAssistant?.name;
+    const prevDocId = currentAssistant?._firestoreDocId;
     const updated = getActiveAgentData(currentAssistant);
     if (!updated) return;
     try {
       setIsSyncingFirestore(true);
-      await saveAgent(updated);
+      const saved = await saveAgent(updated, { previousId: prevId, previousName: prevName, previousDocId: prevDocId });
+      const finalAgent = { ...updated, id: saved.id || updated.id, _firestoreDocId: saved.id || updated.id, previousNames: saved.previousNames || updated.previousNames };
+
+      if (prevName && finalAgent.name && prevName !== finalAgent.name) {
+        renameAgentFolderInDrive(prevName, finalAgent.name).catch(() => {});
+      }
 
       // Instant Invalidation of Widget Cache in localStorage so embed/demo page reflects changes immediately
       try {
-        const targetId = (updated.id || '').toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
-        const targetName = (updated.name || '').toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
+        const targetId = (finalAgent.id || '').toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
+        const targetName = (finalAgent.name || '').toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
+        const oldNameKey = (prevName || '').toLowerCase().replace(/[^a-z0-9_-]/gi, '_');
         for (let i = localStorage.length - 1; i >= 0; i--) {
           const k = localStorage.key(i);
-          if (k && k.startsWith('vhd_') && (k.includes(targetId) || k.includes(targetName))) {
+          if (k && k.startsWith('vhd_') && (k.includes(targetId) || k.includes(targetName) || (oldNameKey && k.includes(oldNameKey)))) {
             localStorage.removeItem(k);
           }
         }
       } catch (_) {}
 
-      setAssistantsList(prev => prev.map(a => (a.id === prevId || a.id === updated.id) ? updated : a));
-      setSelectedAssistantId(updated.id);
+      setAssistantsList(prev => {
+        let replaced = false;
+        return prev.reduce((acc, a) => {
+          if (a.id === prevId || a.id === finalAgent.id || (prevName && a.name === prevName)) {
+            if (!replaced) {
+              acc.push(finalAgent);
+              replaced = true;
+            }
+          } else {
+            acc.push(a);
+          }
+          return acc;
+        }, []);
+      });
+      setSelectedAssistantId(finalAgent.id);
       setFirestoreSyncSuccess(true);
       setTimeout(() => setFirestoreSyncSuccess(false), 3000);
     } catch (err) {
@@ -703,12 +765,17 @@ export default function App() {
   };
   const handleSyncFirestore = handleSaveAssistant;
 
-  // Immediate Assistant Rename Handler
+  // Immediate Assistant Rename Handler (strictly renames in-place in Firestore, local state & Google Drive — NEVER creates a duplicate!)
   const handleFinishRename = async () => {
+    if (!isEditingName) return;
     setIsEditingName(false);
     if (!currentAssistant || !assistantName.trim()) return;
     const cleanNewName = assistantName.trim().replace(/\//g, '-');
     const prevId = currentAssistant.id;
+    const prevName = currentAssistant.name;
+    const prevDocId = currentAssistant._firestoreDocId;
+
+    if (cleanNewName === prevName && cleanNewName === prevId) return;
 
     let syncedGreeting = currentAssistant.greeting || currentAssistant.firstMessage || `Hello! I am ${cleanNewName}. How can I assist you today?`;
     syncedGreeting = syncedGreeting.replace(/I am (app Concierge|Site Sentinel|Help Desk AI|[A-Za-z0-9_\s]+?)(?=[.,!])/i, `I am ${cleanNewName}`);
@@ -729,10 +796,28 @@ export default function App() {
 
     setFirstMessageText(syncedGreeting);
     setSystemPromptText(syncedPrompt);
-    setAssistantsList(prev => prev.map(a => (a.id === prevId || a.id === cleanNewName) ? updated : a));
+    setAssistantsList(prev => {
+      let replaced = false;
+      return prev.reduce((acc, a) => {
+        if (a.id === prevId || a.id === cleanNewName || (prevName && a.name === prevName)) {
+          if (!replaced) {
+            acc.push(updated);
+            replaced = true;
+          }
+        } else {
+          acc.push(a);
+        }
+        return acc;
+      }, []);
+    });
     setSelectedAssistantId(cleanNewName);
     try {
-      await saveAgent(updated);
+      const saved = await saveAgent(updated, { previousId: prevId, previousName: prevName, previousDocId: prevDocId });
+      const finalRenamed = { ...updated, id: saved.id || cleanNewName, _firestoreDocId: saved.id || cleanNewName, previousNames: saved.previousNames || updated.previousNames };
+      setAssistantsList(prev => prev.map(a => (a.id === cleanNewName || a.id === prevId) ? finalRenamed : a));
+      if (prevName && prevName !== cleanNewName) {
+        renameAgentFolderInDrive(prevName, cleanNewName).catch(() => {});
+      }
     } catch (err) {
       console.warn("Auto-save on rename error:", err);
     }
@@ -897,9 +982,15 @@ export default function App() {
     let driveDeleteResult = null;
     try {
       if (isDriveConnected()) {
+        const allAliases = Array.from(new Set([
+          nameToDelete,
+          idToDelete,
+          targetObj._firestoreDocId,
+          ...(Array.isArray(targetObj.previousNames) ? targetObj.previousNames : [])
+        ].filter(Boolean)));
         driveDeleteResult = await deleteAgentFolderAndFilesFromDrive(nameToDelete, mergedUploadedFiles, {
           agentId: idToDelete,
-          aliases: [nameToDelete, idToDelete]
+          aliases: allAliases
         });
       }
     } catch (err) {
@@ -1343,9 +1434,15 @@ export default function App() {
         let chatDriveRes = null;
         try {
           if (isDriveConnected()) {
+            const chatAliases = Array.from(new Set([
+              nameToDelete,
+              idToDelete,
+              agentToDelete._firestoreDocId,
+              ...(Array.isArray(agentToDelete.previousNames) ? agentToDelete.previousNames : [])
+            ].filter(Boolean)));
             chatDriveRes = await deleteAgentFolderAndFilesFromDrive(nameToDelete, mergedChatFiles, {
               agentId: idToDelete,
-              aliases: [nameToDelete, idToDelete]
+              aliases: chatAliases
             });
           }
         } catch (e) {
@@ -1440,12 +1537,16 @@ export default function App() {
           highlights.push(`Voice greeting updated: "${newGreeting}"`);
         }
 
-        // 4. Name change
+        // 4. Name change (tracks previous ID/name so Firestore & Drive rename in-place without creating duplicates!)
+        let renamedPrevId = null;
+        let renamedPrevName = null;
+        let renamedPrevDocId = updated._firestoreDocId || null;
         const nameMatch = text.match(/\b(?:change|set|rename|update)\s+(?:the\s+)?(?:name|assistant name)\s+(?:to\s+)?[:"']?([^"'\n]+)[:"']?/i) ||
                          text.match(/\b(?:rename\s+to|call\s+it)\s+[:"']?([^"'\n]+)[:"']?/i);
         if (nameMatch && nameMatch[1].trim().length > 2 && !nameMatch[1].toLowerCase().includes('voice')) {
           const newName = nameMatch[1].trim().replace(/\//g, '-');
-          const prevId = updated.id;
+          renamedPrevId = updated.id;
+          renamedPrevName = updated.name;
           updated.name = newName;
           updated.id = newName;
           setAssistantName(newName);
@@ -1466,7 +1567,20 @@ export default function App() {
             updated.systemPrompt = updated.systemPrompt.replace(/You are (app Concierge|Site Sentinel|Help Desk AI|[A-Za-z0-9_\s]+?)(?=[,.\n])/i, `You are ${newName}`);
           }
 
-          setAssistantsList(prev => prev.map(a => (a.id === prevId || a.id === newName) ? updated : a));
+          setAssistantsList(prev => {
+            let replaced = false;
+            return prev.reduce((acc, a) => {
+              if (a.id === renamedPrevId || a.id === newName || (renamedPrevName && a.name === renamedPrevName)) {
+                if (!replaced) {
+                  acc.push(updated);
+                  replaced = true;
+                }
+              } else {
+                acc.push(a);
+              }
+              return acc;
+            }, []);
+          });
           highlights.push(`Assistant renamed to "${newName}" and persona synchronized`);
         }
 
@@ -1524,8 +1638,24 @@ export default function App() {
 
         if (highlights.length > 0) {
           updated.updatedAt = new Date().toISOString();
-          setAssistantsList(prev => prev.map(a => a.id === updated.id ? updated : a));
-          saveAgent(updated).catch(console.error);
+          setAssistantsList(prev => {
+            let replaced = false;
+            return prev.reduce((acc, a) => {
+              if (a.id === updated.id || (renamedPrevId && a.id === renamedPrevId) || (renamedPrevName && a.name === renamedPrevName)) {
+                if (!replaced) {
+                  acc.push(updated);
+                  replaced = true;
+                }
+              } else {
+                acc.push(a);
+              }
+              return acc;
+            }, []);
+          });
+          saveAgent(updated, { previousId: renamedPrevId, previousName: renamedPrevName, previousDocId: renamedPrevDocId }).catch(console.error);
+          if (renamedPrevName && updated.name && renamedPrevName !== updated.name) {
+            renameAgentFolderInDrive(renamedPrevName, updated.name).catch(() => {});
+          }
 
           const confirmText = isNormalQuestionsIntent
             ? `I have updated "${updated.name}". Your assistant will now warmly and helpfully answer normal everyday questions, greetings, small talk, and common queries in addition to your verified knowledge base facts.`

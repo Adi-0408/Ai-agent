@@ -42,7 +42,9 @@ import {
   fetchDriveFileContent,
   deleteDriveFile,
   isDriveConnected,
-  initDeveloperDriveSync
+  initDeveloperDriveSync,
+  checkDriveWebhookCapabilities,
+  cleanupOrphanedDriveFolders
 } from '../services/googleDriveService';
 import GoogleDriveSetupModal from './GoogleDriveSetupModal';
 
@@ -100,11 +102,20 @@ export default function LiveFilesView({
   const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
   const [driveStatus, setDriveStatus] = useState(() => getDriveConnectionStatus());
   const [driveNotice, setDriveNotice] = useState(null);
+  const [webhookCaps, setWebhookCaps] = useState(null);
+  const [isCleaningOrphans, setIsCleaningOrphans] = useState(false);
 
   useEffect(() => {
-    setDriveStatus(getDriveConnectionStatus());
+    const initial = getDriveConnectionStatus();
+    setDriveStatus(initial);
+    if (initial.connected) {
+      checkDriveWebhookCapabilities().then(setWebhookCaps).catch(() => {});
+    }
     const unsub = initDeveloperDriveSync((status) => {
       setDriveStatus(status);
+      if (status?.connected) {
+        checkDriveWebhookCapabilities().then(setWebhookCaps).catch(() => {});
+      }
     });
     return () => {
       if (typeof unsub === 'function') unsub();
@@ -114,6 +125,29 @@ export default function LiveFilesView({
   const showNotice = (type, text) => {
     setDriveNotice({ type, text });
     setTimeout(() => setDriveNotice(null), 5000);
+  };
+
+  const handleCleanupOrphanedDriveFiles = async () => {
+    if (isCleaningOrphans) return;
+    setIsCleaningOrphans(true);
+    try {
+      const activeNames = (assistantsList || []).flatMap(a => [a?.name, a?.id].filter(Boolean));
+      const res = await cleanupOrphanedDriveFolders(activeNames);
+      if (res?.webhookNeedsUpdate) {
+        setWebhookCaps(prev => ({ ...(prev || {}), needsUpdate: true, supportsDelete: false }));
+        showNotice('warning', 'Update your deployed Google Apps Script in Drive Setup first to enable deleting leftover Drive folders.');
+        if (onOpenGoogleDriveSetup) onOpenGoogleDriveSetup();
+        else setIsSetupModalOpen(true);
+      } else if (res?.deletedFolders > 0 || res?.deletedFiles > 0) {
+        showNotice('success', `Cleaned up ${res.deletedFolders} deleted assistant folder(s) from Google Drive${res.removedNames?.length ? ` (${res.removedNames.join(', ')})` : ''}.`);
+      } else {
+        showNotice('success', 'Google Drive is already clean — no leftover folders from deleted assistants found.');
+      }
+    } catch (err) {
+      showNotice('error', `Drive cleanup failed: ${err.message || String(err)}`);
+    } finally {
+      setIsCleaningOrphans(false);
+    }
   };
 
   const handleConnectDriveClick = async () => {
@@ -807,7 +841,19 @@ export default function LiveFilesView({
           </span>
         </div>
 
-        <div>
+        <div className="flex items-center gap-3">
+          {driveStatus.connected && (
+            <button
+              type="button"
+              onClick={handleCleanupOrphanedDriveFiles}
+              disabled={isCleaningOrphans}
+              className="text-[11px] font-semibold text-indigo-700 hover:text-indigo-800 hover:underline cursor-pointer flex items-center gap-1 disabled:opacity-50"
+              title="Remove leftover Google Drive folders belonging to previously deleted assistants"
+            >
+              {isCleaningOrphans ? <RefreshCw size={11} className="animate-spin" /> : <Trash2 size={11} />}
+              <span>{isCleaningOrphans ? 'Cleaning Drive...' : 'Clean Up Deleted Agents in Drive'}</span>
+            </button>
+          )}
           {driveStatus.connected ? (
             <button
               type="button"
@@ -827,6 +873,27 @@ export default function LiveFilesView({
           )}
         </div>
       </div>
+
+      {driveStatus.connected && webhookCaps?.needsUpdate && (
+        <div className="px-6 py-2.5 border-b border-amber-200 bg-amber-50 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 shrink-0">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={15} className="text-amber-600 shrink-0" />
+            <span>
+              <strong>Google Drive Auto-Delete Needs Script Update:</strong> Your deployed Apps Script is an older upload-only version, so deleted assistants&apos; files stay in Drive until you re-deploy the updated script.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenGoogleDriveSetup) onOpenGoogleDriveSetup();
+              else setIsSetupModalOpen(true);
+            }}
+            className="h-7 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold cursor-pointer shrink-0 transition-colors"
+          >
+            Update Drive Script
+          </button>
+        </div>
+      )}
 
       {/* Inline Notice Toast */}
       {driveNotice && (
