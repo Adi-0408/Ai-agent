@@ -54,7 +54,102 @@ function doPost(e) {
     var action = payload.action || 'upload';
 
     if (action === 'ping') {
-      return respondJson({ status: 'success', success: true, message: 'Connected to Echo_AI_Agent_Files' });
+      return respondJson({ status: 'success', success: true, supportsDelete: true, message: 'Connected to Echo_AI_Agent_Files' });
+    }
+
+    // Delete a single file by Drive fileId (or by fileName + assistantName fallback)
+    if (action === 'delete_file') {
+      var deletedCount = 0;
+      if (payload.fileId) {
+        try {
+          DriveApp.getFileById(String(payload.fileId)).setTrashed(true);
+          deletedCount++;
+        } catch (dfErr) {}
+      }
+      if (deletedCount === 0 && payload.fileName && payload.assistantName) {
+        var targetName = sanitizeName(payload.assistantName).toLowerCase();
+        var rootNamesList = [ROOT_FOLDER_NAME, 'Echo AI Agents'];
+        for (var ri = 0; ri < rootNamesList.length; ri++) {
+          var rIt = DriveApp.getFoldersByName(rootNamesList[ri]);
+          while (rIt.hasNext()) {
+            var rFld = rIt.next();
+            var aIt = rFld.getFolders();
+            while (aIt.hasNext()) {
+              var aFld = aIt.next();
+              if (aFld.getName().toLowerCase() === targetName) {
+                deletedCount += trashNamedFilesRecursively(aFld, String(payload.fileName));
+              }
+            }
+          }
+        }
+      }
+      return respondJson({ status: 'success', success: true, action: 'delete_file', deleted: true, deletedCount: deletedCount });
+    }
+
+    // Delete an entire assistant folder and ALL uploaded files inside it
+    if (action === 'delete_agent' || action === 'delete_agent_folder') {
+      var deletedFiles = 0;
+      var deletedFolders = 0;
+      var targetIds = Array.isArray(payload.fileIds) ? payload.fileIds : [];
+      for (var fi = 0; fi < targetIds.length; fi++) {
+        try {
+          DriveApp.getFileById(String(targetIds[fi])).setTrashed(true);
+          deletedFiles++;
+        } catch (fErr) {}
+      }
+      var targetFolderIds = Array.isArray(payload.folderIds) ? payload.folderIds : [];
+      for (var foi = 0; foi < targetFolderIds.length; foi++) {
+        try {
+          var expFld = DriveApp.getFolderById(String(targetFolderIds[foi]));
+          deletedFiles += trashFolderRecursively(expFld);
+          deletedFolders++;
+        } catch (foErr) {}
+      }
+
+      var rawNames = Array.isArray(payload.folderNames) ? payload.folderNames : [];
+      if (payload.assistantName) rawNames.push(payload.assistantName);
+      var lowerTargets = {};
+      for (var ni = 0; ni < rawNames.length; ni++) {
+        var cleanN = sanitizeName(rawNames[ni]).toLowerCase();
+        if (cleanN) lowerTargets[cleanN] = true;
+      }
+
+      var allRoots = [ROOT_FOLDER_NAME, 'Echo AI Agents'];
+      for (var rIdx = 0; rIdx < allRoots.length; rIdx++) {
+        var rootIt = DriveApp.getFoldersByName(allRoots[rIdx]);
+        while (rootIt.hasNext()) {
+          var rootFld = rootIt.next();
+          var subIt = rootFld.getFolders();
+          while (subIt.hasNext()) {
+            var subFld = subIt.next();
+            if (lowerTargets[subFld.getName().toLowerCase()]) {
+              deletedFiles += trashFolderRecursively(subFld);
+              deletedFolders++;
+            }
+          }
+        }
+      }
+      return respondJson({
+        status: 'success',
+        success: true,
+        action: 'delete_agent',
+        deletedFolders: deletedFolders,
+        deletedFiles: deletedFiles
+      });
+    }
+
+    // Delete ALL assistant folders under Echo_AI_Agent_Files / Echo AI Agents
+    if (action === 'delete_all') {
+      var wiped = 0;
+      var wipeRoots = [ROOT_FOLDER_NAME, 'Echo AI Agents'];
+      for (var wr = 0; wr < wipeRoots.length; wr++) {
+        var wIt = DriveApp.getFoldersByName(wipeRoots[wr]);
+        while (wIt.hasNext()) {
+          var wFld = wIt.next();
+          wiped += trashFolderRecursively(wFld);
+        }
+      }
+      return respondJson({ status: 'success', success: true, action: 'delete_all', deletedCount: wiped });
     }
 
     if (action === 'upload_batch' && Array.isArray(payload.files)) {
@@ -81,6 +176,10 @@ function doPost(e) {
         });
       }
       return respondJson({ status: 'success', success: true, results: batchResults });
+    }
+
+    if (action !== 'upload') {
+      return respondJson({ status: 'error', success: false, message: 'Unsupported action: ' + action });
     }
 
     var fileName = payload.fileName || payload.filename || ('file_' + new Date().getTime() + '.txt');
@@ -129,6 +228,33 @@ function doPost(e) {
 function getOrCreateSubFolder(parent, name) {
   var it = parent.getFoldersByName(name);
   return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+
+function trashFolderRecursively(folder) {
+  var count = 0;
+  var files = folder.getFiles();
+  while (files.hasNext()) {
+    try { files.next().setTrashed(true); count++; } catch (e) {}
+  }
+  var subs = folder.getFolders();
+  while (subs.hasNext()) {
+    count += trashFolderRecursively(subs.next());
+  }
+  try { folder.setTrashed(true); } catch (e) {}
+  return count;
+}
+
+function trashNamedFilesRecursively(folder, targetFileName) {
+  var count = 0;
+  var files = folder.getFilesByName(targetFileName);
+  while (files.hasNext()) {
+    try { files.next().setTrashed(true); count++; } catch (e) {}
+  }
+  var subs = folder.getFolders();
+  while (subs.hasNext()) {
+    count += trashNamedFilesRecursively(subs.next(), targetFileName);
+  }
+  return count;
 }
 
 function getTierLabel(tier) {

@@ -33,6 +33,42 @@ const STORAGE_KEYS = {
 const folderIdCache = new Map();
 const inFlightFolderPromises = new Map();
 
+// Active background sync AbortControllers & recently-deleted agent blocklist
+// Prevents an in-flight background upload from recreating Drive files AFTER an agent is deleted!
+const activeAgentSyncControllers = new Map();
+const deletedAgentsBlocklist = new Map(); // normAgentName -> expiryTimestamp
+
+function normalizeAgentKey(name) {
+  return String(name || '').replace(/\//g, '-').trim().toLowerCase();
+}
+
+export function isAgentDriveSyncCancelled(agentName) {
+  const key = normalizeAgentKey(agentName);
+  if (!key) return false;
+  const exp = deletedAgentsBlocklist.get(key);
+  if (!exp) return false;
+  if (Date.now() > exp) {
+    deletedAgentsBlocklist.delete(key);
+    return false;
+  }
+  return true;
+}
+
+export function cancelAgentDriveSync(agentNames = []) {
+  const names = Array.isArray(agentNames) ? agentNames : [agentNames];
+  const expiry = Date.now() + 5 * 60 * 1000; // 5-minute safety block against stale background uploads
+  for (const raw of names) {
+    const key = normalizeAgentKey(raw);
+    if (!key) continue;
+    deletedAgentsBlocklist.set(key, expiry);
+    const ctrl = activeAgentSyncControllers.get(key);
+    if (ctrl) {
+      try { ctrl.abort(); } catch (_) {}
+      activeAgentSyncControllers.delete(key);
+    }
+  }
+}
+
 // Central In-Memory Developer Drive Configuration (Synced from Firestore)
 let centralDriveConfig = null;
 
@@ -721,11 +757,13 @@ export async function uploadFilesBatchToDrive(fileTasks = [], options = {}) {
   const concurrency = Math.max(1, Number(options.concurrency || (isWebhook ? 4 : 6)));
   const uploadFn = typeof options.uploadFn === 'function' ? options.uploadFn : uploadFileToDrive;
   const onFileProgress = typeof options.onFileProgress === 'function' ? options.onFileProgress : null;
+  const signal = options.signal || null;
 
   // Pre-warm Drive category folders ONCE per unique (assistantName, tier) in Direct Drive API mode
   if (!isWebhook && !options.uploadFn) {
     const uniquePairs = new Map();
     for (const task of fileTasks) {
+      if (isAgentDriveSyncCancelled(task.assistantName)) continue;
       const key = `${task.assistantName || 'Shared Workspace'}::${task.tier || 'database'}`;
       if (!uniquePairs.has(key)) {
         uniquePairs.set(key, { assistantName: task.assistantName || 'Shared Workspace', tier: task.tier || 'database' });
@@ -744,12 +782,26 @@ export async function uploadFilesBatchToDrive(fileTasks = [], options = {}) {
 
   async function worker() {
     while (true) {
+      if (signal?.aborted) break;
       const idx = nextIdx++;
       if (idx >= fileTasks.length) break;
       const task = fileTasks[idx];
+      if (isAgentDriveSyncCancelled(task.assistantName)) {
+        results[idx] = { id: task.id, fileName: task.fileName, ok: false, cancelled: true };
+        completedCount++;
+        continue;
+      }
       try {
         const driveMeta = await uploadFn(task);
-        results[idx] = { id: task.id, fileName: task.fileName, ok: true, driveMeta };
+        if (signal?.aborted || isAgentDriveSyncCancelled(task.assistantName)) {
+          // Agent was deleted mid-upload! Clean up the just-created file immediately so it doesn't linger on Drive!
+          if (driveMeta?.driveFileId) {
+            deleteDriveFile(driveMeta.driveFileId, { fileName: task.fileName, assistantName: task.assistantName }).catch(() => {});
+          }
+          results[idx] = { id: task.id, fileName: task.fileName, ok: false, cancelled: true };
+        } else {
+          results[idx] = { id: task.id, fileName: task.fileName, ok: true, driveMeta };
+        }
       } catch (err) {
         console.warn('[Echo Drive Batch] Upload failed for', task.fileName, err?.message || err);
         results[idx] = {
@@ -799,6 +851,12 @@ export function syncAgentFilesToDriveInBackground({
     return Promise.resolve([]);
   }
 
+  // Clear any stale deletion blocklist entry when a brand-new agent with this name is intentionally created
+  const normKey = normalizeAgentKey(agentId);
+  if (normKey) deletedAgentsBlocklist.delete(normKey);
+  const syncController = new AbortController();
+  if (normKey) activeAgentSyncControllers.set(normKey, syncController);
+
   const patcher = typeof patchFn === 'function' ? patchFn : patchAgentUploadedFiles;
   const tasks = files.map((f) => ({
     id: f.id,
@@ -815,6 +873,7 @@ export function syncAgentFilesToDriveInBackground({
   let flushTimer = null;
 
   const flushUpdates = async () => {
+    if (syncController.signal.aborted || isAgentDriveSyncCancelled(agentId)) return;
     const keys = Object.keys(pendingPatch);
     if (keys.length === 0) return;
     const snapshot = { ...pendingPatch };
@@ -825,7 +884,9 @@ export function syncAgentFilesToDriveInBackground({
   const promise = uploadFilesBatchToDrive(tasks, {
     concurrency,
     uploadFn,
+    signal: syncController.signal,
     onFileProgress: (done, total, itemRes) => {
+      if (syncController.signal.aborted || isAgentDriveSyncCancelled(agentId)) return;
       if (itemRes?.id && itemRes?.driveMeta) {
         pendingPatch[itemRes.id] = itemRes.driveMeta;
         if (!flushTimer && done < total) {
@@ -845,14 +906,22 @@ export function syncAgentFilesToDriveInBackground({
         clearTimeout(flushTimer);
         flushTimer = null;
       }
-      for (const r of allResults) {
-        if (r?.id && r?.driveMeta) pendingPatch[r.id] = r.driveMeta;
+      if (!syncController.signal.aborted && !isAgentDriveSyncCancelled(agentId)) {
+        for (const r of allResults) {
+          if (r?.id && r?.driveMeta) pendingPatch[r.id] = r.driveMeta;
+        }
+        await flushUpdates();
       }
-      await flushUpdates();
+      if (normKey && activeAgentSyncControllers.get(normKey) === syncController) {
+        activeAgentSyncControllers.delete(normKey);
+      }
       if (typeof onComplete === 'function') onComplete(allResults);
       return allResults;
     })
     .catch((err) => {
+      if (normKey && activeAgentSyncControllers.get(normKey) === syncController) {
+        activeAgentSyncControllers.delete(normKey);
+      }
       console.warn('[Echo Drive Background Sync] Error:', err);
       if (typeof onComplete === 'function') onComplete([]);
       return [];
@@ -943,30 +1012,11 @@ export async function listAssistantDriveFiles(assistantName) {
 }
 
 /**
- * Delete (or trash) a file from Google Drive (Supports both Webhook and Direct Drive API)
+ * Dedicated Direct Google Drive API v3 delete/trash helper.
+ * NEVER routes back through the Apps Script webhook — guarantees Direct API deletion actually executes!
  */
-export async function deleteDriveFile(driveFileId) {
-  if (!driveFileId || !isDriveConnected()) return false;
-
-  // 1. Webhook mode
-  const webhookUrl = getDriveWebhookUrl();
-  if (webhookUrl) {
-    try {
-      const res = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'delete_file',
-          fileId: driveFileId
-        })
-      });
-      return res.ok;
-    } catch (err) {
-      console.warn('Webhook deleteDriveFile error:', err);
-    }
-  }
-
-  // 2. Direct API mode
+async function deleteDriveFileDirect(driveFileId) {
+  if (!driveFileId || /^webhook_\d+$/i.test(String(driveFileId)) || !getDriveAccessToken()) return false;
   try {
     const res = await driveFetch(`${DRIVE_API_BASE}/files/${encodeURIComponent(driveFileId)}`, {
       method: 'DELETE'
@@ -979,24 +1029,113 @@ export async function deleteDriveFile(driveFileId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ trashed: true })
     });
-    return trashRes.ok;
+    return trashRes.ok || trashRes.status === 404;
   } catch (e) {
-    console.warn('Could not delete file from Google Drive:', e);
+    console.warn('Direct Drive delete failed for', driveFileId, e);
     return false;
   }
 }
 
 /**
- * Deletes an assistant's dedicated folder and all its associated files from Google Drive.
- * Supports both Google Apps Script Webhook and Direct Drive API.
+ * Delete (or trash) a file from Google Drive (Supports BOTH Webhook and Direct Drive API).
+ * Validates webhook response so an outdated Apps Script webhook cannot silently fail or pretend it deleted!
  */
-export async function deleteAgentFolderAndFilesFromDrive(assistantName, uploadedFiles = []) {
-  if (!assistantName || !isDriveConnected()) return false;
+export async function deleteDriveFile(driveFileId, opts = {}) {
+  if (!driveFileId || !isDriveConnected()) return false;
+  const cleanId = String(driveFileId).trim();
+  const isSyntheticId = /^webhook_\d+$/i.test(cleanId);
 
+  let webhookOk = false;
+  let directOk = false;
+
+  // 1. Direct Drive API mode (runs whenever an OAuth access token is available)
+  if (!isSyntheticId && getDriveAccessToken()) {
+    directOk = await deleteDriveFileDirect(cleanId);
+  }
+
+  // 2. Webhook mode (runs when configured and verifies the webhook truly executed delete_file)
+  const webhookUrl = getDriveWebhookUrl();
+  if (webhookUrl) {
+    try {
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'delete_file',
+          fileId: isSyntheticId ? '' : cleanId,
+          fileName: opts.fileName || '',
+          assistantName: opts.assistantName ? String(opts.assistantName).replace(/\//g, '-').trim() : ''
+        })
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => ({}));
+        const looksLikeAccidentalUpload = Boolean(json?.message && /file stored in google drive/i.test(json.message));
+        if (!looksLikeAccidentalUpload && (json?.action === 'delete_file' || json?.deleted === true || Number(json?.deletedCount) >= 0)) {
+          webhookOk = true;
+        } else if (looksLikeAccidentalUpload) {
+          console.warn('[Echo Drive] Apps Script webhook does not yet have the delete_file handler deployed. Please update the Apps Script from Google Drive Setup.');
+        }
+      }
+    } catch (err) {
+      console.warn('Webhook deleteDriveFile error:', err);
+    }
+  }
+
+  return directOk || webhookOk;
+}
+
+/**
+ * Deletes an assistant's dedicated folder and ALL its associated files from Google Drive.
+ * - Immediately cancels any in-flight background Drive uploads for this agent!
+ * - Deletes via Apps Script Webhook (sending folderNames, fileIds & folderIds AND verifying response)
+ * - Deletes via Direct Drive API v3 (files + explicit folderIds + case-insensitive folder lookup under both root folders)
+ */
+export async function deleteAgentFolderAndFilesFromDrive(assistantName, uploadedFiles = [], options = {}) {
   const cleanAgent = (assistantName || '').trim().replace(/\//g, '-') || 'Voice Assistant';
-  let overallSuccess = false;
+  const aliasSet = new Set([cleanAgent]);
+  if (options?.agentId) aliasSet.add(String(options.agentId).trim().replace(/\//g, '-'));
+  if (Array.isArray(options?.aliases)) {
+    options.aliases.forEach(a => { if (a) aliasSet.add(String(a).trim().replace(/\//g, '-')); });
+  }
 
-  // 1. Webhook Mode
+  // Collect folder name aliases, explicit driveFileIds & driveAgentFolderIds from uploadedFiles
+  const fileIds = new Set();
+  const folderIds = new Set();
+  if (Array.isArray(uploadedFiles)) {
+    for (const f of uploadedFiles) {
+      if (f?.driveFileId && !/^webhook_\d+$/i.test(String(f.driveFileId))) {
+        fileIds.add(String(f.driveFileId));
+      }
+      if (f?.driveAgentFolderId && !/^webhook_\d+$/i.test(String(f.driveAgentFolderId))) {
+        folderIds.add(String(f.driveAgentFolderId));
+      }
+      if (typeof f?.driveFolderPath === 'string' && f.driveFolderPath.includes('/')) {
+        const parts = f.driveFolderPath.split('/').map(s => s.trim()).filter(Boolean);
+        if (parts.length >= 2) aliasSet.add(parts[1]);
+      }
+    }
+  }
+  const folderNames = Array.from(aliasSet).filter(Boolean);
+
+  // 0. Abort any in-flight background uploads IMMEDIATELY so deleted files are never recreated!
+  cancelAgentDriveSync(folderNames);
+
+  // Clear in-memory folder cache matching any alias
+  for (const key of Array.from(folderIdCache.keys())) {
+    if (folderNames.some(fn => key.toLowerCase().includes(fn.toLowerCase()))) {
+      folderIdCache.delete(key);
+    }
+  }
+
+  if (!assistantName || !isDriveConnected()) {
+    return { deleted: false, webhookDeleted: false, directApiDeleted: false, webhookNeedsUpdate: false };
+  }
+
+  let webhookDeleted = false;
+  let directApiDeleted = false;
+  let webhookNeedsUpdate = false;
+
+  // 1. Webhook Mode (passes folderNames + explicit fileIds + folderIds, and verifies real deletion!)
   const webhookUrl = getDriveWebhookUrl();
   if (webhookUrl) {
     try {
@@ -1005,13 +1144,24 @@ export async function deleteAgentFolderAndFilesFromDrive(assistantName, uploaded
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action: 'delete_agent',
-          assistantName: cleanAgent
+          assistantName: cleanAgent,
+          folderNames,
+          fileIds: Array.from(fileIds),
+          folderIds: Array.from(folderIds)
         })
       });
       if (res.ok) {
         const json = await res.json().catch(() => ({}));
-        if (json.success || json.status === 'success') {
-          overallSuccess = true;
+        const looksLikeAccidentalUpload = Boolean(json?.message && /file stored in google drive/i.test(json.message));
+        if (looksLikeAccidentalUpload) {
+          webhookNeedsUpdate = true;
+          console.warn('[Echo Drive] Your deployed Apps Script webhook does not support delete_agent yet. Re-deploy the updated script from Google Drive Setup.');
+          // Clean up any dummy file the old webhook may have just created if Direct API token is available
+          if (json.fileId && getDriveAccessToken()) {
+            await deleteDriveFileDirect(json.fileId);
+          }
+        } else if (json.action === 'delete_agent' || json.deletedFolders !== undefined || json.deletedFiles !== undefined || json.success === true) {
+          webhookDeleted = true;
         }
       }
     } catch (err) {
@@ -1019,43 +1169,41 @@ export async function deleteAgentFolderAndFilesFromDrive(assistantName, uploaded
     }
   }
 
-  // 2. Direct Drive API Mode (or fallback if direct access tokens exist)
+  // 2. Direct Drive API Mode (ALWAYS uses deleteDriveFileDirect — NEVER loops back into webhookUrl!)
   if (getDriveAccessToken()) {
     try {
-      // A. Delete any files recorded with explicit driveFileId
-      if (Array.isArray(uploadedFiles)) {
-        for (const file of uploadedFiles) {
-          if (file?.driveFileId) {
-            await deleteDriveFile(file.driveFileId);
-          }
+      // A. Delete all recorded Drive file IDs & agent folder IDs directly in parallel
+      const directTasks = [
+        ...Array.from(fileIds).map(fid => deleteDriveFileDirect(fid)),
+        ...Array.from(folderIds).map(foid => deleteDriveFileDirect(foid))
+      ];
+      if (directTasks.length > 0) {
+        const directResults = await Promise.allSettled(directTasks);
+        if (directResults.some(r => r.status === 'fulfilled' && r.value === true)) {
+          directApiDeleted = true;
         }
       }
 
-      // B. Locate and trash the assistant's parent folder under ROOT_FOLDER_NAME or Echo_AI_Agent_Files
+      // B. Locate and delete ALL matching agent folders (case-insensitive) under BOTH root folder names
       const rootNames = [ROOT_FOLDER_NAME, 'Echo_AI_Agent_Files'];
+      const lowerAliases = new Set(folderNames.map(n => n.toLowerCase()));
       for (const rName of rootNames) {
         const rootFoldersQuery = `name = '${escapeDriveQuery(rName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
         const rootRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(rootFoldersQuery)}&fields=files(id,name)`);
-        if (rootRes.ok) {
-          const rootJson = await rootRes.json();
-          for (const rFolder of rootJson.files || []) {
-            const agentQuery = `name = '${escapeDriveQuery(cleanAgent)}' and mimeType = 'application/vnd.google-apps.folder' and '${escapeDriveQuery(rFolder.id)}' in parents and trashed = false`;
-            const agentRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(agentQuery)}&fields=files(id,name)`);
-            if (agentRes.ok) {
-              const agentJson = await agentRes.json();
-              for (const aFolder of agentJson.files || []) {
-                await deleteDriveFile(aFolder.id);
-                overallSuccess = true;
-              }
+        if (!rootRes.ok) continue;
+        const rootJson = await rootRes.json();
+        for (const rFolder of rootJson.files || []) {
+          const childrenQuery = `mimeType = 'application/vnd.google-apps.folder' and '${escapeDriveQuery(rFolder.id)}' in parents and trashed = false`;
+          const childRes = await driveFetch(`${DRIVE_API_BASE}/files?q=${encodeURIComponent(childrenQuery)}&fields=files(id,name)&pageSize=200`);
+          if (!childRes.ok) continue;
+          const childJson = await childRes.json();
+          for (const aFolder of childJson.files || []) {
+            const folderLower = String(aFolder.name || '').trim().toLowerCase();
+            if (lowerAliases.has(folderLower)) {
+              const ok = await deleteDriveFileDirect(aFolder.id);
+              if (ok) directApiDeleted = true;
             }
           }
-        }
-      }
-
-      // C. Clear in-memory folder cache matching this agent
-      for (const key of folderIdCache.keys()) {
-        if (key.includes(cleanAgent)) {
-          folderIdCache.delete(key);
         }
       }
     } catch (err) {
@@ -1063,13 +1211,27 @@ export async function deleteAgentFolderAndFilesFromDrive(assistantName, uploaded
     }
   }
 
-  return overallSuccess;
+  return {
+    deleted: webhookDeleted || directApiDeleted,
+    webhookDeleted,
+    directApiDeleted,
+    webhookNeedsUpdate: webhookNeedsUpdate && !directApiDeleted
+  };
 }
 
 /**
  * Trashes all Echo AI Agent folders and data across Google Drive.
  */
 export async function deleteAllAgentsDriveFolders() {
+  // Cancel ALL active background Drive syncs
+  for (const [k, ctrl] of activeAgentSyncControllers.entries()) {
+    try { ctrl.abort(); } catch (_) {}
+    deletedAgentsBlocklist.set(k, Date.now() + 5 * 60 * 1000);
+  }
+  activeAgentSyncControllers.clear();
+  folderIdCache.clear();
+  inFlightFolderPromises.clear();
+
   if (!isDriveConnected()) return false;
 
   const webhookUrl = getDriveWebhookUrl();
@@ -1092,12 +1254,10 @@ export async function deleteAllAgentsDriveFolders() {
         if (rootRes.ok) {
           const rootJson = await rootRes.json();
           for (const rFolder of rootJson.files || []) {
-            await deleteDriveFile(rFolder.id);
+            await deleteDriveFileDirect(rFolder.id);
           }
         }
       }
-      folderIdCache.clear();
-      inFlightFolderPromises.clear();
     } catch (e) {
       console.warn('Direct Drive deleteAllAgentsDriveFolders error:', e);
     }

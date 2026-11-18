@@ -33,6 +33,7 @@ import {
   saveAgent,
   subscribeToAgents,
   deleteAgent,
+  getAgentUploadedFilesFromCloud,
   deleteAllAgentsAndData,
   recordAgentDownload,
   checkAndPurgeExpiredAgentStorage,
@@ -840,24 +841,54 @@ export default function App() {
       return;
     }
 
+    // 1. Collect the freshest uploadedFiles from Firestore BEFORE deleting the agent doc
+    // so recently background-synced Google Drive fileIds & folderIds are never missed!
+    let mergedUploadedFiles = Array.isArray(targetObj.uploadedFiles) ? [...targetObj.uploadedFiles] : [];
+    try {
+      const cloudFiles = await getAgentUploadedFilesFromCloud(targetObj);
+      if (Array.isArray(cloudFiles) && cloudFiles.length > 0) {
+        const seenKeys = new Set(mergedUploadedFiles.map(f => f?.driveFileId || f?.id || f?.name));
+        for (const cf of cloudFiles) {
+          const k = cf?.driveFileId || cf?.id || cf?.name;
+          if (k && !seenKeys.has(k)) {
+            seenKeys.add(k);
+            mergedUploadedFiles.push(cf);
+          } else if (cf?.driveFileId) {
+            const idx = mergedUploadedFiles.findIndex(f => f?.id === cf?.id || f?.name === cf?.name);
+            if (idx >= 0 && !mergedUploadedFiles[idx].driveFileId) {
+              mergedUploadedFiles[idx] = { ...mergedUploadedFiles[idx], ...cf };
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Delete associated files and dedicated folder from Google Drive (and abort any in-flight background uploads!)
+    let driveDeleteResult = null;
+    try {
+      if (isDriveConnected()) {
+        driveDeleteResult = await deleteAgentFolderAndFilesFromDrive(nameToDelete, mergedUploadedFiles, {
+          agentId: idToDelete,
+          aliases: [nameToDelete, idToDelete]
+        });
+      }
+    } catch (err) {
+      console.warn("Failed to delete assistant files from Google Drive:", err);
+    }
+
+    // 3. Delete assistant from Firestore (and write tombstone for live embedded widgets)
     try {
       await deleteAgent(targetObj);
     } catch (err) {
       console.error("Failed to delete assistant from Firestore:", err);
     }
 
-    // Delete associated files and dedicated folder from Google Drive
-    try {
-      if (isDriveConnected()) {
-        await deleteAgentFolderAndFilesFromDrive(nameToDelete, targetObj.uploadedFiles || []);
-      }
-    } catch (err) {
-      console.warn("Failed to delete assistant files from Google Drive:", err);
-    }
-
-    // Delete associated files from local IndexedDB store
+    // 4. Delete associated files from local IndexedDB store
     try {
       await deleteAgentFilesFromLocalStore(nameToDelete);
+      if (idToDelete && idToDelete !== nameToDelete) {
+        await deleteAgentFilesFromLocalStore(idToDelete);
+      }
     } catch (err) {
       console.warn("Failed to delete assistant files from local store:", err);
     }
@@ -865,6 +896,13 @@ export default function App() {
     const remaining = assistantsList.filter(a => a.id !== idToDelete && a.name !== nameToDelete);
     setAssistantsList(remaining);
     setSelectedAssistantId(remaining.length > 0 ? remaining[0].id : null);
+
+    if (driveDeleteResult?.webhookNeedsUpdate) {
+      alert(
+        `Agent "${nameToDelete}" was deleted from your workspace, but your deployed Google Apps Script webhook is running an older version without the delete handler.\n\n` +
+        `To enable automatic Google Drive deletion on webhook mode, open "Google Drive Setup", copy the updated Apps Script code, paste it into script.google.com, and click Deploy → Manage deployments → Edit → New version.`
+      );
+    }
   };
 
   // Completely wipe all assistants and their data across Firestore, IndexedDB, Google Drive, and localStorage
@@ -1264,20 +1302,35 @@ export default function App() {
         const idToDelete = agentToDelete.id || agentToDelete.name;
         const nameToDelete = agentToDelete.name || agentToDelete.id;
 
+        let mergedChatFiles = Array.isArray(agentToDelete.uploadedFiles) ? [...agentToDelete.uploadedFiles] : [];
+        try {
+          const cloudFiles = await getAgentUploadedFilesFromCloud(agentToDelete);
+          if (Array.isArray(cloudFiles) && cloudFiles.length > 0) {
+            mergedChatFiles = [...cloudFiles, ...mergedChatFiles];
+          }
+        } catch (_) {}
+
+        let chatDriveRes = null;
+        try {
+          if (isDriveConnected()) {
+            chatDriveRes = await deleteAgentFolderAndFilesFromDrive(nameToDelete, mergedChatFiles, {
+              agentId: idToDelete,
+              aliases: [nameToDelete, idToDelete]
+            });
+          }
+        } catch (e) {
+          console.warn("Drive delete error:", e);
+        }
         try {
           await deleteAgent(agentToDelete);
         } catch (e) {
           console.error("Firestore delete error:", e);
         }
         try {
-          if (isDriveConnected()) {
-            await deleteAgentFolderAndFilesFromDrive(nameToDelete, agentToDelete.uploadedFiles || []);
-          }
-        } catch (e) {
-          console.warn("Drive delete error:", e);
-        }
-        try {
           await deleteAgentFilesFromLocalStore(nameToDelete);
+          if (idToDelete && idToDelete !== nameToDelete) {
+            await deleteAgentFilesFromLocalStore(idToDelete);
+          }
         } catch (e) {
           console.warn("Local store delete error:", e);
         }
@@ -1289,7 +1342,9 @@ export default function App() {
         const assistantMessage = {
           id: 'msg-' + (Date.now() + 1),
           sender: 'assistant',
-          text: `✓ I have permanently deleted "${nameToDelete}". All corresponding files and folders have been removed from Google Drive, IndexedDB, and Firestore.`,
+          text: chatDriveRes?.webhookNeedsUpdate
+            ? `✓ Deleted "${nameToDelete}" from your workspace and local storage. Note: Please re-deploy the updated Google Apps Script from "Google Drive Setup" once so your webhook also deletes the Google Drive folder automatically.`
+            : `✓ I have permanently deleted "${nameToDelete}". All corresponding files and folders have been removed from Google Drive, IndexedDB, and Firestore.`,
           timestamp: 'Just now'
         };
 
@@ -2502,7 +2557,7 @@ export default function App() {
 
                             {/* Top Input: Agent API Key with Enter/Edit, Copy and Eye toggle */}
                             <div className="space-y-1.5">
-                              <div className="flex items-center justify-between text-[11px]">
+                              <div className="flex items-center justify-between flex-wrap gap-2 text-[11px]">
                                 <span className="font-bold text-slate-800 flex items-center gap-1.5">
                                   <KeyRound size={13} className="text-indigo-600" />
                                   Agent API Key:
@@ -2513,7 +2568,25 @@ export default function App() {
                                       ✓ Key Saved & Active!
                                     </span>
                                   )}
-                                  <span className="text-slate-500">Dedicated AI Inference Key</span>
+                                  <a
+                                    href="https://console.groq.com/keys"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:text-indigo-800 text-[10px] font-semibold inline-flex items-center gap-0.5"
+                                  >
+                                    <span>Get Groq Key</span>
+                                    <ExternalLink size={10} />
+                                  </a>
+                                  <span className="text-slate-300">|</span>
+                                  <a
+                                    href="https://aistudio.google.com/app/apikey"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-emerald-600 hover:text-emerald-800 text-[10px] font-semibold inline-flex items-center gap-0.5"
+                                  >
+                                    <span>Get Gemini Key</span>
+                                    <ExternalLink size={10} />
+                                  </a>
                                 </div>
                               </div>
 

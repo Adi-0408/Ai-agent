@@ -396,6 +396,35 @@ export async function patchAgentUploadedFiles(agentNameOrId, updatesMap = {}) {
 }
 
 /**
+ * Fetch the latest uploadedFiles metadata for an agent from Firestore before deletion
+ * so recently background-synced Google Drive file IDs are never missed.
+ */
+export async function getAgentUploadedFilesFromCloud(nameOrId) {
+  try {
+    const rawId = typeof nameOrId === 'string' ? nameOrId : (nameOrId?.id || nameOrId?.name || '');
+    const titleId = getCleanTitleId(rawId);
+    const candidates = Array.from(new Set([titleId, rawId, nameOrId?.name ? getCleanTitleId(nameOrId.name) : ''].filter(Boolean)));
+    const collected = [];
+    const seen = new Set();
+    for (const cid of candidates) {
+      const snap = await getDoc(doc(db, AGENTS_COLLECTION, cid)).catch(() => null);
+      if (snap && snap.exists() && Array.isArray(snap.data()?.uploadedFiles)) {
+        for (const f of snap.data().uploadedFiles) {
+          const key = f?.driveFileId || f?.id || f?.name;
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            collected.push(f);
+          }
+        }
+      }
+    }
+    return collected;
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
  * Delete an agent and its corresponding conversation.
  * Writes a tombstone record to deleted_agents so live embed widgets immediately deactivate.
  */

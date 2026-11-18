@@ -377,8 +377,11 @@ export default function LiveFilesView({
 
     if (previewFile && previewFile.id === fileObj.id) setPreviewFile(null);
     await deleteFileFromLocalStore(fileObj.id);
-    if (fileObj.driveFileId && isDriveConnected()) {
-      await deleteDriveFile(fileObj.driveFileId);
+    if ((fileObj.driveFileId || fileObj.name) && isDriveConnected()) {
+      await deleteDriveFile(fileObj.driveFileId || `name_${fileObj.name}`, {
+        fileName: fileObj.name,
+        assistantName: targetAssistant?.name || ''
+      });
     }
     showNotice('info', `Removed "${fileObj.name}" from ${targetAssistant?.name || 'workspace'}.`);
   };
