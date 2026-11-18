@@ -104,6 +104,7 @@ export default function LiveFilesView({
   const [driveNotice, setDriveNotice] = useState(null);
   const [webhookCaps, setWebhookCaps] = useState(null);
   const [isCleaningOrphans, setIsCleaningOrphans] = useState(false);
+  const [isReindexing, setIsReindexing] = useState(false);
 
   useEffect(() => {
     const initial = getDriveConnectionStatus();
@@ -147,6 +148,19 @@ export default function LiveFilesView({
       showNotice('error', `Drive cleanup failed: ${err.message || String(err)}`);
     } finally {
       setIsCleaningOrphans(false);
+    }
+  };
+
+  const handleReindexAssistant = async (ast, astFiles) => {
+    if (!ast || !onUpdateAssistantFiles || isReindexing) return;
+    setIsReindexing(true);
+    try {
+      await onUpdateAssistantFiles(ast.id || ast.name, astFiles);
+      showNotice('success', `Deep project index & coverage refreshed for "${ast.name || ast.id}" (${astFiles.length} file(s) verified).`);
+    } catch (err) {
+      showNotice('error', `Re-indexing failed: ${err.message || String(err)}`);
+    } finally {
+      setIsReindexing(false);
     }
   };
 
@@ -530,6 +544,28 @@ export default function LiveFilesView({
                 <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-[11px] font-medium flex items-center gap-1">
                   📁 <strong>{astFiles.length}</strong> Files Stored
                 </span>
+                {(() => {
+                  const deepIdx = ast?.deepProjectIndex || ast?.siteBlueprint?.deepProjectIndex;
+                  const cov = deepIdx?.coverage;
+                  if (!cov) return null;
+                  const hasWarn = (cov.inaccessibleFilesCount || 0) > 0;
+                  return (
+                    <span
+                      className={`px-2 py-0.5 rounded-md border text-[11px] font-medium flex items-center gap-1 ${
+                        hasWarn
+                          ? 'bg-amber-50 text-amber-800 border-amber-300'
+                          : 'bg-violet-50 text-violet-700 border-violet-200'
+                      }`}
+                      title={deepIdx.summary || 'Deep Project Coverage Index'}
+                    >
+                      🔍 Index: <strong>{cov.analyzedFilesCount || 0}</strong> ({cov.coveragePercent ?? 100}%)
+                      {deepIdx.components?.length ? ` · ${deepIdx.components.length} comp` : ''}
+                      {deepIdx.backendRoutes?.length ? ` · ${deepIdx.backendRoutes.length} routes` : ''}
+                      {deepIdx.databaseSchemas?.length ? ` · ${deepIdx.databaseSchemas.length} schemas` : ''}
+                      {hasWarn ? ` · ⚠️ ${cov.inaccessibleFilesCount} unreadable` : ''}
+                    </span>
+                  );
+                })()}
                 {ast?.databaseConfig && (
                   <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[11px] font-semibold flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
@@ -554,6 +590,19 @@ export default function LiveFilesView({
                 className="hidden"
               />
             </label>
+
+            {astFiles.length > 0 && onUpdateAssistantFiles && (
+              <button
+                type="button"
+                onClick={() => handleReindexAssistant(ast, astFiles)}
+                disabled={isReindexing}
+                className="h-8 px-3 rounded-lg bg-white hover:bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                title={`Verify coverage and incrementally re-index all files for "${astName}"`}
+              >
+                <RefreshCw size={12} className={isReindexing ? 'animate-spin text-violet-600' : 'text-violet-600'} />
+                <span>{isReindexing ? 'Indexing...' : 'Re-Index Project'}</span>
+              </button>
+            )}
 
             {astFiles.length > 0 && onSendFilesToComposer && (
               <button

@@ -119,6 +119,8 @@ import {
   MicOff
 } from 'lucide-react';
 import { detectFileType, analyzeFullStackFiles } from './utils/codebaseAnalyzer';
+import { analyzeProjectArchitecture } from './utils/projectArchitectureAnalyzer';
+import { updateDeepProjectIndexIncremental, compactDeepProjectIndexForStorage } from './utils/deepProjectIndexer';
 import { synthesizeAgentFromFilesAndPrompt } from './services/agentSynthesizer';
 import { resolveLockedVoice, speakTextWithWatchdog, stopCurrentSpeech } from './utils/voiceConsistency';
 import { isZipFile, expandFileList } from './utils/zipHandler';
@@ -433,11 +435,64 @@ export default function App() {
     return { storedRecords, preparedFiles: prepared, driveReady };
   };
 
-  // Persist updated uploaded files list specifically on the targeted assistant
+  // Persist updated uploaded files list specifically on the targeted assistant AND run continuous incremental project re-indexing!
   const handleUpdateAssistantFiles = async (assistantId, nextFiles, nextKnowledgeBase = null, nextDbRecords = null, nextDbConfig = null) => {
     const cleanFiles = sanitizeFilesForFirestore(nextFiles);
     const target = assistantsList.find((a) => a.id === assistantId || a.name === assistantId);
     if (!target) return;
+
+    // Continuously refresh deepProjectIndex & projectArchitecture incrementally whenever files are added, modified, or deleted
+    let nextDeepIndex = target.deepProjectIndex || target.siteBlueprint?.deepProjectIndex || null;
+    let nextProjectArch = target.projectArchitecture || target.siteBlueprint?.projectArchitecture || null;
+    try {
+      const hydratedForIndex = await Promise.all((nextFiles || []).map(async (f) => {
+        if (f?.isBinary) return f;
+        let fullText = typeof f?.content === 'string' && f.content.length > 0 ? f.content : '';
+        if (!fullText && f?.id) {
+          try {
+            const cached = await getFileFromLocalStore(f.id);
+            if (cached && typeof cached.content === 'string') fullText = cached.content;
+          } catch (_) {}
+        }
+        return {
+          ...f,
+          content: fullText || f?.contentPreview || ''
+        };
+      }));
+
+      const updatedRawIndex = updateDeepProjectIndexIncremental(nextDeepIndex, hydratedForIndex, {
+        skippedFiles: Array.isArray(nextFiles?.omissionReport) ? nextFiles.omissionReport : undefined
+      });
+      nextDeepIndex = compactDeepProjectIndexForStorage(updatedRawIndex);
+      nextProjectArch = analyzeProjectArchitecture(hydratedForIndex);
+      if (nextProjectArch && nextDeepIndex) {
+        nextProjectArch.coverage = nextDeepIndex.coverage;
+        nextProjectArch.diagnostics = {
+          ...(nextProjectArch.diagnostics || {}),
+          unresolvedImports: nextDeepIndex.diagnostics?.unresolvedImports || [],
+          circularDependencies: nextDeepIndex.diagnostics?.circularDependencies || [],
+          orphanedModules: nextDeepIndex.diagnostics?.orphanedModules || [],
+          inaccessibleFiles: nextDeepIndex.diagnostics?.inaccessibleFiles || [],
+          totalIssuesCount:
+            (nextProjectArch.diagnostics?.missingBackendEndpoints?.length || 0) +
+            (nextProjectArch.diagnostics?.missingEnvVars?.length || 0) +
+            (nextProjectArch.diagnostics?.potentialIssues?.length || 0) +
+            (nextDeepIndex.diagnostics?.unresolvedImports?.length || 0) +
+            (nextDeepIndex.diagnostics?.circularDependencies?.length || 0) +
+            (nextDeepIndex.diagnostics?.inaccessibleFiles?.length || 0)
+        };
+      }
+    } catch (indexErr) {
+      console.warn('Incremental project re-index warning:', indexErr);
+    }
+
+    const updatedBlueprint = target.siteBlueprint
+      ? {
+          ...target.siteBlueprint,
+          deepProjectIndex: nextDeepIndex,
+          projectArchitecture: nextProjectArch
+        }
+      : (nextDeepIndex ? { deepProjectIndex: nextDeepIndex, projectArchitecture: nextProjectArch } : null);
 
     const updated = {
       ...target,
@@ -445,6 +500,9 @@ export default function App() {
       ...(nextKnowledgeBase ? { knowledgeBase: nextKnowledgeBase } : {}),
       ...(nextDbRecords ? { databaseRecords: nextDbRecords } : {}),
       ...(nextDbConfig ? { databaseConfig: nextDbConfig } : {}),
+      ...(nextDeepIndex ? { deepProjectIndex: nextDeepIndex } : {}),
+      ...(nextProjectArch ? { projectArchitecture: nextProjectArch } : {}),
+      ...(updatedBlueprint ? { siteBlueprint: updatedBlueprint } : {}),
       updatedAt: new Date().toISOString()
     };
 
@@ -1696,6 +1754,7 @@ export default function App() {
           siteBlueprint: currentAssistant?.siteBlueprint || null,
           frontendIntelligence: currentAssistant?.siteBlueprint?.frontendIndex || null,
           projectArchitecture: currentAssistant?.projectArchitecture || currentAssistant?.siteBlueprint?.projectArchitecture || null,
+          deepProjectIndex: currentAssistant?.deepProjectIndex || currentAssistant?.siteBlueprint?.deepProjectIndex || null,
           conversationHistory: (currentThread?.messages || []).slice(-8)
         }
       );

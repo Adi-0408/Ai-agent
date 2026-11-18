@@ -97,14 +97,36 @@ export function getMimeType(fileName, isText) {
  * @param {(current: number, total: number, fileName: string) => void} [onProgress]
  * @returns {Promise<File[]>}
  */
+export function classifyIgnoredZipPath(relativePath = '') {
+  const p = String(relativePath || '');
+  if (/__MACOSX|\.DS_Store$|Thumbs\.db$|(^|\/)(\.git|node_modules|\.venv|\.idea|\.vscode|dist|build|target|\.next)\//i.test(p)) {
+    return 'ignored_directory';
+  }
+  if (/(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock|cargo\.lock|poetry\.lock)$/i.test(p)) {
+    return 'lockfile';
+  }
+  if (/(^|\/)(readme|contributing|changelog|license|licence|setup|deploy|deployment|install|installation|architecture|todo|apps[_-]?script)[\w-]*\.(md|markdown|txt)$/i.test(p)) {
+    return 'developer_doc';
+  }
+  if (/\.(map|min\.js|min\.css|png|jpe?g|gif|webp|ico|bmp|tiff?|avif|mp4|mov|avi|webm|mp3|wav|ogg|woff2?|ttf|eot|otf|exe|dll|so|dylib|zip|tar|gz|rar|7z)$/i.test(p)) {
+    return 'binary_asset';
+  }
+  return null;
+}
+
 export async function extractFilesFromZip(zipFile, onProgress) {
   const zip = await JSZip.loadAsync(zipFile);
   const extractedFiles = [];
+  const omissionReport = [];
   const entries = [];
 
   zip.forEach((relativePath, entry) => {
     if (entry.dir) return;
-    if (IGNORED_PATH_PATTERNS.some((pat) => pat.test(relativePath))) return;
+    const skipReason = classifyIgnoredZipPath(relativePath);
+    if (skipReason || IGNORED_PATH_PATTERNS.some((pat) => pat.test(relativePath))) {
+      omissionReport.push({ path: relativePath, reason: skipReason || 'ignored_pattern' });
+      return;
+    }
     entries.push({ relativePath, entry });
   });
 
@@ -162,12 +184,14 @@ export async function extractFilesFromZip(zipFile, onProgress) {
     extractedFiles.push(...batchOut);
   }
 
+  extractedFiles.omissionReport = omissionReport;
   return extractedFiles;
 }
 
 /**
  * Expands an array of files, extracting any .zip archives into their
  * constituent files and leaving regular files as-is.
+ * Preserves an .omissionReport array listing skipped/ignored entries for coverage verification.
  * 
  * @param {File[]|FileList} fileList 
  * @param {(current: number, total: number, fileName: string) => void} [onProgress]
@@ -176,15 +200,20 @@ export async function extractFilesFromZip(zipFile, onProgress) {
 export async function expandFileList(fileList, onProgress) {
   const filesArray = Array.from(fileList || []);
   const result = [];
+  const combinedOmissions = [];
 
   for (const file of filesArray) {
     if (isZipFile(file)) {
       const unpacked = await extractFilesFromZip(file, onProgress);
+      if (Array.isArray(unpacked.omissionReport)) {
+        combinedOmissions.push(...unpacked.omissionReport);
+      }
       result.push(...unpacked);
     } else {
       result.push(file);
     }
   }
 
+  result.omissionReport = combinedOmissions;
   return result;
 }

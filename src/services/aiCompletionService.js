@@ -22,6 +22,10 @@ import {
   splitMultiStepQuestion,
   verifyAndPolishAnswer
 } from '../utils/projectArchitectureAnalyzer.js';
+import {
+  queryDeepProjectIndex,
+  resolveDeepProjectQuery
+} from '../utils/deepProjectIndexer.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -511,38 +515,55 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   const baseIdentity = promptContext;
   const isCustomerMode = options?.mode === 'customer' || options?.isLiveWidget;
 
-  // Complete Project Architecture, Frontend <-> Backend Data Flows & Code Diagnostics (Studio / Project Mode Only!)
+  // Complete Project Architecture, Deep Full-Coverage Index (1-Hop Graph Retrieval) & Code Diagnostics (Studio / Project Mode Only!)
   const projectArch = options?.projectArchitecture || options?.siteBlueprint?.projectArchitecture || userMessage?.projectArchitecture || userMessage?.siteBlueprint?.projectArchitecture || null;
-  const precomputedArchitecture = !isCustomerMode ? resolveProjectArchitectureQuery(cleanMessage, projectArch, { isCustomerMode }) : null;
+  const deepProjectIndex = options?.deepProjectIndex || options?.siteBlueprint?.deepProjectIndex || userMessage?.deepProjectIndex || userMessage?.siteBlueprint?.deepProjectIndex || null;
+  const precomputedArchitecture = !isCustomerMode
+    ? (resolveDeepProjectQuery(cleanMessage, deepProjectIndex, { isCustomerMode }) ||
+       resolveProjectArchitectureQuery(cleanMessage, projectArch, { isCustomerMode, deepProjectIndex }))
+    : null;
   const archLines = [];
-  if (!isCustomerMode && projectArch) {
-    if (projectArch.summary) archLines.push(`PROJECT_SUMMARY: ${projectArch.summary}`);
-    if (Array.isArray(projectArch.frameworks) && projectArch.frameworks.length > 0) {
+  if (!isCustomerMode && (projectArch || deepProjectIndex)) {
+    if (deepProjectIndex) {
+      const deepRetrieved = queryDeepProjectIndex(cleanMessage, deepProjectIndex, { topK: 6, maxNeighbors: 6 });
+      if (deepRetrieved?.dossierText) {
+        archLines.push(deepRetrieved.dossierText);
+      }
+      if (Array.isArray(deepProjectIndex.databaseRelationships) && deepProjectIndex.databaseRelationships.length > 0) {
+        archLines.push(`DB_RELATIONSHIPS: ${deepProjectIndex.databaseRelationships.slice(0, 10).map(r => `${r.fromTable}.${r.fromColumn}->${r.toTable}.${r.toColumn}`).join('; ')}`);
+      }
+    }
+    if (projectArch?.summary) archLines.push(`PROJECT_SUMMARY: ${projectArch.summary}`);
+    if (Array.isArray(projectArch?.frameworks) && projectArch.frameworks.length > 0) {
       archLines.push(`TECH_STACK: ${projectArch.frameworks.join(', ')}`);
     }
-    if (Array.isArray(projectArch.dependencies) && projectArch.dependencies.length > 0) {
-      archLines.push(`DEPENDENCIES: ${projectArch.dependencies.slice(0, 12).join(', ')}`);
+    if (Array.isArray(projectArch?.dependencies) && projectArch.dependencies.length > 0) {
+      archLines.push(`DEPENDENCIES: ${projectArch.dependencies.slice(0, 16).join(', ')}`);
     }
-    if (Array.isArray(projectArch.backendRoutes) && projectArch.backendRoutes.length > 0) {
-      archLines.push(`BACKEND_ROUTES: ${projectArch.backendRoutes.slice(0, 12).map(r => `${r.method} ${r.path} (${r.file}${r.tables?.length ? ` -> ${r.tables.join(',')}` : ''})`).join('; ')}`);
+    if (Array.isArray(projectArch?.backendRoutes) && projectArch.backendRoutes.length > 0) {
+      archLines.push(`BACKEND_ROUTES: ${projectArch.backendRoutes.slice(0, 16).map(r => `${r.method} ${r.path} (${r.file}${r.tables?.length ? ` -> ${r.tables.join(',')}` : ''})`).join('; ')}`);
     }
-    if (Array.isArray(projectArch.dataFlows) && projectArch.dataFlows.length > 0) {
-      archLines.push(`FRONTEND_BACKEND_DATA_FLOWS: ${projectArch.dataFlows.slice(0, 8).map(f => f.description).join(' | ')}`);
+    if (Array.isArray(projectArch?.dataFlows) && projectArch.dataFlows.length > 0) {
+      archLines.push(`FRONTEND_BACKEND_DATA_FLOWS: ${projectArch.dataFlows.slice(0, 10).map(f => f.description).join(' | ')}`);
     }
-    if (projectArch.diagnostics && projectArch.diagnostics.totalIssuesCount > 0) {
+    const diag = projectArch?.diagnostics || deepProjectIndex?.diagnostics;
+    if (diag && diag.totalIssuesCount > 0) {
       const diagDetails = [
-        ...(projectArch.diagnostics.missingBackendEndpoints || []).map(x => x.detail),
-        ...(projectArch.diagnostics.missingEnvVars || []).map(x => x.detail),
-        ...(projectArch.diagnostics.potentialIssues || []).map(x => x.detail)
-      ].slice(0, 6);
-      archLines.push(`CODE_DIAGNOSTICS: ${diagDetails.join(' | ')}`);
+        ...(diag.missingBackendEndpoints || []).map(x => x.detail),
+        ...(diag.unresolvedImports || []).map(x => x.detail),
+        ...(diag.circularDependencies || []).map(x => x.detail),
+        ...(diag.missingEnvVars || []).map(x => x.detail),
+        ...(diag.potentialIssues || []).map(x => x.detail),
+        ...(diag.inaccessibleFiles || []).map(x => `Inaccessible: ${x.path} (${x.reason})`)
+      ].slice(0, 8);
+      if (diagDetails.length > 0) archLines.push(`CODE_DIAGNOSTICS: ${diagDetails.join(' | ')}`);
     }
     if (precomputedArchitecture?.summaryText) {
       archLines.push(`DIRECT_ARCHITECTURE_ANSWER: ${precomputedArchitecture.summaryText}`);
     }
   }
   const architectureContext = archLines.length > 0
-    ? `\n\n[COMPLETE_PROJECT_ARCHITECTURE_AND_DATA_FLOW]\n${archLines.join('\n')}`
+    ? `\n\n[COMPLETE_PROJECT_INDEX_AND_CROSS_MODULE_GRAPH]\n${archLines.join('\n')}`
     : '';
 
   const verifiedFallbackSummary = precomputedArchitecture?.summaryText || precomputedFrontend?.summaryText || precomputedAnalytics?.summaryText || '';

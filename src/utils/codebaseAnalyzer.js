@@ -11,6 +11,7 @@ import { extractWebsiteBlueprint } from './websiteWorkflowAnalyzer.js';
 import { parseNumericPrice, computeCatalogStats } from './dataAnalyticsEngine.js';
 import { buildCrossPageFrontendIndex } from './frontendIntelligenceExtractor.js';
 import { analyzeProjectArchitecture } from './projectArchitectureAnalyzer.js';
+import { buildDeepProjectIndex, compactDeepProjectIndexForStorage } from './deepProjectIndexer.js';
 
 /**
  * Cleanly trims extracted text to a complete sentence boundary (NEVER leaves half-cut sentences or mid-word slices).
@@ -1302,20 +1303,45 @@ export function analyzeFullStackFiles(fileList = []) {
     }))
   };
 
-  // Complete Project Architecture, Frontend <-> Backend Data Flows & Code-Level Diagnostics
+  // Complete Project Architecture, Frontend <-> Backend Data Flows, Code Diagnostics & Deep Full-Coverage Project Index
   const projectArchitecture = analyzeProjectArchitecture(fileList, result);
+  const deepProjectIndex = buildDeepProjectIndex(fileList, {
+    skippedFiles: Array.isArray(fileList?.omissionReport) ? fileList.omissionReport : []
+  });
+  const compactDeepIndex = compactDeepProjectIndexForStorage(deepProjectIndex);
+
+  // Merge deep cross-module diagnostics (circular dependencies, unresolved imports, orphaned modules, inaccessible files)
+  projectArchitecture.diagnostics = {
+    ...(projectArchitecture.diagnostics || {}),
+    unresolvedImports: deepProjectIndex.diagnostics?.unresolvedImports || [],
+    circularDependencies: deepProjectIndex.diagnostics?.circularDependencies || [],
+    orphanedModules: deepProjectIndex.diagnostics?.orphanedModules || [],
+    inaccessibleFiles: deepProjectIndex.diagnostics?.inaccessibleFiles || [],
+    totalIssuesCount:
+      (projectArchitecture.diagnostics?.missingBackendEndpoints?.length || 0) +
+      (projectArchitecture.diagnostics?.missingEnvVars?.length || 0) +
+      (projectArchitecture.diagnostics?.potentialIssues?.length || 0) +
+      (deepProjectIndex.diagnostics?.unresolvedImports?.length || 0) +
+      (deepProjectIndex.diagnostics?.circularDependencies?.length || 0) +
+      (deepProjectIndex.diagnostics?.inaccessibleFiles?.length || 0)
+  };
+  projectArchitecture.coverage = deepProjectIndex.coverage;
+
   result.projectArchitecture = projectArchitecture;
+  result.deepProjectIndex = compactDeepIndex;
+  siteBlueprint.deepProjectIndex = compactDeepIndex;
   siteBlueprint.projectArchitecture = {
     fileCount: projectArchitecture.fileCount,
-    files: projectArchitecture.files.slice(0, 30),
+    files: projectArchitecture.files,
     frameworks: projectArchitecture.frameworks,
-    dependencies: projectArchitecture.dependencies.slice(0, 20),
+    dependencies: projectArchitecture.dependencies,
     configFiles: projectArchitecture.configFiles,
     referencedEnvVars: projectArchitecture.referencedEnvVars,
-    backendRoutes: projectArchitecture.backendRoutes.slice(0, 20),
-    dbTables: projectArchitecture.dbTables.slice(0, 20),
-    dataFlows: projectArchitecture.dataFlows.slice(0, 15),
+    backendRoutes: projectArchitecture.backendRoutes,
+    dbTables: projectArchitecture.dbTables,
+    dataFlows: projectArchitecture.dataFlows,
     diagnostics: projectArchitecture.diagnostics,
+    coverage: deepProjectIndex.coverage,
     summary: projectArchitecture.summary
   };
 

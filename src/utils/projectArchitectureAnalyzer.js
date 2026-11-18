@@ -8,6 +8,7 @@
  */
 
 import { fuzzyTokenMatch, NLU_STOPWORDS } from './fuzzyNlu.js';
+import { resolveDeepProjectQuery } from './deepProjectIndexer.js';
 
 function baseFileName(p = '') {
   return String(p || '').split(/[\\/]/).pop() || '';
@@ -442,18 +443,18 @@ export function analyzeProjectArchitecture(fileList = [], existingAnalysis = nul
 
   return {
     fileCount: safeFiles.length,
-    files: safeFiles.map(f => baseFileName(f.name || f.relativePath || '')).slice(0, 40),
+    files: safeFiles.map(f => baseFileName(f.name || f.relativePath || '')),
     frameworks: configs.frameworks,
     dependencies: configs.dependencies,
     scripts: configs.scripts,
     configFiles: configs.configFiles,
     referencedEnvVars: configs.referencedEnvVars,
-    backendRoutes: comm.backendRoutes.slice(0, 30),
-    frontendApiCalls: comm.frontendApiCalls.slice(0, 30),
-    dbOperations: comm.dbOperations.slice(0, 20),
+    backendRoutes: comm.backendRoutes,
+    frontendApiCalls: comm.frontendApiCalls,
+    dbOperations: comm.dbOperations,
     dbTables: allDbTables,
-    fileImports: comm.fileImports.slice(0, 25),
-    dataFlows: dataFlows.slice(0, 25),
+    fileImports: comm.fileImports,
+    dataFlows,
     diagnostics,
     summary
   };
@@ -464,33 +465,44 @@ export function analyzeProjectArchitecture(fileList = [], existingAnalysis = nul
  * Answers complex technical/architectural questions grounded strictly in analyzed project code!
  */
 export function resolveProjectArchitectureQuery(query, projectArch = null, options = {}) {
-  if (!projectArch || typeof projectArch !== 'object') return null;
   if (options?.isCustomerMode) return null; // Never expose code internals to live customer-facing widgets!
 
   const rawQ = String(query || '').trim();
   const lower = rawQ.toLowerCase();
   if (!lower) return null;
 
+  // 0. Check Deep Full-Coverage Project Index first for coverage, schema/relations, component/state, middleware, dependency impact & file deep-dives
+  const deepIndex = options?.deepProjectIndex || projectArch?.deepProjectIndex || null;
+  if (deepIndex) {
+    const deepHit = resolveDeepProjectQuery(rawQ, deepIndex, options);
+    if (deepHit) return deepHit;
+  }
+
+  if (!projectArch || typeof projectArch !== 'object') return null;
+
   // 1. Code-Level Diagnostics / Errors / Missing Functionality ("any errors", "missing endpoints", "broken links", "issues in project")
   if (/\b(error|errors|issue|issues|bug|bugs|missing\s+(?:endpoint|endpoints|api|apis|route|routes|functionality|handler|env|config)|broken\s+(?:link|api|endpoint|connection)|audit|diagnostic|diagnostics|potential\s+(?:issue|issues|problem|problems)|validate\s+(?:the\s+)?(?:project|code|apis?))\b/i.test(lower)) {
     const d = projectArch.diagnostics || {};
     const findings = [
       ...(d.missingBackendEndpoints || []).map(x => `Missing Endpoint: ${x.detail}`),
+      ...(d.unresolvedImports || []).map(x => `Unresolved Import: ${x.detail}`),
+      ...(d.circularDependencies || []).map(x => `Circular Dependency: ${x.detail}`),
       ...(d.missingEnvVars || []).map(x => `Config Warning: ${x.detail}`),
-      ...(d.potentialIssues || []).map(x => `Code Warning: ${x.detail}`)
+      ...(d.potentialIssues || []).map(x => `Code Warning: ${x.detail}`),
+      ...(d.inaccessibleFiles || []).map(x => `Inaccessible File: ${x.path} (${x.reason})`)
     ];
     if (findings.length > 0) {
       return {
         status: 'FOUND_IN_PROJECT_ARCHITECTURE',
         matchType: 'diagnostics',
-        summaryText: `Code-level project analysis found ${findings.length} issue(s): ${findings.slice(0, 4).join(' ')}${d.orphanRoutes?.length ? ` Also noted ${d.orphanRoutes.length} unused backend route(s) (${d.orphanRoutes.slice(0, 2).map(r => r.endpoint).join(', ')}).` : ''}`,
+        summaryText: `Code-level project analysis found ${findings.length} issue(s): ${findings.slice(0, 5).join(' ')}${d.orphanRoutes?.length ? ` Also noted ${d.orphanRoutes.length} unused backend route(s) (${d.orphanRoutes.slice(0, 2).map(r => r.endpoint).join(', ')}).` : ''}`,
         data: d
       };
     }
     return {
       status: 'FOUND_IN_PROJECT_ARCHITECTURE',
       matchType: 'diagnostics_clean',
-      summaryText: `Project code analysis verified ${projectArch.fileCount || 0} files, ${projectArch.backendRoutes?.length || 0} backend routes, and ${projectArch.dataFlows?.length || 0} data flows with zero missing API endpoints or unhandled route issues detected.`,
+      summaryText: `Project code analysis verified ${projectArch.fileCount || 0} files, ${projectArch.backendRoutes?.length || 0} backend routes, and ${projectArch.dataFlows?.length || 0} data flows with zero missing API endpoints, unresolved imports, circular dependencies, or unhandled route issues detected.`,
       data: d
     };
   }

@@ -373,13 +373,15 @@ ${combinedKb.slice(0, 20).map(k => `- Q: ${k.q} -> A: ${k.a}`).join('\n')}
     };
   }
 
-  // Ensure human-readable title ID and attach ONLY user's key, records, archetype, and Stage-1 siteBlueprint
+  // Ensure human-readable title ID and attach ONLY user's key, records, archetype, siteBlueprint, projectArchitecture & deepProjectIndex
   const cleanId = (parsedAgent.name || 'AI Assistant').trim().replace(/\//g, '-');
   parsedAgent.id = cleanId;
   parsedAgent.apiKey = effectiveGroqKey || effectiveGeminiKey || '';
   parsedAgent.databaseRecords = Array.isArray(analysisResult?.databaseRecords) ? analysisResult.databaseRecords : [];
   parsedAgent.archetype = analysisResult?.archetype || 'general';
   parsedAgent.siteBlueprint = siteBlueprint || null;
+  parsedAgent.projectArchitecture = analysisResult?.projectArchitecture || siteBlueprint?.projectArchitecture || null;
+  parsedAgent.deepProjectIndex = analysisResult?.deepProjectIndex || siteBlueprint?.deepProjectIndex || null;
 
   return parsedAgent;
 }

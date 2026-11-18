@@ -144,6 +144,10 @@ export default function CreateAssistantModal({ isOpen, onClose, onAssistantCreat
         };
       }));
 
+      if (Array.isArray(fileList?.omissionReport)) {
+        processedFiles.omissionReport = fileList.omissionReport;
+      }
+
       setPendingRawFiles(processedFiles);
 
       const fullStack = analyzeFullStackFiles(processedFiles);
@@ -234,6 +238,8 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         databaseProvider: fullStack.databaseProvider || null,
         databaseStatusMessage: dbConnectedMsg,
         siteBlueprint: bp,
+        projectArchitecture: fullStack.projectArchitecture || bp?.projectArchitecture || null,
+        deepProjectIndex: fullStack.deepProjectIndex || bp?.deepProjectIndex || null,
         systemPrompt: trainedPrompt,
         greeting: meta.greeting,
         role: meta.roleTitle,
@@ -336,6 +342,8 @@ ${topProductsSummary ? `${topProductsSummary}\n(Additional records available via
         databaseConfig: extractedData?.databaseConfig || null,
         databaseProvider: extractedData?.databaseProvider || null,
         siteBlueprint: extractedData?.siteBlueprint || null,
+        projectArchitecture: extractedData?.projectArchitecture || extractedData?.siteBlueprint?.projectArchitecture || null,
+        deepProjectIndex: extractedData?.deepProjectIndex || extractedData?.siteBlueprint?.deepProjectIndex || null,
         tools: Array.isArray(extractedData?.tools) ? extractedData.tools : [],
         uploadedFiles: storedUploadedFiles,
         sourceFile: uploadedFileName || null,
