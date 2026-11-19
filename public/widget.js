@@ -5101,30 +5101,122 @@
     function collectLiveDomSectionsForLinks() {
       if (typeof document === 'undefined') return [];
       const results = [];
-      const seenIds = new Set();
+      const seenKeys = new Set();
+      const currOrigin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+      const currPath = (typeof window !== 'undefined' && window.location && window.location.pathname) ? window.location.pathname : '/';
+      const normCurr = String(currPath || '/').toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+
       try {
-        const els = document.querySelectorAll('section[id], form[id], main[id], article[id], div[id], table[id]');
-        for (const el of els) {
-          if (!el || !el.id || el.closest('#voice-helpdesk-root')) continue;
+        // 1. Explicitly anchored sections, forms, and tables (with id="...")
+        const idEls = document.querySelectorAll('section[id], form[id], main[id], article[id], div[id], table[id]');
+        for (const el of idEls) {
+          if (!el || !el.id || (el.closest && el.closest('#voice-helpdesk-root'))) continue;
           const id = String(el.id).trim();
-          if (!id || seenIds.has(id.toLowerCase()) || /^(root|app|__next|modal|toast|tooltip)$/i.test(id)) continue;
-          const headingEl = el.querySelector('h1, h2, h3, h4, legend, caption');
-          const label = (headingEl?.textContent || el.getAttribute('aria-label') || id.replace(/[-_]+/g, ' '))
+          if (!id || seenKeys.has(`id::${id.toLowerCase()}`) || /^(root|app|__next|modal|toast|tooltip)$/i.test(id)) continue;
+          const headingEl = el.querySelector ? el.querySelector('h1, h2, h3, h4, legend, caption') : null;
+          const label = (headingEl?.textContent || (el.getAttribute && el.getAttribute('aria-label')) || id.replace(/[-_]+/g, ' '))
             .replace(/\s+/g, ' ')
             .trim()
             .slice(0, 50);
           if (!label || label.length < 2) continue;
-          seenIds.add(id.toLowerCase());
+          seenKeys.add(`id::${id.toLowerCase()}`);
+          seenKeys.add(`lbl::${label.toLowerCase()}`);
           const tag = (el.tagName || '').toLowerCase();
-          const targetType = (tag === 'form' || el.querySelector('form')) ? 'form' : (tag === 'table' ? 'report' : 'section');
+          const hasForm = tag === 'form' || Boolean(el.querySelector && el.querySelector('form'));
+          const targetType = hasForm
+            ? 'form'
+            : (tag === 'table'
+                ? 'report'
+                : (/dashboard|analytics|chart|report/i.test(`${label} ${id}`) ? 'dashboard' : 'section'));
           results.push({
             id,
+            href: `#${id}`,
             label,
             targetType,
+            isCrossPage: false,
             element: el,
             textPreview: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180)
           });
-          if (results.length >= 30) break;
+          if (results.length >= 24) break;
+        }
+
+        // 2. Heading-anchored sections WITHOUT an explicit id (e.g., <h2>Fee Structure</h2> inside a section/div)
+        const headingEls = document.querySelectorAll('h1, h2, h3');
+        for (const hEl of headingEls) {
+          if (!hEl || (hEl.closest && hEl.closest('#voice-helpdesk-root'))) continue;
+          const label = (hEl.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50);
+          if (!label || label.length < 3 || seenKeys.has(`lbl::${label.toLowerCase()}`)) continue;
+          const container = (hEl.closest && hEl.closest('section, article, main, form, div')) || hEl;
+          const containerId = (container && container.id) ? String(container.id).trim() : '';
+          if (containerId && seenKeys.has(`id::${containerId.toLowerCase()}`)) continue;
+          seenKeys.add(`lbl::${label.toLowerCase()}`);
+          const targetType = (container && ((container.tagName || '').toLowerCase() === 'form' || (container.querySelector && container.querySelector('form'))))
+            ? 'form'
+            : (/dashboard|analytics|chart|report/i.test(label) ? 'dashboard' : 'section');
+          results.push({
+            id: containerId,
+            href: containerId ? `#${containerId}` : '',
+            label,
+            targetType,
+            isCrossPage: false,
+            element: container || hEl,
+            textPreview: (container?.textContent || label).replace(/\s+/g, ' ').trim().slice(0, 180)
+          });
+          if (results.length >= 40) break;
+        }
+
+        // 3. Live multi-page navigation links (<nav a[href]>, <header a[href]>, <footer a[href]>, same-origin .html / /path links)
+        const navAnchors = document.querySelectorAll('nav a[href], header a[href], footer a[href], a[href$=".html"], a[href^="/"]');
+        for (const aEl of navAnchors) {
+          if (!aEl || (aEl.closest && aEl.closest('#voice-helpdesk-root'))) continue;
+          const rawHref = String((aEl.getAttribute && aEl.getAttribute('href')) || aEl.href || '').trim();
+          if (!rawHref || rawHref === '#' || /^(?:javascript:|mailto:|tel:|sms:|wa\.me|whatsapp:)/i.test(rawHref)) continue;
+          const label = (aEl.textContent || (aEl.getAttribute && aEl.getAttribute('aria-label')) || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 50);
+          if (!label || label.length < 2 || /^(home|back|top|menu|close|login|sign\s*in)$/i.test(label)) continue;
+
+          // Same-page hash link (#section)
+          if (rawHref.startsWith('#') && rawHref.length > 1) {
+            const hashId = rawHref.slice(1);
+            if (seenKeys.has(`id::${hashId.toLowerCase()}`) || seenKeys.has(`lbl::${label.toLowerCase()}`)) continue;
+            seenKeys.add(`id::${hashId.toLowerCase()}`);
+            seenKeys.add(`lbl::${label.toLowerCase()}`);
+            const targetEl = typeof document.getElementById === 'function' ? document.getElementById(hashId) : null;
+            results.push({
+              id: hashId,
+              href: rawHref,
+              label,
+              targetType: /form|apply|admission|register|contact/i.test(`${label} ${hashId}`) ? 'form' : 'section',
+              isCrossPage: false,
+              element: targetEl || null,
+              textPreview: targetEl ? (targetEl.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 140) : label
+            });
+            continue;
+          }
+
+          // Reject off-origin external domains
+          if (/^https?:\/\//i.test(rawHref) && currOrigin && !rawHref.startsWith(currOrigin)) continue;
+          const cleanPath = rawHref.replace(/^https?:\/\/[^/]+/i, '').split('?')[0];
+          const normLink = cleanPath.toLowerCase().replace(/\/index\.html?$/, '/') || '/';
+          if (normLink === normCurr || seenKeys.has(`href::${cleanPath.toLowerCase()}`)) continue;
+
+          seenKeys.add(`href::${cleanPath.toLowerCase()}`);
+          const targetType = /dashboard|analytics|report|chart|stats/i.test(`${label} ${cleanPath}`)
+            ? 'dashboard'
+            : (/apply|admission|register|form|contact|book|checkout/i.test(`${label} ${cleanPath}`) ? 'form' : 'page');
+          results.push({
+            id: '',
+            href: rawHref,
+            redirectUrl: rawHref,
+            label,
+            targetType,
+            isCrossPage: true,
+            element: null,
+            textPreview: `${label} ${cleanPath}`
+          });
+          if (results.length >= 55) break;
         }
       } catch (_) {}
       return results;
@@ -5274,14 +5366,22 @@
       for (const domSec of liveDomSections) {
         const label = String(domSec.label || domSec.id || '').trim();
         const secId = domSec.id || '';
-        if (!label || !secId) continue;
-        const sc = scoreCand([label, secId, domSec.textPreview || '']);
+        const href = domSec.href || (secId ? `#${secId}` : '');
+        const redirectUrl = domSec.isCrossPage ? (domSec.redirectUrl || href || null) : null;
+        if (!label || (!secId && !href && !domSec.element)) continue;
+        const sc = scoreCand([label, secId, href, domSec.textPreview || '']);
         const total = sc.primaryScore + Math.min(sc.replyScore, 9);
         if (sc.primaryScore >= 7 || total >= 12) {
           candidates.push({
-            label, href: `#${secId}`, sectionId: secId, redirectUrl: null,
-            isCrossPage: false, targetType: domSec.targetType || 'section',
-            sectionInfo: domSec.element ? domSec : null, score: total + 2, primaryScore: sc.primaryScore
+            label,
+            href,
+            sectionId: secId,
+            redirectUrl,
+            isCrossPage: Boolean(domSec.isCrossPage && redirectUrl),
+            targetType: domSec.targetType || 'section',
+            sectionInfo: domSec.element ? domSec : null,
+            score: total + 2,
+            primaryScore: sc.primaryScore
           });
         }
       }

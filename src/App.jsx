@@ -9,6 +9,7 @@ import LiveFilesView from './components/LiveFilesView';
 import LiveLogsView from './components/LiveLogsView';
 import GoogleDriveSetupModal from './components/GoogleDriveSetupModal';
 import ApiKeyModal from './components/ApiKeyModal';
+import RichMessageContent from './components/RichMessageContent';
 import { generateAIResponse, AI_KEYS, getUserApiKeys, hasValidUserApiKey, saveUserApiKeys, clearUserApiKeys } from './services/aiCompletionService';
 import {
   isDriveConnected,
@@ -1755,7 +1756,7 @@ export default function App() {
           frontendIntelligence: currentAssistant?.siteBlueprint?.frontendIndex || null,
           projectArchitecture: currentAssistant?.projectArchitecture || currentAssistant?.siteBlueprint?.projectArchitecture || null,
           deepProjectIndex: currentAssistant?.deepProjectIndex || currentAssistant?.siteBlueprint?.deepProjectIndex || null,
-          conversationHistory: (currentThread?.messages || []).slice(-8)
+          conversationHistory: (currentThread?.messages || []).slice(-12)
         }
       );
 
@@ -3594,7 +3595,23 @@ export default function App() {
                             </div>
                           )}
 
-                          <div className="whitespace-pre-wrap break-words leading-relaxed">{msg.text}</div>
+                          <RichMessageContent
+                            text={msg.text}
+                            isUser={msg.sender === 'user'}
+                            siteBaseUrl={currentAssistant?.websiteUrl || currentAssistant?.siteBlueprint?.baseUrl || ''}
+                            onSectionNavigate={(link) => {
+                              const href = String(link?.href || '').trim();
+                              if (href.startsWith('#')) {
+                                const targetEl = document.getElementById(href.slice(1));
+                                if (targetEl && typeof targetEl.scrollIntoView === 'function') {
+                                  targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                  return;
+                                }
+                              }
+                              // In Studio without a live external websiteUrl, open Live Files view so user can inspect the matching page/section
+                              setActiveView('files');
+                            }}
+                          />
 
                           {/* Synthesized Agent Blueprint Card */}
                           {msg.synthesizedAgent && (

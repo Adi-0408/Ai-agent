@@ -26,6 +26,8 @@ import {
   isFarewellMessage
 } from '../utils/voiceConsistency';
 import { generateAIResponse, getUserApiKeys, transcribeAudioWithGroqWhisper } from '../services/aiCompletionService';
+import RichMessageContent from './RichMessageContent';
+import { stripLinksForSpeech } from '../utils/richMessageParser';
 
 export default function VoiceTestModal({ isOpen, onClose, assistant }) {
   const [isRecording, setIsRecording] = useState(false);
@@ -508,16 +510,21 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
 
     try {
       const activeKey = assistant?.apiKey || getUserApiKeys().activeKey || '';
+      const defaultDetailedPrompt = `You are ${assistantName}, a warm, polite, and knowledgeable AI voice & chat assistant. Provide thorough, accurate, and well-structured answers customized to the complexity of each question.`;
       const reply = await generateAIResponse(
         cleanText,
-        assistant?.systemPrompt || `You are ${assistantName}, a helpful AI voice assistant. Respond in 1-2 clear, conversational spoken sentences.`,
+        assistant?.prompt || assistant?.systemPrompt || defaultDetailedPrompt,
         assistant?.knowledgeBase || [],
         activeKey,
         {
           agentName: assistantName,
           databaseRecords: assistant?.databaseRecords || [],
           databaseConfig: assistant?.databaseConfig || null,
-          conversationHistory: messagesRef.current,
+          siteBlueprint: assistant?.siteBlueprint || null,
+          frontendIntelligence: assistant?.siteBlueprint?.frontendIndex || null,
+          projectArchitecture: assistant?.projectArchitecture || assistant?.siteBlueprint?.projectArchitecture || null,
+          deepProjectIndex: assistant?.deepProjectIndex || assistant?.siteBlueprint?.deepProjectIndex || null,
+          conversationHistory: (messagesRef.current || []).slice(-12),
           whisperLang,
           previousLang: prevLang
         }
@@ -532,7 +539,7 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages((prev) => [...prev, botMsg]);
-      speakText(replyText, { shouldAutoListen });
+      speakText(stripLinksForSpeech(replyText) || replyText, { shouldAutoListen });
     } catch (err) {
       console.error('Error getting response:', err);
       const fallback = `I encountered an issue: ${err.message || 'Please check your API key'}.`;
@@ -726,7 +733,12 @@ export default function VoiceTestModal({ isOpen, onClose, assistant }) {
                     : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none'
                 }`}
               >
-                <div>{m.text}</div>
+                <RichMessageContent
+                  text={m.text}
+                  isUser={m.sender === 'user'}
+                  siteBaseUrl={assistant?.websiteUrl || assistant?.siteBlueprint?.baseUrl || ''}
+                  compact
+                />
                 <div
                   className={`text-[9.5px] mt-1 text-right ${
                     m.sender === 'user' ? 'text-indigo-200' : 'text-slate-400'
