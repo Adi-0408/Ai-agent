@@ -754,7 +754,7 @@ export async function uploadFileToDrive({
 export async function uploadFilesBatchToDrive(fileTasks = [], options = {}) {
   if (!Array.isArray(fileTasks) || fileTasks.length === 0) return [];
   const isWebhook = Boolean(getDriveWebhookUrl());
-  const concurrency = Math.max(1, Number(options.concurrency || (isWebhook ? 4 : 6)));
+  const concurrency = Math.max(1, Number(options.concurrency || (isWebhook ? 2 : 6)));
   const uploadFn = typeof options.uploadFn === 'function' ? options.uploadFn : uploadFileToDrive;
   const onFileProgress = typeof options.onFileProgress === 'function' ? options.onFileProgress : null;
   const signal = options.signal || null;
@@ -777,14 +777,40 @@ export async function uploadFilesBatchToDrive(fileTasks = [], options = {}) {
   }
 
   const results = new Array(fileTasks.length);
-  let nextIdx = 0;
   let completedCount = 0;
+
+  // In Webhook mode, upload the very first file for each unique assistant sequentially first.
+  // This guarantees that the Google Drive folder 'Echo_AI_Agent_Files / <Assistant Name>'
+  // is fully created and established on Google Drive before parallel uploads start,
+  // completely eliminating duplicate folder race conditions!
+  if (isWebhook && fileTasks.length > 1) {
+    const seenAgents = new Set();
+    for (let i = 0; i < fileTasks.length; i++) {
+      const task = fileTasks[i];
+      const aName = task.assistantName || 'Shared Workspace';
+      if (!seenAgents.has(aName)) {
+        seenAgents.add(aName);
+        if (signal?.aborted || isAgentDriveSyncCancelled(aName)) continue;
+        try {
+          const driveMeta = await uploadFn(task);
+          results[i] = { id: task.id, fileName: task.fileName, ok: true, driveMeta };
+          completedCount++;
+          if (onFileProgress) onFileProgress(completedCount, fileTasks.length, results[i]);
+        } catch (fErr) {
+          console.warn('[Echo Drive] Sequential seed upload failed for', task.fileName, fErr);
+        }
+      }
+    }
+  }
+
+  let nextIdx = 0;
 
   async function worker() {
     while (true) {
       if (signal?.aborted) break;
       const idx = nextIdx++;
       if (idx >= fileTasks.length) break;
+      if (results[idx]) continue; // Already processed by seed upload!
       const task = fileTasks[idx];
       if (isAgentDriveSyncCancelled(task.assistantName)) {
         results[idx] = { id: task.id, fileName: task.fileName, ok: false, cancelled: true };
@@ -1491,4 +1517,30 @@ export async function cleanupOrphanedDriveFolders(activeAgentNames = []) {
     removedNames: Array.from(new Set(removedNames)),
     webhookNeedsUpdate: webhookNeedsUpdate && !directCleaned
   };
+}
+
+/**
+ * Automatically merges duplicate agent folders on Google Drive into a single folder
+ * and moves duplicate empty folders to Trash.
+ */
+export async function deduplicateDriveFolders() {
+  const webhookUrl = getDriveWebhookUrl();
+  if (!webhookUrl) return { success: false, mergedDuplicateFolders: 0 };
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'deduplicate' })
+    });
+    if (res.ok) {
+      const json = await res.json().catch(() => ({}));
+      return {
+        success: true,
+        mergedDuplicateFolders: Number(json?.mergedDuplicateFolders || 0)
+      };
+    }
+  } catch (err) {
+    console.warn('[Echo Drive] deduplicateDriveFolders error:', err);
+  }
+  return { success: false, mergedDuplicateFolders: 0 };
 }

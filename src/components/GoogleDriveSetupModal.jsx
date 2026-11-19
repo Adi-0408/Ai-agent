@@ -36,6 +36,9 @@ const APPS_SCRIPT_SOURCE = `/**
 var ROOT_FOLDER_NAME = 'Echo_AI_Agent_Files';
 
 function doGet(e) {
+  try {
+    deduplicateRootFolders();
+  } catch (_) {}
   return respondJson({
     status: 'online',
     success: true,
@@ -46,6 +49,12 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  var lock = LockService.getScriptLock();
+  var hasLock = false;
+  try {
+    hasLock = lock.tryLock(30000);
+  } catch (_) {}
+
   try {
     if (!e || !e.postData || !e.postData.contents) {
       return respondJson({ status: 'error', success: false, message: 'No payload received' });
@@ -54,13 +63,19 @@ function doPost(e) {
     var payload = JSON.parse(e.postData.contents);
     var action = payload.action || 'upload';
 
-    if (action === 'ping') {
+    if (action === 'ping' || action === 'deduplicate') {
+      var mergedCount = 0;
+      try {
+        mergedCount = deduplicateRootFolders();
+      } catch (_) {}
       return respondJson({
         status: 'success',
         success: true,
         supportsDelete: true,
         supportsRename: true,
         supportsOrphanCleanup: true,
+        supportsDeduplication: true,
+        mergedDuplicateFolders: mergedCount,
         message: 'Connected to Echo_AI_Agent_Files'
       });
     }
@@ -293,12 +308,83 @@ function doPost(e) {
     });
   } catch (err) {
     return respondJson({ status: 'error', success: false, message: err.toString() });
+  } finally {
+    if (hasLock) {
+      try { lock.releaseLock(); } catch (_) {}
+    }
   }
 }
 
 function getOrCreateSubFolder(parent, name) {
   var it = parent.getFoldersByName(name);
-  return it.hasNext() ? it.next() : parent.createFolder(name);
+  if (it.hasNext()) {
+    var primaryFolder = it.next();
+    while (it.hasNext()) {
+      var duplicateFolder = it.next();
+      try {
+        mergeFoldersRecursively(duplicateFolder, primaryFolder);
+      } catch (err) {
+        try { duplicateFolder.setTrashed(true); } catch (_) {}
+      }
+    }
+    return primaryFolder;
+  }
+  return parent.createFolder(name);
+}
+
+function mergeFoldersRecursively(source, target) {
+  if (!source || !target || source.getId() === target.getId()) return;
+  var files = source.getFiles();
+  while (files.hasNext()) {
+    var file = files.next();
+    var existingInTarget = target.getFilesByName(file.getName());
+    if (existingInTarget.hasNext()) {
+      file.setTrashed(true);
+    } else {
+      file.moveTo(target);
+    }
+  }
+  var subFolders = source.getFolders();
+  while (subFolders.hasNext()) {
+    var sub = subFolders.next();
+    var targetSubMatches = target.getFoldersByName(sub.getName());
+    if (targetSubMatches.hasNext()) {
+      mergeFoldersRecursively(sub, targetSubMatches.next());
+    } else {
+      sub.moveTo(target);
+    }
+  }
+  try {
+    source.setTrashed(true);
+  } catch (_) {}
+}
+
+function deduplicateRootFolders() {
+  var roots = [ROOT_FOLDER_NAME, 'Echo AI Agents'];
+  var mergedCount = 0;
+  for (var r = 0; r < roots.length; r++) {
+    var rootIt = DriveApp.getFoldersByName(roots[r]);
+    while (rootIt.hasNext()) {
+      var root = rootIt.next();
+      var seen = {};
+      var subs = root.getFolders();
+      var foldersToInspect = [];
+      while (subs.hasNext()) {
+        foldersToInspect.push(subs.next());
+      }
+      for (var i = 0; i < foldersToInspect.length; i++) {
+        var fld = foldersToInspect[i];
+        var fName = fld.getName().trim().toLowerCase();
+        if (!seen[fName]) {
+          seen[fName] = fld;
+        } else {
+          mergeFoldersRecursively(fld, seen[fName]);
+          mergedCount++;
+        }
+      }
+    }
+  }
+  return mergedCount;
 }
 
 function trashFolderRecursively(folder) {

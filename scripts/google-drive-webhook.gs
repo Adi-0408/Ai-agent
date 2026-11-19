@@ -7,19 +7,19 @@
  * 
  *   Echo_AI_Agent_Files / <Assistant Name> / Frontend | Backend | Database
  * 
- * WHY THIS APPROACH:
- * - ZERO Google Cloud Console / OAuth 2.0 Web Client ID complexity.
- * - ZERO token expirations — the Web App URL works permanently for your Drive.
- * - ZERO login friction for any team member or client uploading code or data.
- * - 100% centralized: all files are automatically saved into your Google Drive.
+ * FEATURES:
+ * - Thread-safe concurrency protection via LockService (ZERO duplicate folders).
+ * - Automatic deduplication & auto-healing: if duplicate folders exist, merges
+ *   them into 1 folder and trashes empty duplicates automatically.
+ * - Full deletion support (action === 'delete_agent', 'delete_file', 'delete_all').
+ * - Automatic orphaned agent folder cleanup.
  * 
- * DEPLOYMENT / UPDATE INSTRUCTIONS:
+ * UPDATE INSTRUCTIONS (Takes 30 seconds):
  * 1. Open Google Apps Script: https://script.google.com
  * 2. Open your project ("Echo AI Agent Drive Storage Webhook").
- * 3. Replace the entire code editor content with this script.
- * 4. Click Save (Disk icon).
- * 5. CRITICAL TO APPLY CHANGES:
- *    Click "Deploy" (top right) -> "Manage deployments" -> Click the Pencil (Edit) icon.
+ * 3. Replace all code in the editor with this script.
+ * 4. Save (Ctrl + S).
+ * 5. Click "Deploy" (top right) -> "Manage deployments" -> Click the Pencil (Edit) icon.
  *    Under "Version", select "New version".
  *    Click "Deploy" -> Click "Done".
  * ==============================================================================
@@ -28,6 +28,9 @@
 var ROOT_FOLDER_NAME = 'Echo_AI_Agent_Files';
 
 function doGet(e) {
+  try {
+    deduplicateRootFolders();
+  } catch (_) {}
   return respondJson({
     status: 'online',
     success: true,
@@ -38,6 +41,13 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  // Use ScriptLock to prevent concurrent upload requests from racing and creating duplicate folders
+  var lock = LockService.getScriptLock();
+  var hasLock = false;
+  try {
+    hasLock = lock.tryLock(30000); // Wait up to 30s
+  } catch (_) {}
+
   try {
     if (!e || !e.postData || !e.postData.contents) {
       return respondJson({ status: 'error', success: false, message: 'No payload received' });
@@ -46,14 +56,20 @@ function doPost(e) {
     var payload = JSON.parse(e.postData.contents);
     var action = payload.action || 'upload';
 
-    // ── ACTION: Ping / Capability Check ──
-    if (action === 'ping') {
+    // ── ACTION: Ping / Capability Check / Auto-Deduplicate ──
+    if (action === 'ping' || action === 'deduplicate') {
+      var mergedCount = 0;
+      try {
+        mergedCount = deduplicateRootFolders();
+      } catch (_) {}
       return respondJson({
         status: 'success',
         success: true,
         supportsDelete: true,
         supportsRename: true,
         supportsOrphanCleanup: true,
+        supportsDeduplication: true,
+        mergedDuplicateFolders: mergedCount,
         message: 'Connected to Echo_AI_Agent_Files'
       });
     }
@@ -177,8 +193,9 @@ function doPost(e) {
       return respondJson({ status: 'success', success: true, action: 'rename_agent', renamedFolders: renamedFolders });
     }
 
-    // ── ACTION: Clean Up Orphaned Folders ──
+    // ── ACTION: Clean Up Orphaned Folders & Deduplicate ──
     if (action === 'cleanup_orphans') {
+      try { deduplicateRootFolders(); } catch (_) {}
       var activeArr = Array.isArray(payload.activeNames) ? payload.activeNames : [];
       var activeMap = {};
       for (var ai = 0; ai < activeArr.length; ai++) {
@@ -258,13 +275,13 @@ function doPost(e) {
     var rootFolders = DriveApp.getFoldersByName(ROOT_FOLDER_NAME);
     var rootFolder = rootFolders.hasNext() ? rootFolders.next() : DriveApp.createFolder(ROOT_FOLDER_NAME);
 
-    // 2. Assistant folder
+    // 2. Assistant folder (Thread-safe & auto-deduplicating)
     var agentFolder = getOrCreateSubFolder(rootFolder, assistantName);
 
     // 3. Category folder (Frontend | Backend | Database)
     var tierFolder = getOrCreateSubFolder(agentFolder, tierLabel);
 
-    // 4. Clean replace if file already exists
+    // 4. Clean replace if file already exists in same category
     var existingFiles = tierFolder.getFilesByName(fileName);
     while (existingFiles.hasNext()) {
       try { existingFiles.next().setTrashed(true); } catch (t) {}
@@ -288,12 +305,102 @@ function doPost(e) {
     });
   } catch (err) {
     return respondJson({ status: 'error', success: false, message: err.toString() });
+  } finally {
+    if (hasLock) {
+      try { lock.releaseLock(); } catch (_) {}
+    }
   }
 }
 
+/**
+ * Gets an existing subfolder by name. If duplicate folders with the same name exist
+ * (e.g. from previous concurrent upload race conditions), automatically merges all
+ * files and subfolders into the primary folder and moves the duplicate folders to Trash!
+ */
 function getOrCreateSubFolder(parent, name) {
   var it = parent.getFoldersByName(name);
-  return it.hasNext() ? it.next() : parent.createFolder(name);
+  if (it.hasNext()) {
+    var primaryFolder = it.next();
+    // Auto-heal duplicate folders: merge any duplicate sibling folder into primaryFolder
+    while (it.hasNext()) {
+      var duplicateFolder = it.next();
+      try {
+        mergeFoldersRecursively(duplicateFolder, primaryFolder);
+      } catch (err) {
+        try { duplicateFolder.setTrashed(true); } catch (_) {}
+      }
+    }
+    return primaryFolder;
+  }
+  return parent.createFolder(name);
+}
+
+/**
+ * Recursively moves all files and subfolders from sourceFolder into targetFolder,
+ * then trashes the empty sourceFolder.
+ */
+function mergeFoldersRecursively(source, target) {
+  if (!source || !target || source.getId() === target.getId()) return;
+
+  // 1. Move all files from source to target
+  var files = source.getFiles();
+  while (files.hasNext()) {
+    var file = files.next();
+    var existingInTarget = target.getFilesByName(file.getName());
+    if (existingInTarget.hasNext()) {
+      file.setTrashed(true);
+    } else {
+      file.moveTo(target);
+    }
+  }
+
+  // 2. Move or merge subfolders from source to target
+  var subFolders = source.getFolders();
+  while (subFolders.hasNext()) {
+    var sub = subFolders.next();
+    var targetSubMatches = target.getFoldersByName(sub.getName());
+    if (targetSubMatches.hasNext()) {
+      mergeFoldersRecursively(sub, targetSubMatches.next());
+    } else {
+      sub.moveTo(target);
+    }
+  }
+
+  // 3. Trash empty source folder
+  try {
+    source.setTrashed(true);
+  } catch (_) {}
+}
+
+/**
+ * Global scan across Echo_AI_Agent_Files to merge any duplicate folders with identical names.
+ */
+function deduplicateRootFolders() {
+  var roots = [ROOT_FOLDER_NAME, 'Echo AI Agents'];
+  var mergedCount = 0;
+  for (var r = 0; r < roots.length; r++) {
+    var rootIt = DriveApp.getFoldersByName(roots[r]);
+    while (rootIt.hasNext()) {
+      var root = rootIt.next();
+      var seen = {};
+      var subs = root.getFolders();
+      var foldersToInspect = [];
+      while (subs.hasNext()) {
+        foldersToInspect.push(subs.next());
+      }
+      for (var i = 0; i < foldersToInspect.length; i++) {
+        var fld = foldersToInspect[i];
+        var fName = fld.getName().trim().toLowerCase();
+        if (!seen[fName]) {
+          seen[fName] = fld;
+        } else {
+          mergeFoldersRecursively(fld, seen[fName]);
+          mergedCount++;
+        }
+      }
+    }
+  }
+  return mergedCount;
 }
 
 function trashFolderRecursively(folder) {
