@@ -1401,36 +1401,29 @@ export function analyzeFullStackFiles(fileList = []) {
 export function detectWebsiteArchetype(siteTitle = '', summary = '', sampleRecords = [], sampleKb = []) {
   const recordsText = (sampleRecords || []).map(r => `${r.name || ''} ${r.category || ''} ${r.description || ''}`).join(' ');
   const kbText = (sampleKb || []).map(k => `${k.q || ''} ${k.a || ''}`).join(' ');
-  const combined = `${siteTitle} ${summary} ${recordsText} ${kbText}`.toLowerCase();
+  const title = String(siteTitle || '').toLowerCase();
+  const body = `${summary} ${recordsText} ${kbText}`.toLowerCase();
+  const signals = {
+    academic: [/school/, /college/, /university/, /admission/, /student/, /academic/, /shikshan/, /vidyalaya/, /syllabus/, /scholarship/],
+    healthcare: [/pharmacy/, /medicine/, /prescription/, /clinic/, /hospital/, /patient/, /doctor/, /pharma/, /dosage/],
+    food: [/restaurant/, /cafe/, /dining/, /menu/, /bakery/, /pizza/, /kitchen/, /cuisine/, /food ordering/],
+    hospitality: [/hotel/, /resort/, /guest house/, /guest reservation/, /room booking/, /room reservation/, /check-in/, /check-out/, /villa/, /hostel/, /accommodation/, /banquet/],
+    saas: [/saas/, /software platform/, /subscription/, /pricing tier/, /free trial/, /cloud platform/],
+    automotive: [/automotive/, /dealership/, /showroom/, /test drive/, /vehicle/, /motorcycle/, /car servicing/],
+    financial: [/financial/, /finance/, /tax filing/, /itr/, /gst/, /wealth management/, /accounting/, /audit/, /investment/, /mutual fund/, /loan/, /consultancy/],
+    realestate: [/real estate/, /property/, /apartment/, /2bhk/, /3bhk/, /plot/, /floor plan/],
+    ecommerce: [/e-commerce/, /ecommerce/, /online store/, /shop/, /store/, /sneaker/, /clothing/, /fashion/, /electronics/, /cart/, /checkout/, /shipping/]
+  };
 
-  if (/\b(admission|admissions|school|college|university|academy|academic|student|students|course|courses|degree|diploma|syllabus|faculty|tuition|shikshan|sanstha|vidyalaya|curriculum|exam|campus|hall\s*ticket|scholarship|standard\s*\d+|std\s*\d+|grade\s*\d+)\b/i.test(combined)) {
-    return 'academic';
-  }
-  if (/\b(pharmacy|medicine|medicines|drug|drugs|pill|pills|tablet|tablets|prescription|capsule|syrup|dosage|clinic|hospital|patient|doctor|pharma|wellness)\b/i.test(combined)) {
-    return 'healthcare';
-  }
-  if (/\b(restaurant|cafe|dining|food|dish|dishes|menu|bakery|pizza|burger|meal|kitchen|cuisine|dessert|beverage|chef|order\s*food|table\s*reservation)\b/i.test(combined)) {
-    return 'food';
-  }
-  if (/\b(hotel|resort|room|rooms|stay|suite|check-in|check-out|villa|hostel|vacation|banquet)\b/i.test(combined)) {
-    return 'hospitality';
-  }
-  if (/\b(software|saas|subscription|pricing\s*tier|starter\s*plan|pro\s*plan|enterprise\s*plan|cloud\s*platform|free\s*trial)\b/i.test(combined)) {
-    return 'saas';
-  }
-  if (/\b(car|cars|vehicle|vehicles|automotive|dealership|showroom|test\s*drive|suv|sedan|motorcycle|bike|servicing)\b/i.test(combined)) {
-    return 'automotive';
-  }
-  if (/\b(finance|financial|tax\s*filing|itr|gst|wealth\s*management|accounting|audit|loan|loans|investment|mutual\s*fund|consultancy)\b/i.test(combined)) {
-    return 'financial';
-  }
-  if (/\b(real\s*estate|property|properties|apartment|apartments|flat|flats|2bhk|3bhk|plot|plots|site\s*visit|floor\s*plan)\b/i.test(combined)) {
-    return 'realestate';
-  }
-  if (/\b(shop|store|e-commerce|ecommerce|sneaker|shoe|shoes|clothing|apparel|fashion|electronics|gadget|watch|cart|checkout|shipping|return\s*policy|add\s*to\s*cart)\b/i.test(combined)) {
-    return 'ecommerce';
-  }
-  return 'general';
+  const scores = Object.entries(signals).map(([archetype, patterns]) => {
+    let score = 0;
+    for (const pattern of patterns) {
+      if (pattern.test(title)) score += 6;
+      if (pattern.test(body)) score += 1;
+    }
+    return { archetype, score };
+  }).sort((a, b) => b.score - a.score);
+  return scores[0]?.score > 0 ? scores[0].archetype : 'general';
 }
 
 /**

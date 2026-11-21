@@ -53,6 +53,11 @@ function humanizeSlug(slug = '') {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function isNoisyCustomerLabel(value = '') {
+  const text = String(value || '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return !text || /\b(?:settings|container|feedback|msg|message container|product title|about title|subtitle|vendors?\.js|esd|main msg|input field|field label|untitled|undefined|null)\b/i.test(text);
+}
+
 function extractKeywords(...parts) {
   const stop = new Set(['the', 'and', 'for', 'with', 'from', 'that', 'this', 'your', 'our', 'are', 'you', 'html', 'page', 'section', 'div', 'index', 'main', 'view', 'component']);
   const tokens = parts
@@ -94,8 +99,9 @@ function extractRoutes(frontendFiles) {
       }
       return;
     }
-    seenPath.add(normKey);
     const finalLabel = (label && label.length >= 2 && label.length <= 60) ? label : (normKey === '/' ? 'Home' : humanizeSlug(cleanPath));
+    if (isNoisyCustomerLabel(finalLabel)) return;
+    seenPath.add(normKey);
     routes.push({
       path: cleanPath.startsWith('/') || cleanPath.endsWith('.html') || cleanPath.endsWith('.htm') ? cleanPath : `/${cleanPath}`,
       label: finalLabel,
@@ -183,6 +189,7 @@ function extractSections(frontendFiles, routes = []) {
     seen.add(key);
 
     const finalLabel = (label && label.length >= 2 && label.length <= 75) ? label : humanizeSlug(cleanId);
+    if (isNoisyCustomerLabel(finalLabel)) return;
     const fullHref = pagePath && pagePath !== '/' ? `${pagePath}#${cleanId}` : `#${cleanId}`;
     sections.push({
       id: cleanId,
@@ -329,6 +336,8 @@ function extractForms(frontendFiles, routes = []) {
       if (fields.length === 1 && /^search/i.test(fields[0]) && !/admission|apply|book|order|contact|register|checkout|enroll/i.test(rawTitle)) {
         continue;
       }
+      // Empty or generated forms (feedback widgets, mail wrappers, settings controls) are not customer workflows.
+      if (fields.length === 0 || isNoisyCustomerLabel(rawTitle) || isNoisyCustomerLabel(submitLabel)) continue;
 
       const key = `${rawTitle.toLowerCase()}::${(sectionId || fName).toLowerCase()}`;
       if (seen.has(key)) continue;
@@ -370,11 +379,9 @@ function buildWorkflowsAndSummary(blueprint, archetype, brandName) {
   const findFormByPat = (pat) => forms.find(f => pat.test(`${f.title} ${f.id} ${f.submitLabel} ${(f.keywords || []).join(' ')}`));
   const findRouteByPat = (pat) => routes.find(r => pat.test(`${r.path} ${r.label} ${(r.keywords || []).join(' ')}`));
 
-  const primaryForm =
-    findFormByPat(/admission|application|apply|enroll|register|checkout|order|book|reserve|appointment|test.?drive|trial|signup|consult/i) ||
-    forms[0] || null;
+  const primaryForm = findFormByPat(/admission|application|apply|enroll|register|checkout|order|book|reserve|appointment|test.?drive|trial|signup|consult/i) || null;
   const contactForm = findFormByPat(/contact|inquiry|enquiry|support|message|callback/i) || null;
-  const catalogSection = findSectionByPat(/course|program|product|catalog|inventory|menu|dish|plan|pricing|room|vehicle|property|service/i) || sections[0] || null;
+  const catalogSection = findSectionByPat(/course|program|product|catalog|inventory|menu|dish|plan|pricing|room|vehicle|property|service/i) || null;
   const pricingSection = findSectionByPat(/fee|price|pricing|rate|plan|cost|tariff/i) || null;
 
   if (catalogSection) {
@@ -468,7 +475,7 @@ function buildWorkflowsAndSummary(blueprint, archetype, brandName) {
     saas: 'SaaS Product & Subscription Platform',
     hospitality: 'Hotel & Guest Reservation Portal',
     automotive: 'Automotive Showroom & Test-Drive Portal',
-    financial: 'Financial & Tax Advisory Portal',
+    financial: 'Financial Consultancy Website',
     realestate: 'Real Estate Listings & Site-Visit Portal',
     general: 'Customer Service & Business Portal'
   };
