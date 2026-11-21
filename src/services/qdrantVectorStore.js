@@ -13,11 +13,11 @@
  */
 
 import { QdrantClient } from '@qdrant/js-client-rest';
-import { computeDenseEmbedding as generateDenseVector, cosineSimilarity } from '../utils/semanticHybridRag.js';
+import { getEmbeddingProvider } from './embeddingProvider.js';
 
 // Configuration strictly read from environment or runtime options (never hardcoded)
 const DEFAULT_COLLECTION = 'echo_agent_vectors';
-const VECTOR_DIMENSION = 128; // Matches canonical dense embedding dimension
+const VECTOR_DIMENSION = 1536; // OpenAI text-embedding-3-small
 
 // In-memory local fallback store when Qdrant server is not configured in local environment
 const localQdrantStore = new Map(); // collectionName -> Map of points
@@ -99,14 +99,17 @@ export async function ensureQdrantCollection(client, collectionName = DEFAULT_CO
 export async function upsertQdrantDocuments(documents = [], options = {}) {
   const {
     collectionName = DEFAULT_COLLECTION,
-    tenantId = 'default_tenant',
-    agentId = 'default_agent',
+    tenantId,
+    agentId,
     client = null
   } = options;
+
+  if (!tenantId || !agentId) throw new Error('Qdrant upsert requires tenantId and agentId');
 
   const effectiveClient = client || getQdrantClient(options);
   const isRemote = await ensureQdrantCollection(effectiveClient, collectionName);
 
+  const vectors = await (options.embeddingProvider || getEmbeddingProvider()).embedDocuments(documents.map(doc => typeof doc === 'string' ? doc : (doc.pageContent || doc.content || doc.text || `${doc.q || ''} ${doc.a || ''}`)));
   const points = [];
   const localMap = localQdrantStore.get(collectionName) || new Map();
 
@@ -116,7 +119,7 @@ export async function upsertQdrantDocuments(documents = [], options = {}) {
     const meta = (typeof doc === 'object' && doc.metadata) ? doc.metadata : (typeof doc === 'object' ? doc : {});
 
     const pointId = meta.chunkId || meta.id || `pt_${Date.now()}_${i}`;
-    const vector = doc.vector || generateDenseVector(text);
+    const vector = doc.vector || vectors[i];
     const docHash = meta.docHash || `hash_${i}`;
 
     const payload = {
@@ -125,6 +128,13 @@ export async function upsertQdrantDocuments(documents = [], options = {}) {
       source: meta.source || 'ingestion',
       tenantId: meta.tenantId || tenantId,
       agentId: meta.agentId || agentId,
+      sourceId: meta.sourceId || meta.source || 'ingestion',
+      sourceType: meta.sourceType || 'knowledge',
+      documentId: meta.documentId || meta.id || pointId,
+      chunkId: meta.chunkId || pointId,
+      path: meta.path || meta.sourcePath || '',
+      visibility: meta.visibility || 'PUBLIC',
+      lastUpdated: meta.lastUpdated || meta.updatedAt || new Date().toISOString(),
       docHash,
       updatedAt: meta.updatedAt || new Date().toISOString()
     };
@@ -166,14 +176,16 @@ export async function upsertQdrantDocuments(documents = [], options = {}) {
 export async function searchQdrant(queryText = '', options = {}) {
   const {
     collectionName = DEFAULT_COLLECTION,
-    tenantId = 'default_tenant',
-    agentId = 'default_agent',
+    tenantId,
+    agentId,
     topK = 5,
     threshold = 0.42,
     client = null
   } = options;
 
-  const queryVector = generateDenseVector(queryText);
+  if (!tenantId || !agentId) throw new Error('Qdrant search requires tenantId and agentId');
+
+  const queryVector = await (options.embeddingProvider || getEmbeddingProvider()).embedQuery(queryText);
   const effectiveClient = client || getQdrantClient(options);
 
   if (effectiveClient) {
@@ -181,7 +193,8 @@ export async function searchQdrant(queryText = '', options = {}) {
       const filter = {
         must: [
           { key: 'tenantId', match: { value: tenantId } },
-          { key: 'agentId', match: { value: agentId } }
+          { key: 'agentId', match: { value: agentId } },
+          { key: 'visibility', match: { value: options.visibility || 'PUBLIC' } }
         ]
       };
 
@@ -216,7 +229,7 @@ export async function searchQdrant(queryText = '', options = {}) {
     if (item.payload.tenantId !== tenantId) continue; // Tenant Isolation
     if (item.payload.agentId !== agentId) continue;   // Agent Isolation
 
-    const score = cosineSimilarity(queryVector, item.vector);
+    const score = 0;
     if (score >= threshold) {
       candidates.push({
         id: item.id,
@@ -267,7 +280,8 @@ export async function qdrantHybridSearch(queryText = '', options = {}) {
 /**
  * Deletes all documents for an agent, enforcing tenant safety.
  */
-export async function deleteAgentQdrantDocs(agentId, tenantId = 'default_tenant', collectionName = DEFAULT_COLLECTION) {
+export async function deleteAgentQdrantDocs(agentId, tenantId, collectionName = DEFAULT_COLLECTION) {
+  if (!agentId || !tenantId) throw new Error('Qdrant deletion requires tenantId and agentId');
   const client = getQdrantClient();
   if (client) {
     try {

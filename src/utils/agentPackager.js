@@ -34,7 +34,7 @@ export function generateStandaloneScriptContent(agent) {
     position: agent.position || 'bottom-right',
     avatar: agent.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
     knowledgeBase: agent.knowledgeBase || [],
-    database: agent.database || agent.databaseConfig || agent.dbRecords || agent.databaseRecords || [],
+    // Live data and credentials are never embedded in downloadable client code.
     tools: agent.tools || [],
     compiledAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()

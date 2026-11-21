@@ -136,6 +136,10 @@ export async function executeCentralAIResponse(request = {}) {
     model = 'llama-3.3-70b-versatile'
   } = request;
 
+  if (request.tenantId === undefined || request.agentId === undefined || !String(request.tenantId).trim() || !String(request.agentId).trim()) {
+    throw new Error('Central AI execution requires tenantId and agentId');
+  }
+
   const rawUserText = String(userMessage || '').trim();
   if (!rawUserText) {
     return {
@@ -294,10 +298,7 @@ export async function executeCentralAIResponse(request = {}) {
   return {
     reply: finalReply,
     language: detectedLang,
-    confidence: ragSearchResult.confidence,
-    verified: verification.isAccurate,
     groundedSources: groundedContext.map(c => c.title),
-    databaseToolResult: dbResult,
     latencyMs
   };
 }

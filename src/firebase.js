@@ -312,8 +312,12 @@ function sanitizeForFirestore(obj) {
  */
 export async function saveAgent(agent, options = {}) {
   const titleId = getCleanTitleId(agent.name || agent.title || agent.id);
+  const tenantId = agent.tenantId || agent.ownerId || auth.currentUser?.uid;
+  if (!tenantId) throw new Error('An authenticated tenant is required to save an agent');
   const agentRef = doc(db, AGENTS_COLLECTION, titleId);
   const agentInfoRef = doc(db, AGENT_INFO_COLLECTION, titleId);
+  const publicAgentRef = doc(db, 'public_agents', titleId);
+  const privateAgentRef = doc(db, 'private_agents', titleId);
 
   // Collect all previous IDs / names that differ from the new titleId so old docs are ALWAYS deleted on rename
   const prevIdsToPurge = new Set();
@@ -355,6 +359,8 @@ export async function saveAgent(agent, options = {}) {
 
   const rawPayload = {
     ...cleanAgentFields,
+    tenantId,
+    ownerId: tenantId,
     databaseRecords: sanitizedDbRecords,
     knowledgeBase: sanitizedKb,
     previousNames: Array.from(prevNamesSet),
@@ -371,11 +377,35 @@ export async function saveAgent(agent, options = {}) {
   };
 
   const payload = sanitizeForFirestore(rawPayload);
+  const publicPayload = sanitizeForFirestore({
+    agentId: titleId,
+    name: payload.name,
+    greeting: payload.greeting || '',
+    avatar: payload.avatar || '',
+    themeColor: payload.themeColor || '#6366f1',
+    accentColor: payload.accentColor || '#06b6d4',
+    position: payload.position || 'bottom-right',
+    voice: payload.voice || 'Adam',
+    navigation: payload.publicNavigation || [],
+    allowedOrigins: Array.isArray(payload.allowedOrigins) ? payload.allowedOrigins : [],
+    status: payload.status,
+    isDeleted: Boolean(payload.isDeleted),
+    updatedAt: serverTimestamp()
+  });
+  const privatePayload = sanitizeForFirestore({
+    ...payload,
+    tenantId,
+    agentId: titleId,
+    publicKnowledgeBase: sanitizedKb,
+    publicFieldAllowlist: payload.publicFieldAllowlist || {}
+  });
 
-  // 1. Dual-write to both 'agents' and 'agent_info'
+  // Keep editor documents synchronized and maintain distinct API-facing public/private configs.
   await Promise.all([
     setDoc(agentRef, payload, { merge: true }),
-    setDoc(agentInfoRef, payload, { merge: true })
+    setDoc(agentInfoRef, payload, { merge: true }),
+    setDoc(publicAgentRef, publicPayload, { merge: true }),
+    setDoc(privateAgentRef, privatePayload, { merge: true })
   ]);
 
   // 2. AWAIT purging ALL old document IDs when renaming so subscribeToAgents NEVER shows a duplicate!

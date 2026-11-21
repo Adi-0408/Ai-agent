@@ -288,63 +288,14 @@ async function runTests() {
     passed++;
   }
 
-  // TEST 7: Live Widget (public/widget.js) Parity, DOM Freshness, Ultra-Deterministic Temp & Zero Blue Box
+  // TEST 7: Published widget delegates secure execution to the backend.
   {
-    assert.ok(widgetSrc.includes('function crossVerifyWidgetSources('), 'widget.js must include crossVerifyWidgetSources');
-    assert.ok(widgetSrc.includes('function verifyWidgetAnswerAccuracy('), 'widget.js must include verifyWidgetAnswerAccuracy');
-    assert.ok(widgetSrc.includes('function computeWidgetDataVersion('), 'widget.js must include computeWidgetDataVersion');
-    assert.ok(widgetSrc.includes('_catalogCache.domVersion === currDomVer'), 'widget.js _catalogCache must invalidate on DOM mutations');
-    assert.ok(widgetSrc.includes('temperature: 0.05'), 'widget.js must use ultra-deterministic temperature 0.05');
-    assert.ok(widgetSrc.includes('[CROSS_VERIFIED_GROUND_TRUTH]'), 'widget.js must inject cross-verified ground truth');
-    assert.ok(widgetSrc.includes('HONEST UNCERTAINTY'), 'widget.js must preserve HONEST UNCERTAINTY');
-
-    // Execute mirrored widget verification helpers inside VM sandbox
-    const archetypeStart = widgetSrc.indexOf('const ARCHETYPE_PROFILES =');
-    const archetypeEnd = widgetSrc.indexOf('let lastConfigFetchAt =');
-    const helperStart = widgetSrc.indexOf('function isCustomerSafeFaq(');
-    const helperEnd = widgetSrc.indexOf('// Maintain multi-turn conversation memory');
-
-    const sandbox = {
-      console,
-      URL,
-      window: { location: { pathname: '/', origin: 'https://college.example.com' } },
-      document: { title: 'Sunrise College', querySelector: () => null, querySelectorAll: () => [], getElementById: () => null },
-      agentConfig: { name: 'Sunrise College', databaseRecords: sampleCourses, knowledgeBase: staleConflictKb },
-      conversationHistory: [],
-      detectTextLanguage: () => 'en-US',
-      getWidgetScript: () => null,
-      findHostSection: () => null,
-      scrollToHostSection: () => {},
-      executeRedirectAction: () => {}
-    };
-    vm.createContext(sandbox);
-    vm.runInContext(
-      `${widgetSrc.slice(archetypeStart, archetypeEnd)}\n${widgetSrc.slice(helperStart, helperEnd)}`,
-      sandbox
-    );
-
-    const wConflict = sandbox.crossVerifyWidgetSources({
-      catalogItems: sampleCourses,
-      knowledgeBase: staleConflictKb,
-      hostKnowledge: { phone: '+91 98220 11223', email: 'admissions@sunrise.edu' }
-    });
-    assert.equal(wConflict.conflicts.length, 1);
-    assert.ok(wConflict.groundTruthBlock.includes('₹28,000/yr'));
-
-    const wRepair = sandbox.verifyWidgetAnswerAccuracy(
-      'Class 11 Science costs ₹99,000 and you can call +91 77777 66666.',
-      {
-        groundTruth: wConflict,
-        bridgeResult: { status: 'FOUND_IN_HOST_STATE', data: sampleCourses[0] },
-        catalogItems: sampleCourses
-      }
-    );
-    assert.equal(wRepair.passed, false);
-    assert.equal(wRepair.repaired, true);
-    assert.ok(wRepair.text.includes('₹28,000/yr') && !wRepair.text.includes('₹99,000'), `Widget must auto-repair wrong price: ${wRepair.text}`);
-    assert.ok(!wRepair.text.includes('77777'), `Widget must strip fabricated phone: ${wRepair.text}`);
-
-    console.log('✅ Test 7 passed: Live widget.js cross-verification, hallucination repair, DOM freshness & deterministic temperature verified');
+    assert.ok(widgetSrc.includes("/api/agent/query"));
+    assert.ok(!widgetSrc.includes("databaseRecords"));
+    assert.ok(!widgetSrc.includes("supabaseKey") && !widgetSrc.includes("firestore.googleapis.com"));
+    assert.ok(!widgetSrc.includes("api.groq.com") && !widgetSrc.includes("api.openai.com"));
+    assert.ok(widgetSrc.includes("The assistant is temporarily unavailable"));
+    console.log("✅ Test 7 passed: Public widget is a thin client for the secure API");
     passed++;
   }
 

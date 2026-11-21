@@ -352,7 +352,7 @@ export function executeStructuredQuery(queryPlan, tableRecords = [], queryLang =
         ? `डेटाबेसमधील माहितीनुसार: ${table} मध्ये एकूण ${count} ${label} आहेत.`
         : queryLang.startsWith('hi')
           ? `डेटाबेस रिकॉर्ड के अनुसार: ${table} में कुल ${count} ${label} उपलब्ध हैं।`
-          : `According to live database records: there are currently ${count} ${label} in ${table}.`;
+          : `There are currently ${count} ${label} available.`;
 
       return {
         success: true,
@@ -397,7 +397,7 @@ export function executeStructuredQuery(queryPlan, tableRecords = [], queryLang =
             operation,
             table,
             summaryText,
-            computedData: { record: sanitizeDatabaseRecord(specificRecord), stock }
+            computedData: { stock }
           };
         }
       }
@@ -469,13 +469,13 @@ export function executeStructuredQuery(queryPlan, tableRecords = [], queryLang =
             ? `${name} ची फी/किंमत: ${formatted}`
             : queryLang.startsWith('hi')
               ? `${name} की फीस/मूल्य: ${formatted}`
-              : `The ${metricField || 'fee'} for ${name} is ${formatted}.`;
+            : `The ${metricField === 'price' || !metricField ? 'price' : metricField} of ${name} is ${formatted}.`;
           return {
             success: true,
             operation,
             table,
             summaryText,
-            computedData: { record: sanitizeDatabaseRecord(specificRecord), formatted }
+            computedData: { formatted }
           };
         }
       }
@@ -566,7 +566,7 @@ export function executeStructuredQuery(queryPlan, tableRecords = [], queryLang =
         operation,
         table,
         summaryText,
-        computedData: { record: sanitized }
+        computedData: { publicSummary: { name, status, price: sanitized.price || sanitized.fees || null, description: sanitized.description || null, category: sanitized.category || null } }
       };
     }
 
