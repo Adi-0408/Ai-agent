@@ -34,6 +34,7 @@ export function generateStandaloneScriptContent(agent) {
     position: agent.position || 'bottom-right',
     avatar: agent.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
     knowledgeBase: agent.knowledgeBase || [],
+    database: agent.database || agent.databaseConfig || agent.dbRecords || agent.databaseRecords || [],
     tools: agent.tools || [],
     compiledAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()
@@ -562,6 +563,68 @@ export function generateStandaloneScriptContent(agent) {
       return "Goodbye! Have a great day, and feel free to talk to me anytime you visit.";
     }
 
+    // Prompt Injection Defense
+    if (/\\b(ignore (all )?previous instructions|system prompt|developer mode|jailbreak|reveal (your )?prompt|override instructions)\\b/i.test(lower)) {
+      return "I am configured as a secure assistant and cannot reveal internal system instructions or bypass security guidelines.";
+    }
+
+    // Dynamic Database Query Execution (Offline Edge Schema & Record Reasoning)
+    const db = Array.isArray(agentConfig.database) ? agentConfig.database : [];
+    if (db.length > 0) {
+      // 1. Record Count Queries
+      if (/\\b(how many|total|count|kitne|kiti|sankhya)\\b/i.test(lower) && /\\b(items|products|courses|orders|records|medicines|available|catalog|stock)\\b/i.test(lower)) {
+        return "We currently have " + db.length + " verified items available in our database.";
+      }
+
+      // 2. Exact or Key Token Lookup in DB
+      let matchedRecord = null;
+      let matchedField = null;
+      for (const rec of db) {
+        const rName = (rec.name || rec.title || rec.product_name || rec.item_name || rec.code || '').toLowerCase();
+        if (rName && (lower.includes(rName) || rName.split(/\\s+/).filter(w => w.length > 3).some(w => lower.includes(w)))) {
+          matchedRecord = rec;
+          break;
+        }
+      }
+
+      // 3. Order ID / Reference Lookups
+      if (!matchedRecord) {
+        const idMatch = lower.match(/\\b(?:order|id|ticket|invoice|ref|#)\\s*([a-z0-9_-]+)\\b/i);
+        if (idMatch && idMatch[1]) {
+          const searchId = idMatch[1].toLowerCase();
+          matchedRecord = db.find(r => String(r.id || r.order_id || r.orderNumber || r.ticket_id || '').toLowerCase() === searchId);
+          if (matchedRecord) matchedField = 'order_status';
+        }
+      }
+
+      if (matchedRecord) {
+        const recTitle = matchedRecord.name || matchedRecord.title || matchedRecord.product_name || ("Item #" + (matchedRecord.id || ''));
+        // Price query
+        if (/\\b(price|cost|fee|fees|rate|how much|dar|kimat|shulk)\\b/i.test(lower)) {
+          const priceVal = matchedRecord.price || matchedRecord.fee || matchedRecord.cost || matchedRecord.annual_fee || null;
+          if (priceVal !== null && priceVal !== undefined) {
+            return "The price for " + recTitle + " is " + priceVal + ".";
+          }
+        }
+        // Stock / Availability query
+        if (/\\b(stock|available|seats|availability|shillak|baki|quantity)\\b/i.test(lower)) {
+          const stockVal = matchedRecord.stock !== undefined ? matchedRecord.stock : (matchedRecord.seats !== undefined ? matchedRecord.seats : matchedRecord.quantity);
+          if (stockVal !== null && stockVal !== undefined) {
+            return "For " + recTitle + ", we currently have " + stockVal + " available.";
+          }
+        }
+        // Status query
+        if (matchedField === 'order_status' || /\\b(status|tracking|shipped|delivered|state)\\b/i.test(lower)) {
+          const statusVal = matchedRecord.status || matchedRecord.delivery_status || matchedRecord.state || 'Processing';
+          return "Status for " + recTitle + ": " + statusVal + ".";
+        }
+        // General record inquiry
+        if (matchedRecord.description) {
+          return recTitle + ": " + matchedRecord.description;
+        }
+      }
+    }
+
     // 7. Multi-Stage Semantic Knowledge Base Matching (Exact + Token + Stemmed Overlap)
     let bestItem = null;
     let highestScore = 0;
@@ -578,24 +641,31 @@ export function generateStandaloneScriptContent(agent) {
       }
 
       // Keyword token overlap (both exact and stemmed)
+      let matchCount = 0;
       for (let i = 0; i < meaningfulWords.length; i++) {
         const rawW = meaningfulWords[i];
         const stemW = stemmedWords[i];
 
-        if (qLower.includes(rawW)) score += 20;
-        else if (stemW && qLower.includes(stemW)) score += 15;
+        if (qLower.includes(rawW)) {
+          score += 25;
+          matchCount++;
+        } else if (stemW && qLower.includes(stemW)) {
+          score += 18;
+          matchCount++;
+        }
 
-        if (aLower.includes(rawW)) score += 8;
-        else if (stemW && aLower.includes(stemW)) score += 6;
+        if (aLower.includes(rawW)) score += 6;
+        else if (stemW && aLower.includes(stemW)) score += 4;
       }
 
-      if (score > highestScore) {
+      // Require meaningful match density to avoid unrelated fallbacks
+      if (score > highestScore && (score >= 40 || (matchCount >= 2 && score >= 35) || lower.includes(qLower))) {
         highestScore = score;
         bestItem = item;
       }
     }
 
-    if (bestItem && highestScore >= 12) {
+    if (bestItem) {
       return bestItem.a;
     }
 

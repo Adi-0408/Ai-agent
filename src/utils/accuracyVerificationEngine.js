@@ -335,7 +335,9 @@ export function verifyAnswerAccuracy(candidateReply = '', ctx = {}) {
     return { text: '', passed: true, issues: [], repaired: false, confidence: 'low' };
   }
 
-  const gt = groundTruth || crossVerifyProjectSources({ catalogItems });
+  const gt = (groundTruth && groundTruth.authoritativeItems instanceof Map)
+    ? groundTruth
+    : crossVerifyProjectSources(groundTruth || { catalogItems });
 
   // 1. False Error / False "Not Available" Override when verified data exists
   const looksLikeFalseError = /\b(not\s+available\s+right\s+now|cannot\s+find|could\s+not\s+find|no\s+information\s+available|i\s+don'?t\s+have\s+(?:exact\s+)?information|unable\s+to\s+find)\b/i.test(text);

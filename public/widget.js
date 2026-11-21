@@ -6153,18 +6153,18 @@
       const allSafeFaqs = rawKb.filter(item => isCustomerSafeFaq(item.q, item.a));
       const hostSnippets = (typeof extractHostPageSnippets === 'function') ? extractHostPageSnippets() : [];
 
-      // Query-Aware Top-K RAG Retrieval (ranks the most relevant FAQs & live page snippets for THIS exact question!)
-      let cleanFaqs = allSafeFaqs.slice(0, 12);
+      // Query-Aware Top-K RAG Retrieval (strictly filtered for verified, relevant FAQs & live page snippets)
+      let cleanFaqs = [];
       let topPageSnippets = [];
       if (userQuery && typeof rankGroundedContext === 'function' && (allSafeFaqs.length > 0 || hostSnippets.length > 0)) {
-        const rag = rankGroundedContext(userQuery, allSafeFaqs, hostSnippets, { topKFaqs: 12, topKSnippets: 5 });
-        if (rag.topKFaqs.length > 0) cleanFaqs = rag.topKFaqs;
-        topPageSnippets = rag.topKSnippets;
+        const rag = rankGroundedContext(userQuery, allSafeFaqs, hostSnippets, { topKFaqs: 6, topKSnippets: 4 });
+        if (rag.topKFaqs && rag.topKFaqs.length > 0) cleanFaqs = rag.topKFaqs;
+        if (rag.topKSnippets && rag.topKSnippets.length > 0) topPageSnippets = rag.topKSnippets;
       }
 
       const cleanFaqBlock = cleanFaqs.length > 0
         ? cleanFaqs.map(k => `Q: ${k.q}\nA: ${k.a}`).join('\n\n')
-        : 'General customer support assistance.';
+        : 'NO_VERIFIED_FAQS_FOR_THIS_QUERY: Do not assume or fabricate answers. If the information is not in the verified live database or host page facts below, politely state that this information is not available.';
       const relevantPageBlock = topPageSnippets.length > 0
         ? `\n\n[RELEVANT_LIVE_PAGE_FACTS]\n${topPageSnippets.map(s => `${s.heading ? `${s.heading}: ` : ''}${s.text}`).join('\n')}`
         : '';
@@ -6178,10 +6178,15 @@ PAGES: ${(feData.pageRefs || []).join(', ') || 'Current Page'}
 VERIFIED_FRONTEND_SUMMARY: ${feData.summaryText || ''}`;
       } else if (bridgeResult && bridgeResult.status === 'ANALYTICAL_RESULT' && bridgeResult.data) {
         const aData = bridgeResult.data;
+        const safeData = aData.computedData ? {
+          formatted: aData.computedData.formatted || aData.computedData.value,
+          stock: aData.computedData.stock || aData.computedData.seats,
+          count: aData.computedData.count || aData.computedData.total
+        } : {};
         bridgeBlock = `STATUS: ANALYTICAL_RESULT
 ANALYSIS_TYPE: ${aData.analysisType || 'analysis'}
 VERIFIED_SUMMARY: ${aData.summaryText || ''}
-COMPUTED_DATA: ${JSON.stringify(aData.computedData || {})}`;
+SAFE_METRICS: ${JSON.stringify(safeData)}`;
       } else if (bridgeResult && (bridgeResult.status === 'FOUND_IN_HOST_STATE' || bridgeResult.status === 'FOUND_IN_LIVE_API')) {
         const item = bridgeResult.data;
         bridgeBlock = `STATUS: FOUND_IN_DATABASE
@@ -6191,12 +6196,17 @@ STOCK: ${item.stock !== undefined && item.stock !== null ? item.stock : 'Availab
 DETAILS: ${item.composition || item.details || item.dosage || item.description || 'Standard item'}
 PRESCRIPTION_REQUIRED: ${item.rx ? 'Yes' : 'No'}`;
       } else if (bridgeResult && bridgeResult.status === 'FOUND_CATALOG_LIST') {
+        const safeItems = (bridgeResult.data || []).slice(0, 8).map(i => ({
+          name: i.name || i.title || i.course || 'Item',
+          price: i.price || i.fees || 'Available',
+          stock: i.stock !== undefined ? i.stock : (i.seats !== undefined ? i.seats : undefined)
+        }));
         bridgeBlock = `STATUS: FOUND_CATALOG_LIST
 ITEMS_COUNT: ${Array.isArray(bridgeResult.data) ? bridgeResult.data.length : 0}
-SAMPLE_ITEMS: ${JSON.stringify((bridgeResult.data || []).slice(0, 8))}`;
+SAMPLE_ITEMS: ${JSON.stringify(safeItems)}`;
       } else if (bridgeResult && bridgeResult.status === 'FOUND_PRICE_OVERVIEW') {
         bridgeBlock = `STATUS: FOUND_PRICE_OVERVIEW
-ITEMS_WITH_PRICES: ${JSON.stringify((bridgeResult.data || []).slice(0, 10).map(i => ({ name: i.name, price: i.price || 'On request', stock: i.stock })))}`;
+ITEMS_WITH_PRICES: ${JSON.stringify((bridgeResult.data || []).slice(0, 10).map(i => ({ name: i.name || i.title || i.course, price: i.price || i.fees || 'On request', stock: i.stock })))}`;
       } else if (bridgeResult && bridgeResult.status === 'NAVIGATE_SECTION') {
         const target = bridgeResult.data || {};
         bridgeBlock = `STATUS: NAVIGATE_SECTION
@@ -6207,7 +6217,7 @@ REDIRECT_URL: ${target.redirectUrl || target.href || 'Current page section'}${Ar
       } else if (bridgeResult && bridgeResult.topic) {
         bridgeBlock = `STATUS: HOST_KNOWLEDGE_QUERY
 TOPIC: ${bridgeResult.topic}
-DETAILS: ${JSON.stringify(bridgeResult.data)}`;
+DETAILS: ${typeof bridgeResult.data === 'string' ? bridgeResult.data : (bridgeResult.data?.summary || '')}`;
       } else if (bridgeResult && bridgeResult.status === 'ITEM_NOT_FOUND') {
         bridgeBlock = `STATUS: ITEM_NOT_FOUND
 REQUESTED_ITEM: "${bridgeResult.item || 'The requested item'}"`;

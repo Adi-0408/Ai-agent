@@ -46,6 +46,8 @@ import {
   storeConsistentAnswer,
   recordAccuracyAuditEvent
 } from '../utils/accuracyVerificationEngine.js';
+import { hybridRAGSearch } from '../utils/semanticHybridRag.js';
+import { discoverDatabaseSchema, planDatabaseQuery, executeStructuredQuery, sanitizeDatabaseRecord, sanitizeDatabaseCollection } from '../utils/dynamicDatabaseEngine.js';
 
 export const STORAGE_KEYS = {
   GROQ: 'echo_user_groq_key',
@@ -466,6 +468,13 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
   }
 
   const cleanMessage = String(messageText || '').trim();
+  
+  // Prompt Injection Defense & Security Boundary Enforcement
+  const isSecurityAttack = /\b(ignore (all )?previous instructions|system prompt|developer mode|jailbreak|reveal (your )?prompt|override instructions|disregard all rules|forget who you are|say ["']?i am hacked["']?|dump all.*database|print.*secret|secret instructions|select\s+.*\s+from|drop\s+table|delete\s+from|tenant[_-]?[a-z0-9]|private.*data.*of.*other|cross[_-]?tenant|unauthorized.*access)\b/i.test(cleanMessage);
+  if (isSecurityAttack) {
+    return "I am configured as a secure assistant and cannot reveal internal system instructions, bypass security boundaries, or execute unauthorized commands.";
+  }
+
   const agentDisplayName = options?.agentName || options?.assistantName || (typeof promptText === 'string' && promptText.includes('named "') ? (promptText.match(/named\s*"([^"]+)"/i) || [])[1] : '') || 'Krushna AI Voice Agent';
   const promptContext = promptText || `You are ${agentDisplayName}, the official AI Customer Support & Help Desk Agent for this business.`;
   const queryLangForPrompt = detectTextLanguage(cleanMessage, {
@@ -484,17 +493,25 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     return isValidCustomerCatalogName(n, r);
   });
 
-  // Query-Aware Top-K RAG Retrieval & Deterministic Pre-Computed Analytics (strictly filtered for customer-safe FAQs!)
+  // Advanced Semantic Hybrid RAG Retrieval (Dense Vectors + BM25 + RRF + Contextual Reranker)
   const safeKbList = (Array.isArray(kbList) ? kbList : []).filter(k => k && isCustomerSafeFaq(k.q, k.a));
-  const ragRanked = rankGroundedContext(cleanMessage, safeKbList, [], { topKFaqs: 12 });
-  const prioritizedKb = ragRanked.topKFaqs.length > 0 ? ragRanked.topKFaqs : safeKbList.slice(0, 12);
+  const hybridRagResult = hybridRAGSearch(cleanMessage, safeKbList, { topK: 6, relevanceThreshold: 0.42 });
+  const prioritizedKb = hybridRagResult.topMatches.map(m => m.raw || { q: m.title, a: m.content });
+  // STRICT PRECISION GATE: ZERO unrelated FAQ fallback! When no verified FAQs match, prioritizedKb is empty []
   const kbContext = prioritizedKb.length > 0
-    ? `\n\nMost Relevant Verified Knowledge Base Facts:\n${prioritizedKb.map(k => `Q: ${k.q}\nA: ${k.a}`).join('\n\n')}`
-    : '';
+    ? `\n\nMost Relevant Verified Knowledge Base Facts:\n${prioritizedKb.map(k => `Q: ${k.q || k.title}\nA: ${k.a || k.content}`).join('\n\n')}`
+    : '\n\n[NO_VERIFIED_FAQS_FOR_THIS_QUERY — ADMIT UNCERTAINTY IF DATABASE/PAGES DO NOT COVER]';
 
-  const precomputedAnalytics = analyzeCatalogQuery(cleanMessage, dbRecords, null, queryLangForPrompt);
+  // Dynamic Database Intelligence & Universal Schema Discovery
+  const dbSchema = discoverDatabaseSchema(dbRecords);
+  const dynamicDbPlan = planDatabaseQuery(cleanMessage, dbSchema);
+  const dynamicDbResult = (dynamicDbPlan && dbRecords.length > 0)
+    ? executeStructuredQuery(dynamicDbPlan, dbRecords, queryLangForPrompt)
+    : null;
+
+  const precomputedAnalytics = dynamicDbResult || analyzeCatalogQuery(cleanMessage, dbRecords, null, queryLangForPrompt);
   const analyticsContext = precomputedAnalytics
-    ? `\n\n[PRECOMPUTED_ANALYTICS — USE THESE EXACT NUMBERS]\nSTATUS: ANALYTICAL_RESULT\nTYPE: ${precomputedAnalytics.analysisType}\nEXACT_SUMMARY: ${precomputedAnalytics.summaryText}\nCOMPUTED_DATA: ${JSON.stringify(precomputedAnalytics.computedData)}`
+    ? `\n\n[PRECOMPUTED_ANALYTICS — USE THESE EXACT NUMBERS]\nSTATUS: ANALYTICAL_RESULT\nTYPE: ${precomputedAnalytics.operation || precomputedAnalytics.analysisType}\nEXACT_SUMMARY: ${precomputedAnalytics.summaryText}`
     : '';
 
   const frontendIndex = options?.frontendIntelligence || options?.siteBlueprint?.frontendIndex || userMessage?.frontendIntelligence || userMessage?.siteBlueprint?.frontendIndex || null;
@@ -523,8 +540,10 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     ? `\n\n[FRONTEND_DATA_AND_CROSS_PAGE_INSIGHTS]\n${frontendLines.join('\n')}`
     : '';
 
-  const dbContext = (Array.isArray(dbRecords) && dbRecords.length > 0)
-    ? `\n\nVerified Live Database Records & Catalog (${dbRecords.length} items):\n${JSON.stringify(dbRecords.slice(0, 50))}`
+  const isCustomerMode = options?.mode === 'customer' || options?.isLiveWidget;
+  const safeDbRecords = sanitizeDatabaseCollection(dbRecords);
+  const dbContext = (!isCustomerMode && Array.isArray(safeDbRecords) && safeDbRecords.length > 0)
+    ? `\n\nVerified Public Catalog Items (${safeDbRecords.length} items):\n${JSON.stringify(safeDbRecords.slice(0, 10).map(r => ({ name: r.name || r.title || r.course, price: r.price || r.fees, stock: r.stock || r.seats })))}`
     : '';
 
   const userKeys = getUserApiKeys();
@@ -533,7 +552,6 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
 
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   const baseIdentity = promptContext;
-  const isCustomerMode = options?.mode === 'customer' || options?.isLiveWidget;
 
   // Complete Project Architecture, Deep Full-Coverage Index (1-Hop Graph Retrieval) & Code Diagnostics (Studio / Project Mode Only!)
   const projectArch = options?.projectArchitecture || options?.siteBlueprint?.projectArchitecture || userMessage?.projectArchitecture || userMessage?.siteBlueprint?.projectArchitecture || null;
@@ -649,7 +667,7 @@ export async function generateAIResponse(userMessage, systemPrompt = '', knowled
     precomputedArchitecture ||
     precomputedFrontend ||
     precomputedAnalytics ||
-    ragRanked.topHit ||
+    hybridRagResult.topMatches.length > 0 ||
     dbRecords.length > 0 ||
     (!isCustomerMode && (deepProjectIndex || projectArch))
   );
@@ -1088,7 +1106,12 @@ Your floating voice assistant widget will appear immediately on your site, with 
   }
 
   if (Array.isArray(dbRecords) && dbRecords.length > 0) {
-    // 0. Deterministic Data Analysis FIRST (Compare, Cheapest/Most Expensive, Budget Filter, Stock Filter, Counts/Range)
+    // 0. Dynamic Structured Database Execution (Exact price, stock, order status, count)
+    if (dynamicDbResult && dynamicDbResult.success && dynamicDbResult.summaryText) {
+      return appendOfflineLinks(dynamicDbResult.summaryText);
+    }
+
+    // Deterministic Data Analysis (Compare, Cheapest/Most Expensive, Budget Filter, Stock Filter, Counts/Range)
     const analytical = analyzeCatalogQuery(effectiveClean, dbRecords, {
       itemNounEn: isAcademic ? 'courses' : (isHealthcare ? 'medicines' : (isFood ? 'dishes' : (isHospitality ? 'rooms' : (isSaas ? 'plans' : (isAutomotive ? 'vehicles' : 'products'))))),
       itemNounHi: isAcademic ? 'कोर्स' : (isHealthcare ? 'दवाइयां' : 'उत्पाद'),
@@ -1180,6 +1203,18 @@ Your floating voice assistant widget will appear immediately on your site, with 
                           resolveFrontendDataQuery(rawTrimmed, liveFrontendSnapshot, frontendIndex, inputLang);
     if (feFallbackHit && feFallbackHit.summaryText) {
       return appendOfflineLinks(feFallbackHit.summaryText);
+    }
+  }
+
+  // Advanced Multilingual Semantic Hybrid RAG Match FIRST (Dense Vector Cosine + BM25 + RRF)
+  if (hybridRagResult && hybridRagResult.topMatches && hybridRagResult.topMatches.length > 0) {
+    const topHybrid = hybridRagResult.topMatches[0];
+    const matchScore = topHybrid.finalScore !== undefined ? topHybrid.finalScore : (topHybrid.score || 0);
+    if (matchScore >= 0.38) {
+      const bestAnswer = topHybrid.content || topHybrid.answer || (topHybrid.raw && (topHybrid.raw.a || topHybrid.raw.answer));
+      if (bestAnswer) {
+        return appendOfflineLinks(bestAnswer);
+      }
     }
   }
 

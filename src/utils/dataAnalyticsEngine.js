@@ -716,9 +716,10 @@ export function rankGroundedContext(query, kbList = [], pageSnippets = [], optio
 
   const confidence = !topHit ? 'none' : (topHit.score >= 42 || topHit.distinctiveCoverage >= 0.75 ? 'high' : 'medium');
 
-  // For LLM RAG prompt injection: prioritize relevant FAQs first, then pad with remaining top FAQs up to limit
-  const topKFaqs = scoredFaqs.slice(0, topKFaqsLimit).map(f => f.item);
-  const topKSnippets = scoredSnips.filter(s => s.score > 0).slice(0, topKSnipsLimit).map(s => s.item);
+  // For LLM RAG prompt injection: ONLY include verified relevant FAQs passing the precision threshold!
+  // NEVER dump unrelated FAQs into context when confidence is none or score is below threshold.
+  const topKFaqs = scoredFaqs.filter(f => f.isRelevant).slice(0, topKFaqsLimit).map(f => f.item);
+  const topKSnippets = scoredSnips.filter(s => s.isRelevant).slice(0, topKSnipsLimit).map(s => s.item);
 
   return {
     topHit,
